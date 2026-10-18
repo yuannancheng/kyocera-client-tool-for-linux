@@ -1,0 +1,64 @@
+table	control_id	kind	option_index	string_id	text_present	text_length
+label	0x0464	label		202	1	7
+label	0x0465	label		203	1	5
+label	0x0456	label		204	1	7
+label	0x0457	label		205	1	12
+label	0x0455	label		206	1	11
+label	0x04cf	label		207	1	19
+label	0x040b	label		113	1	4
+label	0x03e8	label		108	1	17
+label	0x03e9	label		110	1	12
+label	0x03ea	label		111	1	18
+label	0x03fd	label		107	1	6
+label	0x0401	label		114	1	13
+label	0x0402	label		115	1	12
+label	0x0404	label		117	1	14
+label	0x0408	label		119	1	15
+label	0x0403	label		116	1	12
+label	0x0405	label		118	1	19
+label	0x0406	label		120	1	7
+label	0x0407	label		121	1	8
+label	0x0438	label		173	1	12
+label	0x0466	label		249	1	17
+label	0x0467	label		250	1	21
+label	0x0468	label		251	1	17
+label		section		252	1	14
+label	0x04a5	label		263	1	14
+label	0x04aa	label		262	1	15
+label	0x04d1	label		225	1	15
+label	0x04da	label		174	1	7
+label	0x046d	label		419	1	2
+label	0x046e	label		420	1	3
+label	0x04a8	label		418	1	5
+label	0x048c	label		458	1	27
+combo	0x0463	combo_option	0	178	1	6
+combo	0x0463	combo_option	1	179	1	7
+combo	0x0463	combo_option	2	180	1	7
+combo	0x0463	combo_option	3	181	1	7
+combo	0x0463	combo_option	4	182	1	7
+combo	0x0463	combo_option	5	183	1	7
+combo	0x0463	combo_option	6	184	1	7
+combo	0x0463	combo_option	7	194	1	8
+combo	0x0463	combo_option	8	195	1	5
+combo	0x0463	combo_option	9	196	1	6
+combo	0x0463	combo_option	10	197	1	6
+combo	0x0463	combo_option	11	198	1	6
+combo	0x0463	combo_option	12	199	1	6
+combo	0x0463	combo_option	13	200	1	6
+combo	0x0463	combo_option	14	201	1	6
+combo	0x03f6	combo_option	0	145	1	5
+combo	0x03f6	combo_option	1	144	1	8
+combo	0x03f6	combo_option	2	143	1	8
+combo	0x03f6	combo_option	3	142	1	8
+combo	0x03f6	combo_option	4	141	1	7
+combo	0x03f6	combo_option	5	140	1	7
+combo	0x03f6	combo_option	6	139	1	7
+combo	0x03f7	combo_option	0	150	1	5
+combo	0x03f7	combo_option	1	149	1	12
+combo	0x03f7	combo_option	2	148	1	6
+combo	0x03f7	combo_option	3	147	1	11
+combo	0x03f7	combo_option	4	146	1	4
+combo	0x04ab	combo_option	0	369	1	12
+combo	0x04ab	combo_option	1	370	1	5
+combo	0x04ab	combo_option	2	371	1	4
+combo	0x04ab	combo_option	3	372	1	28

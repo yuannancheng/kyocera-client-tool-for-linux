@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="Kyocera printer">
+  <rect width="128" height="128" rx="22" fill="#123047"/>
+  <rect x="24" y="42" width="80" height="46" rx="9" fill="#f4f7f9"/>
+  <rect x="32" y="24" width="64" height="30" rx="5" fill="#dce6ec"/>
+  <rect x="40" y="30" width="48" height="4" rx="2" fill="#9fb3c2"/>
+  <rect x="40" y="38" width="48" height="4" rx="2" fill="#9fb3c2"/>
+  <rect x="34" y="56" width="60" height="24" rx="4" fill="#ffffff"/>
+  <rect x="42" y="62" width="44" height="4" rx="2" fill="#4f7b95"/>
+  <rect x="42" y="70" width="30" height="4" rx="2" fill="#4f7b95"/>
+  <circle cx="90" cy="54" r="4" fill="#36b37e"/>
+  <rect x="30" y="88" width="68" height="14" rx="4" fill="#dce6ec"/>
+  <rect x="42" y="92" width="44" height="6" rx="3" fill="#9fb3c2"/>
+</svg>

@@ -1,0 +1,70 @@
+dialog	control_id	label	companion_controls	model_offset	item_id	oid	confidence	note
+0x006b	0x03ea	Auto error clear		0x0004	2	43.5.1.1.34.1	inferred	
+0x006b	0x03f4	Auto error clear timeout	0x03f3	0x0008	3	43.5.1.1.35.1	inferred	UI seconds = model * 5
+0x006b	0x03f2	Sleep time	0x03f1	0x0010	1	43.5.1.1.23.1	inferred	
+0x006b	0x0463	Power off timer		0x0014	4	42.5.1.1.43.1	inferred	Combo bucket, not a linear scale
+0x006b	0x0455	Quiet mode		0x0018	50	1001.2.1.1.1.14.1	inferred	
+0x006b	0x0411	Form feed timeout	0x0410	0x2ffc	52	43.5.1.1.22.1	inferred	UI seconds = model * 5; current device value 60 -> 300 s
+0x006b	0x03f5	Media type	0x0402	0x300c	9	43.8.1.1.4.1.1	inferred	
+0x006b	0x03f8	Paper size	0x0403	0x3000	6	43.8.1.1.11.1.1	inferred	
+0x006b	0x03f7	Print density	0x0408	0x2ff8	49	43.10.1.1.13.1.1	inferred	Combo index = model - 1
+0x006b	0x04ab	Original image	0x04aa	0x3014	83	1001.2.1.1.1.10.1	inferred	Model 1/4/8 -> combo 2/1/3
+0x006b	0x0474	Original size	0x04d1	0x3c5c	87	46.8.1.1.6.3.1	inferred	Vendor OID name kcscnInputCurrentSize
+0x006b	0x048c	Ignore paper size mismatch		0x3010	10	1001.2.1.1.1.15.1	inferred	Value 2 hides/disables the checkbox
+0x006b	0x0466	USB is connected		0x001c	5	42.5.9.1.3.2	inferred	Power off when group
+0x006b	0x0467	Network is connected		0x0020	55	42.5.9.1.3.1	inferred	Power off when group
+0x006b	0x0468	FAX is installed		0x0024	107	42.5.9.1.3.3	inferred	Power off when group; MA2000w returns no value
+0x006b	0x0456	Inches		0x0028	51	42.5.1.1.13.1	inferred	Shares the units model field with 0x0457
+0x006b	0x0457	Millimeters		0x0028	51	42.5.1.1.13.1	inferred	Shares the units model field with 0x0456
+0x00d0	0x04d0	Default screen		0x3c58	86	42.5.1.1.3.1	inferred	Panel options dialog
+0x00d0	0x04d2	Language		0x3020	79	1.3.6.1.2.1.43.5.1.1.10.1	inferred	Combo index = model - 1
+0x00d0	0x04d3	Reset panel		0x3018	84	42.5.1.1.4.1	inferred	Button enable state follows the panel auto-clear switch
+0x00d0	0x04d4	Auto clear panel time	0x04d5	0x301c	85	42.5.1.1.5.1	inferred	UI seconds = model * 5
+0x00d0	0x04d5	Auto clear panel time spin	0x04d4	0x301c	85	42.5.1.1.5.1	inferred	Spin companion of 0x04d4
+0x008d	0x041d	Lan Interface		0x4444	58	40.1.1.1.9.1	inferred	Communication dialog
+0x008d	0x041e	Hostname		0x444c	54	40.10.1.1.5.1	inferred	Vendor OID name kmHostName
+0x008d	0x0420	DHCP		0x485c	57	40.10.1.1.2.1	inferred	Vendor OID name kmAddressSource
+0x008d	0x0424	LPD Setting		0x4860	62	40.20.1.1.1.1	inferred	Vendor OID name kmsvLPenable
+0x008d	0x0425	Raw Port		0x4864	63	40.21.1.1.1.1	inferred	Vendor OID name kmsvRAWenable
+0x008d	0x049b	WSD Print		0x4868	64	40.36.1.1.1.1	inferred	Vendor OID name kmnetWSDPrintEnable
+0x008d	0x0427	Read Community		0x486c	65	40.26.2.1.3.1	inferred	
+0x008d	0x0428	Write Community		0x4970	66	40.26.2.1.4.1	inferred	
+0x008d	0x045e	IP address		0x4550	59	40.10.1.1.4.1	inferred	SysIPAddress32 control
+0x008d	0x045f	Subnet mask		0x4654	60	40.10.1.1.6.1	inferred	SysIPAddress32 control
+0x008d	0x0460	Default Gateway		0x4758	61	40.10.1.1.7.1	inferred	SysIPAddress32 control
+0x008d	0x0429	sysContact		0x4a74	67	1.3.6.1.2.1.1.4.0	inferred	
+0x008d	0x042a	sysName		0x4b78	68	1.3.6.1.2.1.1.5.0	inferred	
+0x008d	0x042b	sysLocation		0x4c7c	69	1.3.6.1.2.1.1.6.0	inferred	
+0x008d	0x042d	Authentication traps		0x4d80	70	1.3.6.1.2.1.11.30.0	inferred	snmpEnableAuthenTraps
+0x008e	0x0459	Trap Recipient 1		0x4d84	71	40.26.5.1.7.1.1	inferred	kmsvTrapEnabled
+0x008e	0x042e	Trap Community 1		0x4d88	72	40.26.5.1.4.1.1	inferred	kmsvTrapCommunity
+0x008e	0x0461	Trap IP address 1		0x4e8c	73	40.26.5.1.2.1.1	inferred	kmsvTrapIpAddress
+0x008e	0x0432	Add paper (recipient 1)		0x4f90	74	40.26.5.1.5.1.1	inferred	kmsvTrapEvents field 1
+0x008e	0x0433	Toner near empty (recipient 1)		0x4f94	74	40.26.5.1.5.1.1	inferred	kmsvTrapEvents field 2
+0x008e	0x0434	Add toner (recipient 1)		0x4f98	74	40.26.5.1.5.1.1	inferred	kmsvTrapEvents field 3
+0x008e	0x0435	Cover open (recipient 1)		0x4f9c	74	40.26.5.1.5.1.1	inferred	kmsvTrapEvents field 4
+0x008e	0x0436	Paper jam (recipient 1)		0x4fa0	74	40.26.5.1.5.1.1	inferred	kmsvTrapEvents field 5
+0x008e	0x0437	All other errors (recipient 1)		0x4fa4	74	40.26.5.1.5.1.1	inferred	kmsvTrapEvents field 6
+0x008e	0x0456	Trap Recipient 2		0x4fa8	75	40.26.5.1.7.1.2	inferred	kmsvTrapEnabled
+0x008e	0x0430	Trap Community 2		0x4fac	76	40.26.5.1.4.1.2	inferred	kmsvTrapCommunity
+0x008e	0x0462	Trap IP address 2		0x50b0	77	40.26.5.1.2.1.2	inferred	kmsvTrapIpAddress
+0x008e	0x0438	Add paper (recipient 2)		0x51b4	78	40.26.5.1.5.1.2	inferred	kmsvTrapEvents field 1
+0x008e	0x0439	Toner near empty (recipient 2)		0x51b8	78	40.26.5.1.5.1.2	inferred	kmsvTrapEvents field 2
+0x008e	0x043a	Add toner (recipient 2)		0x51bc	78	40.26.5.1.5.1.2	inferred	kmsvTrapEvents field 3
+0x008e	0x043b	Cover open (recipient 2)		0x51c0	78	40.26.5.1.5.1.2	inferred	kmsvTrapEvents field 4
+0x008e	0x043c	Paper jam (recipient 2)		0x51c4	78	40.26.5.1.5.1.2	inferred	kmsvTrapEvents field 5
+0x008e	0x043d	All other errors (recipient 2)		0x51c8	78	40.26.5.1.5.1.2	inferred	kmsvTrapEvents field 6
+0x00f3	0x04fa	Connection status		0x3c88	142	40.42.1.1.1.1	verified	Model base 0x4aa890 + 0x3c88 = DAT_004ae518; strings 0x202/0x203 give 3=Connected, 4=Not connected
+0x00f3	0x04fb	SSID		0x3c90	144	40.42.1.1.4.1	verified	FUN_0040dae0 copies DAT_004ae520 (model + 0x3c90); UTF-8 SSID value confirmed by device read
+0x00f3	0x04fc	Security Information		0x3d94	145	40.42.1.1.5.1	verified	DAT_004ae624; 0=Open (Disable), 1=Open (WEP), 2=WPA2/WPA PSK (AES), 3=WPA2/WPA PSK (Auto), 4=WPA2 PSK (AES), other=Unknown
+0x00f3	0x04fd	Channel		0x3d98	147	40.42.1.1.6.1	verified	DAT_004ae628 rendered as a decimal channel number
+0x00f3	0x04fe	RSSI		0x3d9c	146	40.42.1.1.7.1	verified	DAT_004ae62c; >=-49 Excellent, -60..-50 Good, -70..-61 Fair, <=-71 Weak
+0x00d1	0x04d7	Speaker volume		0x3da0	108	45.8.1.1.11.4	inferred	FUN_004154e0 sets 0x4d7 from DAT_004a6a40; FUN_004144c0 reads stack 0x3da8 with an 8-byte frame shift (model 0x3da0); range 0..5
+0x00d1	0x04d8	Speaker volume slider	0x04d7	0x3da0	108	45.8.1.1.11.4	inferred	BM_SETPOS/BM_GETPOS companion of 0x4d7
+0x00d1	0x04da	Monitor volume		0x3da4	109	45.8.1.1.10.4	inferred	FUN_004154e0 sets 0x4da from DAT_004a6a3c; stack 0x3dac maps to model 0x3da4; range 0..5
+0x00d1	0x04db	Monitor volume slider	0x04da	0x3da4	109	45.8.1.1.10.4	inferred	BM_SETPOS/BM_GETPOS companion of 0x4da
+0x00d2	0x04dd	Transmission notification	0x04de	0x3db0	112	45.10.3.1.2.4	inferred	Combo index = DAT_004a6a38; FUN_004144c0 stores stack 0x3db8 - 1 (model 0x3db0)
+0x00d2	0x04de	Attach copy of TX		0x3db4	113	45.10.3.1.3.4	inferred	Init maps model value 3 to checked via DAT_004a6a34; OK stores BM_GETCHECK 0/1 in the mirror global
+0x00d2	0x04e0	Receiving notification		0x3db8	114	45.9.3.1.2.4	inferred	Combo index = DAT_004a6a30; FUN_004144c0 stores stack 0x3dc0 - 1 (model 0x3db8)
+0x00d2	0x04e2	TX report		0x3da8	110	45.10.3.1.1.4	inferred	Init maps model value 3 to checked via DAT_004a6a2c; OK stores BM_GETCHECK 0/1
+0x00d2	0x04e3	RX report		0x3dac	111	45.9.3.1.1.4	inferred	Init maps model value 3 to checked via DAT_004a6a28; OK stores BM_GETCHECK 0/1

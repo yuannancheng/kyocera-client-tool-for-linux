@@ -1,0 +1,27 @@
+Kyocera/
+Kyocera.zip
+.tools/
+analysis/
+__pycache__/
+*.py[cod]
+.venv/
+.tools/ghidra_12.1.4_PUBLIC/
+
+# Never publish vendor binaries, package containers or local research output.
+*.exe
+*.dll
+*.sys
+*.msi
+*.cab
+*.mtp
+*.zip
+dist/
+build/
+*.egg-info/
+
+# Local credentials and extracted material.
+*.key
+*.pem
+*.p12
+secrets/
+extracted/

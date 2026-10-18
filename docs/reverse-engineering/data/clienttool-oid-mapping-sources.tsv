@@ -1,0 +1,6 @@
+source	kind	oid_elements	absolute_oids	relative_oids
+Kyocera/ClientTool/WFH/remotefax/addins/Device/Device.DeviceJobs/conf/JobSnmpOid.xml	hierarchical-job	205	5	200
+Kyocera/ClientTool/WFH/remotefax/addins/Host/Host.HostInfo/conf/Support.xml	support-info	10	10	0
+Kyocera/ClientTool/WFH/remotefax/bin/conf/Support.xml	support-info	10	10	0
+Kyocera/ClientTool/WFH/remotefax/system/Device.Base/def/dev/snmp-oid.xml	prefix-symbol	508	508	0
+Kyocera/ClientTool/WIFI/wifisetup/def/dev/snmp-oid.xml	prefix-symbol	494	494	0

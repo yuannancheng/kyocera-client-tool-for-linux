@@ -1,0 +1,14 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=KYOCERA Client Tool for Linux
+Name[zh_CN]=京瓷打印机工具
+Comment=Read-only KYOCERA printer dashboard
+Comment[zh_CN]=京瓷打印机只读状态仪表盘
+Exec=kyocera-gui
+TryExec=kyocera-gui
+Icon=kyocera-monitor
+Terminal=false
+Categories=Settings;HardwareSettings;
+Keywords=printer;kyocera;status;toner;
+StartupNotify=true

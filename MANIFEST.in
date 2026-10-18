@@ -1,0 +1,6 @@
+include LICENSE
+include NOTICE
+include THIRD_PARTY_NOTICES.md
+include README.md
+include CONTRIBUTING.md
+recursive-include docs/legal *.md

@@ -1,0 +1,17 @@
+Kyocera Client Tool for Linux
+
+Copyright (c) 2026 screw-up
+
+Kyocera, KYOCERA, ECOSYS, MA2000w and related names are trademarks or
+registered trademarks of Kyocera Corporation or its affiliates. They are used
+only to identify the devices and software with which this project is intended
+to interoperate.
+
+This project is independent and unofficial. It is not affiliated with,
+authorized by, sponsored by, endorsed by, or approved by Kyocera Corporation
+or any of its affiliates.
+
+This repository contains independently written implementation code and
+protocol facts. It does not include vendor installers, executables, DLLs,
+firmware, drivers, resource files, complete decompiled output, bulk verbatim UI
+text, maintenance-package keys, or device credentials.
