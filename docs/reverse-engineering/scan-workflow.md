@@ -433,19 +433,28 @@ http://www.kyoceramita.com/ws/km-wsdl/job/scan_operation/close_session
 ```
 
 `KMSCNAPI.dll` 导入 `WININET.dll`，同时静态链接 gSOAP 2.7 与 OpenSSL。
-gSOAP 初始化时 SOAP 版本字段为 `0`，对应 SOAP 1.1 默认值；响应解析器可识别
-SOAP 1.1 和 SOAP 1.2 命名空间。因此 Linux 探针默认使用 SOAP 1.1，并提供
-`--soap-version 1.2` 作为真机兼容性选项。
+内部初始化字段不能直接等同于实际线协议。用 32 位 MinGW 诊断宿主加载官方
+`KMSCNAPI.dll` 后捕获到：实际扫描请求使用 **SOAP 1.2**，Content-Type 为
+`application/soap+xml; charset=utf-8`，同时仍发送带引号的 SOAPAction。
+因此 Linux 实现默认使用 SOAP 1.2；SOAP 1.1 仅保留为兼容性选项。
 
 HTTP 传输层使用以下已还原的 gSOAP 2.7 特征：
 
-- 请求行为 `POST <path> HTTP/1.1`，`Host` 包含非默认端口。
+- 请求行为 `POST /ws/km-wsdl/job/scan_operation HTTP/1.1`，`Host` 包含
+  非默认端口。
 - `User-Agent` 固定为 `gSOAP/2.7`（`.rdata:0x10159634`）。
-- SOAP 1.1 使用 `Content-Type: text/xml; charset=utf-8` 和带引号的
+- 实际 SOAP 1.2 使用 `application/soap+xml; charset=utf-8` 和带引号的
   `SOAPAction: "<action>"`；后者由 `0x1009be40` 附近的格式化逻辑生成。
 - 显式发送 `Content-Length`；非 keep-alive 路径发送 `Connection: close`。
 - Linux 探针使用低层 `http.client` 构造这些头部，避免自动附加额外的
   `Accept-Encoding: identity`。
+- Envelope 还包含完整的 WS-* namespace 集，以及
+  `<SOAP-ENV:Header><wsa:Action>...</wsa:Action></SOAP-ENV:Header>`。
+  只发送简化 Envelope 会被设备直接关闭连接。
+
+官方 `get_service_information` 请求体已逐字节复刻：1657 字节，SHA-256
+`ae4f8f9a43f2f46a3b76e2a1190dd5990d62d1699aaaeb14ac1264def76f3a0c`。
+Linux 构建器使用 `tests/test_kmscn.py` 锁定该结构。
 
 capability 契约的关键静态证据（地址均相对 `KMSCNAPI.dll` 映像基址）：
 
@@ -465,7 +474,7 @@ capability 契约的关键静态证据（地址均相对 `KMSCNAPI.dll` 映像�
 
 `kyocera_monitor/kmscn.py` 与 `tools/kmscn_probe.py` 只发送
 `get_service_information` 或 `get_capability`，不打开扫描会话、不启动扫描、
-不取图，也不修改任何设备设置。默认请求为 HTTP 9090 + SOAP 1.1：
+不取图，也不修改任何设备设置。默认请求为 HTTP 9090 + SOAP 1.2：
 
 ```bash
 python3 tools/kmscn_probe.py 192.168.0.220
@@ -491,8 +500,9 @@ output_image_configuration_capability
 
 每个能力项以保留元素名、属性和子节点的树形 JSON 输出。这样可以在真实响应
 出现后核对重复值、可选节点和嵌套结构，而不在缺少样本时猜测 XML 数组映射。
-缺少任一顶层能力项、非零 `result`、SOAP Fault、非 2xx 状态或非法 XML 均
-报告为失败。解析器拒绝 DTD/实体声明，响应体上限为 2 MiB。
+非零 `result`、SOAP Fault、非 2xx 状态或非法 XML 均报告为失败；顶层能力项
+按设备实际返回保留，缺席项显式列出但不单独判失败。解析器拒绝 DTD/实体声明，
+普通响应体上限为 2 MiB，取图响应上限为 64 MiB。
 
 `--preflight` 复刻 `KmNetScnConnect` 经 `KmNetScnThread` 执行的原厂校验顺序：
 
@@ -512,29 +522,74 @@ Linux 预检目前实现第 1 和第 3 步；服务信息失败时不会发送 c
 - 官方驱动安装包与内嵌载荷的 SHA-256、成员完整性和核心 DLL 哈希。
 - `Ns1815TWGN -> KMNETSCN3 -> KMSCNAPI` 动态加载关系。
 - 9090/9091 端口选择、三个 KM-WSDL 服务路径和八个扫描 action。
-- 服务信息、能力、开会话、开始、取图、取消、关会话的调用顺序。
-
-较高可信度：
-
-- 服务信息请求是一个空的 `get_service_informationRequest` 元素。
-- 客户端请求优先使用 SOAP 1.1；该判断来自 gSOAP 初始化状态和 1.1/1.2
-  响应识别分支。
-- `get_capabilityRequest` 同样是空元素；响应应包含 `result` 和上述三个能力项。
-  该判断来自 `KMSCNAPI.dll` 的 gSOAP 序列化/反序列化函数，仍未获得设备响应。
+- 官方真实请求使用 SOAP 1.2、完整 namespace 和 `wsa:Action` Header。
+- MA2000w 的 9090 KM-WSDL 在设备睡眠状态下仍可用；官方和 Linux 都不需要
+  先手动按面板唤醒。
+- 真机 `get_service_information` 返回 `SUCCESS`、版本 `30.0.134.1`、
+  发布日期 `2022.08.22`、型号 `MA2000w`。
+- MA2000w capability 至少返回
+  `scan_image_configuration_capability/duplex_mode=DUPLEX`；另外两个顶层能力
+  块可选且本次未返回。
+- `get_default_configuration` 返回 FULL_COLOR、300x300、A4、RAW 等默认值。
+- 真机会话顺序已验证：
+  `open_session -> start_scan -> retrieve_image* -> ALL_GET_COMPLETE -> close_session`。
+- `retrieve_image` 使用 XOP multipart；图像生成期间返回
+  `IMAGE_CREATING_NOW` 和 0 字节 attachment，必须继续轮询。
+- 最终 RAW 为 2496×3520、三颜色平面分带；暗/亮校准块分别为 `8A`
+  子类型 `8A/8B`，图像块为 `82/81`。
+- 独立 Python 实现已完成 RAW 解析、阴影校正、RGB 合并和 24 位 BMP 输出。
 
 仍未验证：
 
-- MA2000w 当前是否启用 9090/9091，以及设备接受 SOAP 1.1 还是 1.2。
-- HTTPS 证书链、默认认证方式、请求包装和服务器返回的真实 XML。
-- 每类能力项内部的重复元素、可选字段和枚举值真机语义。
-- `start_scan` 中枚举值与响应字段的真机语义。
+- HTTPS 9091。本次设备未监听该端口。
+- 其他型号、固件或双面/ADF 多页路径的状态和分页语义。
+- 官方 KMIP 色彩矩阵与设备色彩管理表的完整等价性；当前独立实现已复刻分带、
+  校准均值和阴影校正公式，复杂色彩配置仍需跨设备样本验证。
+- 取消扫描和异常中断后的恢复路径。
 
-2026-10-29 真机复核时，记录地址 `192.168.0.220` 已上线，80 和 9090 监听，
-但面板状态为 `Sleeping...`；所有受控 HTTP 请求均在应用层无响应关闭，9091
-未监听。因此本节的客户端协议是静态证据，不能据此宣称 Linux 扫描已经可用。
-下一步需在设备唤醒后运行 preflight 并保存脱敏响应。
+2026-10-29 真机对照证明：手动“激活”不是必要条件；此前失败来自 SOAP 1.1
+简化请求缺少官方 SOAP 1.2 Header 和 namespace，而不是设备睡眠。
 
-### 9.6 复现
+### 9.6 独立 Linux 扫描实现
+
+正式实现不依赖 Wine 或官方 DLL：
+
+```bash
+python3 tools/kmscn_scan.py 192.168.0.220 \
+  --format RAW \
+  --output /tmp/kyocera-scan.raw \
+  --decoded-output /tmp/kyocera-scan.bmp
+```
+
+流程严格按官方观察行为执行：
+
+1. `--preflight`：服务信息和 capability。
+2. 读取设备默认配置，不自行编造扫描枚举。
+3. 打开会话并取得 `operation_id`。
+4. 使用默认配置启动扫描。
+5. 反复取图，直到 `ALL_GET_COMPLETE`。
+6. 关闭会话。
+
+真机成功样本：RAW 28,275,026 字节；独立解码得到 2496×3520、24 位 BMP，
+26,357,814 字节；`close_session=SUCCESS`。
+
+### 9.7 RAW 分带与独立解码
+
+`KMNETSCN3.dll!CScanData::PrepareImageData` 的行为已还原：
+
+- 每个块：4 字节大端长度 + 1 字节命令 + 1 字节子命令 + 1 字节颜色通道
+  + 2 字节宽 + 2 字节高 + 数据。
+- `8A/8A` 与 `8A/8B` 是每通道暗/亮校准块，官方按列求均值并四舍五入。
+- `82/81` 是图像分带；颜色值 `2/3/4` 分别进入三个颜色平面。
+- 每像素按官方阴影校正公式归一化：以暗、亮两倍差为分母并截断到 0..255。
+- 三个平面按相同总高度合并；MA2000w 为每通道 8 带 × 440 行 = 3520 行。
+- 流末尾 `00000004 8282 0db3` 表示页结束。
+
+实现位于 `kyocera_monitor/kmscn_raw.py`。它不加载官方 KMIP DLL，输出标准
+24 位 BMP。官方 KMIP 色彩矩阵的复杂路径尚未用非默认色彩配置交叉验证，
+目前不得宣称与所有官方画质模式逐像素一致。
+
+### 9.8 复现
 
 提取内嵌 ZIP 的核心命令如下（输出保持在忽略目录）：
 

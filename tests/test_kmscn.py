@@ -5,7 +5,7 @@ from kyocera_monitor import kmscn
 
 
 class RequestTests(unittest.TestCase):
-    def test_soap_11_request_matches_driver_operation(self):
+    def test_soap_11_keeps_official_wsa_action_header(self):
         payload, headers = kmscn.build_request("1.1")
         text = payload.decode("utf-8")
         self.assertIn(
@@ -13,7 +13,14 @@ class RequestTests(unittest.TestCase):
             text,
         )
         self.assertIn(
-            "<kmscn:get_service_informationRequest/>",
+            "<SOAP-ENV:Header><wsa:Action>"
+            f"{kmscn.GET_SERVICE_INFORMATION_ACTION}"
+            "</wsa:Action></SOAP-ENV:Header>",
+            text,
+        )
+        self.assertIn(
+            "<kmscn:get_service_informationRequest>"
+            "</kmscn:get_service_informationRequest>",
             text,
         )
         self.assertEqual(headers["Content-Type"], "text/xml; charset=utf-8")
@@ -22,7 +29,7 @@ class RequestTests(unittest.TestCase):
             f'"{kmscn.GET_SERVICE_INFORMATION_ACTION}"',
         )
 
-    def test_soap_12_uses_soap_action_media_parameter(self):
+    def test_soap_12_matches_captured_driver_headers(self):
         payload, headers = kmscn.build_request("1.2")
         self.assertIn(
             b"http://www.w3.org/2003/05/soap-envelope",
@@ -30,10 +37,28 @@ class RequestTests(unittest.TestCase):
         )
         self.assertEqual(
             headers["Content-Type"],
-            "application/soap+xml; charset=utf-8; "
-            f'action="{kmscn.GET_SERVICE_INFORMATION_ACTION}"',
+            "application/soap+xml; charset=utf-8",
         )
-        self.assertNotIn("SOAPAction", headers)
+        self.assertEqual(
+            headers["SOAPAction"],
+            f'"{kmscn.GET_SERVICE_INFORMATION_ACTION}"',
+        )
+
+    def test_default_is_captured_soap_12_profile(self):
+        payload, headers = kmscn.build_request()
+        self.assertIn(b"http://www.w3.org/2003/05/soap-envelope", payload)
+        self.assertEqual(
+            headers["Content-Type"],
+            "application/soap+xml; charset=utf-8",
+        )
+        self.assertIn(
+            b'xmlns:wsa="http://www.w3.org/2005/08/addressing"',
+            payload,
+        )
+        self.assertIn(
+            b"<SOAP-ENV:Header><wsa:Action>",
+            payload,
+        )
 
     def test_rejects_unknown_soap_version(self):
         with self.assertRaises(ValueError):
@@ -42,7 +67,10 @@ class RequestTests(unittest.TestCase):
     def test_capability_request_matches_driver_operation(self):
         payload, headers = kmscn.build_operation_request("get_capability")
         text = payload.decode("utf-8")
-        self.assertIn("<kmscn:get_capabilityRequest/>", text)
+        self.assertIn(
+            "<kmscn:get_capabilityRequest></kmscn:get_capabilityRequest>",
+            text,
+        )
         self.assertEqual(
             headers["SOAPAction"],
             f'"{kmscn.GET_CAPABILITY_ACTION}"',
@@ -144,6 +172,20 @@ class ResponseTests(unittest.TestCase):
         self.assertFalse(result.ok)
         self.assertEqual(result.result, "7")
 
+    def test_device_success_token_is_accepted(self):
+        response = self.RESPONSE.replace(
+            b"<kmscn:result>0</kmscn:result>",
+            b"<kmscn:result>SUCCESS</kmscn:result>",
+        )
+        result = kmscn.parse_response(
+            response,
+            endpoint="http://192.0.2.1:9090/scan",
+            http_status=200,
+            soap_version="1.2",
+        )
+        self.assertTrue(result.ok)
+        self.assertEqual(result.result, "SUCCESS")
+
     def test_rejects_dtd_instead_of_expanding_entities(self):
         response = b"""<?xml version="1.0"?>
 <!DOCTYPE response [<!ENTITY payload "unexpected">]>
@@ -204,7 +246,7 @@ class CapabilityResponseTests(unittest.TestCase):
             ["1", "2"],
         )
 
-    def test_missing_capability_is_explicit_and_not_success(self):
+    def test_missing_optional_capability_is_explicit_but_successful(self):
         response = self.RESPONSE.replace(
             b"<kmscn:original_configuration_capability>",
             b"<kmscn:unexpected_capability>",
@@ -218,11 +260,165 @@ class CapabilityResponseTests(unittest.TestCase):
             http_status=200,
             soap_version="1.1",
         )
-        self.assertFalse(result.ok)
+        self.assertTrue(result.ok)
         self.assertEqual(
             result.missing_capabilities,
             ("original_configuration_capability",),
         )
+
+    def test_response_without_capability_blocks_preflight(self):
+        response = self.RESPONSE
+        for name in kmscn.CAPABILITY_ENTRY_NAMES:
+            start = response.index(f"<kmscn:{name}>".encode("ascii"))
+            end = response.index(f"</kmscn:{name}>".encode("ascii"))
+            end += len(f"</kmscn:{name}>")
+            response = response[:start] + response[end:]
+        result = kmscn.parse_capability_response(
+            response,
+            endpoint="http://192.0.2.1:9090/scan",
+            http_status=200,
+            soap_version="1.2",
+        )
+        self.assertFalse(result.ok)
+        self.assertEqual(result.missing_capabilities, kmscn.CAPABILITY_ENTRY_NAMES)
+
+    def test_device_success_token_is_accepted(self):
+        response = self.RESPONSE.replace(
+            b"<kmscn:result>0</kmscn:result>",
+            b"<kmscn:result>SUCCESS</kmscn:result>",
+        )
+        result = kmscn.parse_capability_response(
+            response,
+            endpoint="http://192.0.2.1:9090/scan",
+            http_status=200,
+            soap_version="1.2",
+        )
+        self.assertTrue(result.ok)
+
+
+class SessionRequestTests(unittest.TestCase):
+    CONFIGURATION = kmscn.XmlNode(
+        name="get_default_configurationResponse",
+        attributes={},
+        text=None,
+        children=(
+            kmscn.XmlNode("result", {}, "SUCCESS", ()),
+            kmscn.XmlNode(
+                "scan_image_configuration",
+                {},
+                None,
+                (
+                    kmscn.XmlNode(
+                        "color_selection",
+                        {},
+                        "FULL_COLOR",
+                        (),
+                    ),
+                ),
+            ),
+            kmscn.XmlNode(
+                "original_configuration",
+                {},
+                None,
+                (kmscn.XmlNode("original_size", {}, "A4", ()),),
+            ),
+            kmscn.XmlNode(
+                "output_image_configuration",
+                {},
+                None,
+                (
+                    kmscn.XmlNode(
+                        "image_file_format",
+                        {},
+                        "RAW",
+                        (),
+                    ),
+                ),
+            ),
+        ),
+    )
+
+    def test_start_scan_uses_defaults_and_operation_id(self):
+        payload, headers = kmscn.build_start_scan_request(
+            "17",
+            self.CONFIGURATION,
+        )
+        text = payload.decode("utf-8")
+        self.assertIn("<kmscn:operation_id>17</kmscn:operation_id>", text)
+        self.assertIn(
+            "<kmscn:color_selection>FULL_COLOR</kmscn:color_selection>",
+            text,
+        )
+        self.assertIn(
+            "<kmscn:image_file_format>RAW</kmscn:image_file_format>",
+            text,
+        )
+        self.assertEqual(
+            headers["SOAPAction"],
+            f'"{kmscn.SCAN_NAMESPACE}/start_scan"',
+        )
+
+    def test_configuration_replace_preserves_tree(self):
+        changed = kmscn.replace_configuration_value(
+            self.CONFIGURATION,
+            "image_file_format",
+            "JPEG",
+        )
+        self.assertEqual(changed.name, self.CONFIGURATION.name)
+        self.assertEqual(changed.children[-1].children[0].text, "JPEG")
+
+
+class SessionResponseTests(unittest.TestCase):
+    MIME_RESPONSE = b"""--test-boundary\r
+Content-Type: application/xop+xml; charset=utf-8; type="application/soap+xml"\r
+Content-Transfer-Encoding: binary\r
+Content-ID: <SOAP-ENV:Envelope>\r
+\r
+<?xml version="1.0" encoding="UTF-8"?>\n
+<SOAP-ENV:Envelope xmlns:SOAP-ENV="http://www.w3.org/2003/05/soap-envelope" xmlns:kmscn="http://www.kyoceramita.com/ws/km-wsdl/job/scan_operation" xmlns:xop="http://www.w3.org/2004/08/xop/include">\n
+<SOAP-ENV:Body><kmscn:retrieve_imageResponse><kmscn:result>SUCCESS</kmscn:result><kmscn:file_type>RAW</kmscn:file_type><kmscn:file_size>3</kmscn:file_size><kmscn:image_data><xop:Include href="cid:id1"/></kmscn:image_data></kmscn:retrieve_imageResponse></SOAP-ENV:Body>\n
+</SOAP-ENV:Envelope>\r
+--test-boundary\r
+Content-Type: image/x-raw\r
+Content-ID: <id1>\r
+\r
+\x00\x7f\xff\r
+--test-boundary--\r
+"""
+
+    def test_multipart_xop_image_is_extracted(self):
+        result = kmscn.parse_scan_response(
+            self.MIME_RESPONSE,
+            operation="retrieve_image",
+            endpoint="http://192.0.2.1:9090/scan",
+            http_status=200,
+            soap_version="1.2",
+            content_type='multipart/related; boundary="test-boundary"',
+        )
+        self.assertTrue(result.ok)
+        self.assertEqual(result.result, "SUCCESS")
+        self.assertEqual(result.file_type, "RAW")
+        self.assertEqual(result.file_size, 3)
+        self.assertEqual(result.body, b"\x00\x7f\xff")
+
+    def test_all_get_complete_is_a_successful_terminal_state(self):
+        response = b"""<SOAP-ENV:Envelope
+ xmlns:SOAP-ENV="http://www.w3.org/2003/05/soap-envelope"
+ xmlns:kmscn="http://www.kyoceramita.com/ws/km-wsdl/job/scan_operation">
+ <SOAP-ENV:Body><kmscn:retrieve_imageResponse>
+  <kmscn:result>ALL_GET_COMPLETE</kmscn:result>
+ </kmscn:retrieve_imageResponse></SOAP-ENV:Body>
+</SOAP-ENV:Envelope>"""
+        result = kmscn.parse_scan_response(
+            response,
+            operation="retrieve_image",
+            endpoint="http://192.0.2.1:9090/scan",
+            http_status=200,
+            soap_version="1.2",
+            content_type="application/soap+xml; charset=utf-8",
+        )
+        self.assertTrue(result.ok)
+        self.assertEqual(result.result, "ALL_GET_COMPLETE")
 
 
 class NetworkTests(unittest.TestCase):
@@ -231,6 +427,9 @@ class NetworkTests(unittest.TestCase):
 
         def read(self, limit):
             return ResponseTests.RESPONSE
+
+        def getheaders(self):
+            return [("Content-Type", "text/xml; charset=utf-8")]
 
     class Connection:
         def __init__(self):

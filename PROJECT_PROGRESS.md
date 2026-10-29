@@ -10,11 +10,16 @@
 功能和通信行为，并在 Linux 上实现可移植、可测试的替代工具；长期目标不限于
 MA2000w。
 
-当前结论：**扫描路径已从“材料缺失”推进到“客户端协议明确、等待真机响应”。**
-只读监控、设备发现、本地 Web/GUI 和配置只读导出已经可用。2026-10-29
-从京瓷官方安装包补齐网络 TWAIN 驱动，确认其通过 KM-WSDL/gSOAP 扫描，并
-新增只读服务信息、能力和顺序预检。设备已上线但处于睡眠，80/9090 监听，
-9091 未监听；HTTP 请求在应用层被静默关闭，真实 SOAP 响应仍未取得。
+当前结论：**MA2000w 网络扫描已在 Linux 端独立打通。** 只读监控、设备发现、
+本地 Web/GUI、配置只读导出和单页扫描均可用。2026-10-29 使用 32 位 Wine
+诊断宿主捕获官方 DLL 的真实 SOAP 1.2 请求，随后在不依赖官方 DLL 的 Python
+实现中完成预检、默认配置读取、开会话、启动扫描、XOP 取图、RAW 分带解码、
+BMP 输出和关会话。最大风险已从“协议方法猜测”转为“默认 RAW 色彩路径和
+其他机型/双面路径的兼容性验证”。
+
+**最高优先级工程约束：** 官方二进制可观察到的行为优先于项目自身推断；
+正式 Linux 功能只复刻行为，不在运行时依赖官方 DLL/EXE。详细规则见
+`AGENTS.md` 第 0 节。
 
 当前产品边界：
 
@@ -22,10 +27,11 @@ MA2000w。
   147 项配置对象只读导出（MA2000w 实测 96/147 返回 `STATUS=0`）。
 - 静态已验证：网络 TWAIN 使用 `Ns1815TWGN -> KMNETSCN3 -> KMSCNAPI`；
   KM-WSDL 使用 HTTP 9090 或 HTTPS 9091，扫描 action 已还原。
-- 已提供但未真机验证：只读 `get_service_information` KM-WSDL 探针。
+- 已真机验证：KM-WSDL SOAP 1.2 预检、默认配置、扫描会话、XOP 取图、
+  `ALL_GET_COMPLETE`、关会话以及独立 RAW→BMP 解调。
 - 离线实现：USB `usblp` 路径、PJL 分段补发、PTY 假设备往返。
-- 未闭环：KM-WSDL 真机响应与 Linux 取图、物理 USB 验证、配置写入、
-  其他机型的兼容性验证。
+- 未闭环：物理 USB、配置写入、其他机型的兼容性、完整色彩管理和复杂双面/
+  ADF 多页路径。
 
 ## 计划对齐检查
 
@@ -33,8 +39,8 @@ MA2000w。
 | --- | --- | --- |
 | 研究范围 | 仍限定在 `Kyocera/ClientTool` 及 Linux 实现所需协议 | 未偏移 |
 | 产品目标 | 仍以复刻设备侧可验证功能为目标，没有转向通用 SNMP 工具 | 未偏移 |
-| 用户可见能力 | 扫描尚未闭环，但已新增可执行的只读 KM-WSDL 探针 | 持续对齐 |
-| 阶段重点 | 已取得原厂网络 TWAIN 驱动并还原客户端协议 | 转入真机验证 |
+| 用户可见能力 | Linux 已可独立完成 MA2000w 单页网络扫描并输出 BMP | 已对齐 |
+| 阶段重点 | SOAP 1.2、会话、XOP 和 RAW 分带均由官方行为驱动 | 转入兼容性收尾 |
 | 进度记录 | 详细交接继续归档，总览保留当前事实和阻塞 | 保持 |
 
 判断依据不是工作量多少，而是这些工作是否直接解除当前产品阻塞。OID 命名对
@@ -54,7 +60,7 @@ MA2000w。
 | KM-WSDL 只读服务信息探针 | `DONE` | 生成请求、Fault/result 处理、JSON 输出；10 个专项测试 |
 | KM-WSDL 只读能力探针 | `DONE` | 空 capability 请求；三类能力树、缺项/Fault/非法 XML 处理；专项测试 |
 | 官方扫描预检顺序复刻 | `DONE` | service info 成功后才请求 capability；失败阶段结构化记录 |
-| Linux 扫描端到端 | `IN_PROGRESS` | 客户端已实现；等待设备在线验证响应、能力、会话和取图 |
+| Linux 扫描端到端 | `DONE` | MA2000w 真机单页：SOAP 1.2、XOP、RAW 解码、2496×3520 BMP、正常关会话 |
 | USB 物理验证 | `BLOCKED` | 物理连接未确认；仅完成离线 PTY 测试 |
 | 配置写入与回滚 | `TODO` | 尚无只读基线、备份、写入、回读和恢复流程 |
 
@@ -83,15 +89,18 @@ MA2000w。
 - **网络 TWAIN**：官方 `Kyocera TWAIN Driver GX 2.1.4412` 已取得并校验；
   `KMSCNAPI.dll` 使用 gSOAP 2.7 调用 KM-WSDL。明文 HTTP 路径为 9090，
   HTTPS 路径为 9091，scan operation 路径及 action 已落表。
+- **Linux 网络扫描**：`tools/kmscn_scan.py` 独立执行预检、默认配置、会话、
+  启动、轮询取图、`ALL_GET_COMPLETE` 和关闭；`kmscn_raw.py` 按官方
+  `CScanData::PrepareImageData` 状态机解析校准和颜色分带。真机样本为
+  2496×3520 BMP，原始流 28,275,026 字节。
 - **OID 语义**：827 个唯一文本 OID，其中 91 个为第三方库常量；736 个设备
   OID 中 735 个已有名称或语义，仅 `1.3.6.1.4.1.1347.42.27.6.0` 未知。
 
 ## 当前优先级
 
-1. **P0：完成 KM-WSDL 真机验证。** 设备在线时先运行只读
-   `tools/kmscn_probe.py --preflight`，依次核对服务信息和 capability 的
-   HTTP 9090、HTTPS 9091、SOAP 1.1/1.2；保存脱敏响应后再实现
-   open/start/retrieve/close。
+1. **P0：验证扫描参数与多页路径。** 使用非空白页面分别测试 SIMPLEX/DUPLEX、
+   ADF/平板、非默认分辨率与颜色配置；将官方 KMIP 色彩矩阵和分页状态逐项
+   对照，不以猜测补齐。
 2. **P1：USB 硬件验证。** 接入设备后跑 `--list-usb`、`--usb --json`，与 TCP
    结果逐项对照；同时验证断线重连和睡眠唤醒。
 3. **P2：配置写入前置设计。** 先建立只读基线、备份、最小写入、回读和回滚；
@@ -100,12 +109,9 @@ MA2000w。
 
 ## 待验证假设
 
-- KM-WSDL 客户端默认使用 SOAP 1.1；该结论来自 gSOAP 初始化字段和响应版本
-  分支，但尚无设备接受或拒绝的实测响应。
-- `get_service_informationRequest` 为空元素、HTTPS 证书处理方式以及服务信息
-  响应 XML 结构，需要设备在线时由探针确认。
-- `get_capabilityRequest` 为空元素，响应应含 `result` 与三类能力项；这些
-  结构来自官方驱动的序列化函数，能力项内部字段仍需真机响应确认。
+- 官方 KMIP 色彩矩阵在非默认颜色/画质模式下是否会影响当前 RAW→RGB 结果。
+- ADF、双面和第二页的 `retrieve_image` 结果序列。
+- HTTPS 9091 的证书和认证行为；MA2000w 当前未监听 9091。
 - USB 原始 UEL 帧是否与 TCP 9100 完全一致；语言监视器是否增加额外封装。
 - 原厂程序在 USB 与网络连接下是否使用相同的 PJL 查询序列。
 - `43.5.1.1.33/34/35` 的厂商名称虽已匹配，仍需写入回读或原厂界面确认。
@@ -113,17 +119,17 @@ MA2000w。
 - `CODE2=30014/30001` 组合分支的准确触发条件。
 - NetViewer `.NET` 的 `ScanOperation` 是否存在反射或动态加载调用；当前静态引用
   只指向 `Core.CoreServices.dll` 自身。
-- MA2000w 的 80/9090 gSOAP 是访问控制、服务未启用，还是认证前置条件未满足。
+- 其他型号是否同样接受空 `open_session` 和默认配置直传。
 
 ## 当前阻塞
 
-- 当前主机没有 Windows 运行环境，无法对原厂程序做动态抓包。
+- 当前没有真实 Windows 主机；已安装 Wine/32 位 MinGW 作为本地行为观测
+  环境，但它不能覆盖所有 Windows TWAIN UI 和驱动动态路径。
 - USB 物理验证受硬件接入限制；历史检查未发现 `0482:0d51`，本次 `lsusb`
   因执行环境无法初始化 libusb（`-99`）而未能复核，接入时需重新确认。
-- 2026-10-29 复核时 `192.168.0.220` 已在线，但面板状态为 `Sleeping...`。
-  80/9090 监听，9091 未监听；HTTP GET、OPTIONS 和 KM-WSDL POST 均被无响应
-  关闭，因此无法验证 SOAP 版本、认证、能力响应和实际取图。
-- 设备只发布 WSD 打印服务，`631/tcp` 关闭，eSCL/KM-WSDL 无应用层响应。
+- MA2000w 的 9090 在睡眠状态可正常完成扫描；此前失败已确认是简化 SOAP 1.1
+  请求不匹配官方 SOAP 1.2 封装，不再是阻塞。
+- 设备只发布 WSD 打印服务，`631/tcp` 关闭；扫描使用 KM-WSDL，而非 eSCL。
 - SNMPv2c `GET`/`GETNEXT` 正常，`GETBULK` 无响应；实现继续默认 SNMPv1。
 - 设备睡眠时 PJL 9100 可能连续无响应，配置读取应使用 `--config --snmp`。
 - `Kyocera/NetViewer/KNV/log/kmnv.log` 含序列号和加密凭据，只能本地使用，
@@ -163,65 +169,52 @@ MA2000w。
 - 干净归档和 Git bundle 位于 `/tmp/kyocera-client-tool-for-linux-20261018.tar.gz`
   和 `/tmp/kyocera-client-tool-for-linux-20261018.bundle`。
 
-## 最近一次工作交接（第三十一轮）
+## 最近一次工作交接（第三十二轮）
 
-日期：2026-10-29。范围：补齐网络 TWAIN 驱动，静态还原 KM-WSDL 扫描客户端，
-新增只读服务信息和能力探针，并以通用树形解析保留尚不确定的能力字段结构。
-没有执行扫描会话、扫描、取图、SNMP SET、`KSETOBJ`、重启或配置写入。
+日期：2026-10-29。范围：以官方二进制和真实请求为基准，完成 MA2000w
+KM-WSDL 网络扫描、XOP 取图和 RAW 图像解码的独立 Linux 实现。执行了真实
+单页扫描；没有执行 SNMP SET、`KSETOBJ`、重启或配置写入。
 
 完成与证据：
 
-- 从京瓷官方站点取得 TWAIN Driver 2.1.4412：
-  `92912ad89d780bfe39fa4b82d9d469ea9eef4c5b74de7fb97f693103451e801e`。
-- 从 PE 资源无损取出 16,235,106 字节内嵌 ZIP，完整性测试通过；
-  `Ns1815TWGN.dll` SHA-256 为
-  `b277ff4b1bf31f0cc39b63fc8c5fbdd4770a44261cadaddb102f4d9517cfae09`。
-- 确认调用链 `Ns1815TWGN -> KMNETSCN3 -> KMSCNAPI`；`KMSCNAPI.dll`
-  导入 `WININET.dll`、静态链接 gSOAP 2.7 与 OpenSSL。
-- 确认 HTTP 9090、HTTPS 9091、三个 KM-WSDL 服务路径、八个扫描 action，
-  以及 service info → capability → open → start → retrieve → close 顺序。
-- 新增 `kyocera_monitor/kmscn.py`、`tools/kmscn_probe.py`、
-  `tools/ghidra_scripts/InspectScanApi.java` 和 10 个专项测试；探针只发送
-  `get_service_information`。
-- 从 `KMSCNAPI.dll` 的 gSOAP 序列化函数确认 `get_capabilityRequest` 为空，
-  响应根包含 `result`、`scan_image_configuration_capability`、
-  `original_configuration_capability` 和
-  `output_image_configuration_capability`。
-- `--capability` 新增为只读操作；响应保留 XML 元素名、属性和子节点树，
-  不猜测数组语义。缺少预期项、Fault、非零 result、非 2xx 或非法 XML 均失败。
-- 根据 `KMSCNAPI.dll` 的 HTTP 生成路径，将传输改为显式 gSOAP 2.7 风格
-  `POST`：`User-Agent: gSOAP/2.7`、带引号 SOAPAction、`Content-Length`
-  和 `Connection: close`，不再由 `urllib` 自动附加额外 Accept-Encoding。
-- 新增 `--preflight`，复刻官方 `service_info -> capability` 顺序；服务信息
-  失败时 capability 保持未发送，网络异常记录在 `failed_stage` 和 `error`。
-- 解析器新增 DTD/实体声明拒绝和 2 MiB 响应上限测试；新增 capability、
-  预检顺序和网络异常测试。新增 `DecompileAddresses.java` 用于按地址聚焦
-  反编译。
-- 验证：`python3 -m unittest discover -s tests -v` → 159/159 通过；
+- 安装 Wine 10.0 和 i686 MinGW，在独立前缀
+  `/home/ync/.wine-kyocera-scan` 中加载官方 32 位 `KMSCNAPI.dll`；使用
+  `127.0.0.2:9090` 绕开本机 `sing-box` 对 `127.0.0.1:9090` 的占用。
+- 捕获并逐字节复刻官方 SOAP 1.2 请求：完整 namespace、
+  `<wsa:Action>` Header、`application/soap+xml`、带引号 SOAPAction；
+  `get_service_information` 请求体 1657 字节，SHA-256 为
+  `ae4f8f9a43f2f46a3b76e2a1190dd5990d62d1699aaaeb14ac1264def76f3a0c`。
+- 真机返回服务信息 `SUCCESS`、版本 `30.0.134.1`、型号 `MA2000w`，
+  capability 包含 `duplex_mode=DUPLEX`，默认配置为 FULL_COLOR、300×300、
+  A4、RAW。
+- 真机完整执行 `open_session -> start_scan -> retrieve_image* ->
+  ALL_GET_COMPLETE -> close_session`；`close_session` 返回 `SUCCESS`。
+- 确认取图为 `multipart/related` + XOP；生成中返回
+  `IMAGE_CREATING_NOW`，结束时返回 `ALL_GET_COMPLETE`。
+- 从 `KMNETSCN3.dll` 还原 RAW 状态机和 `KMIPAPI.dll` 的校准/合并行为；
+  新增 `kyocera_monitor/kmscn_raw.py`，独立完成暗/亮校准、阴影校正、
+  三颜色平面合并和 24 位 BMP 输出。
+- 新增 `tools/kmscn_scan.py`，正式扫描不加载 Wine 或官方 DLL。
+- 真机结果：RAW 28,275,026 字节；BMP 2496×3520、26,357,814 字节；
+  非空白页面视觉检查正常。
+- 验证：`python3 -m unittest discover -s tests -v` → 170/170 通过；
   `python3 tools/check_publication.py` 通过。
-- 真机复核：`pkexec nmap` 确认主机在线、80/9090 开放、9091 关闭；PJL
-  状态读取成功并确认 `Sleeping...`。HTTP GET/OPTIONS 与三种 KM-WSDL
-  只读请求均被服务器无响应关闭。
 
 遗留问题：
 
-- 设备在线后才能确认 SOAP 版本、HTTPS 证书、认证前置条件和真实响应。
-- 当前最先要排除的阻塞是设备睡眠：需在打印机面板物理唤醒后重跑
-  preflight。若唤醒后仍为空响应，再排查 Web 服务禁用或来源 IP 过滤。
-- 能力响应仅由静态契约和合成 XML 验证，尚未确认真实设备的重复元素、
-  可选字段、数值单位或枚举。
-- 尚未验证 `start_scan` 枚举值、取图分页、末页标记和失败码的真机语义。
-- Windows TWAIN 动态流量仍未抓取；当前网络协议依据官方二进制静态分析。
+- 官方 KMIP 的完整色彩矩阵仅在默认 RAW 配置下完成路径复刻；其他颜色/画质
+  枚举仍需非默认设置对照。
+- 双面、ADF、多页分页和取消路径尚未真机验证。
+- HTTPS 9091、认证和跨机型兼容性未验证。
 
-上一轮文档整理已把原有里程碑和 29 轮交接完整移入
-`docs/reverse-engineering/progress-history.md`；本文件继续只保留当前结论。
+Wine 截图/捕获环境、编译命令和 `127.0.0.2` 端口冲突绕法已写入
+`docs/reverse-engineering/tooling.md`。
 
 ## 下一步
 
-优先执行：设备恢复在线后运行
-`python3 tools/kmscn_probe.py <device> --preflight --json --raw`；失败时按
-结构化 `failed_stage` 排查。服务信息和 capability 都成功后再测试 HTTPS 或
-SOAP 1.2 兼容选项，随后才进入扫描会话状态机。
+优先执行：用一页有清晰正文的原稿测试非默认分辨率、双面/ADF（若设备支持）
+和多页路径；逐项对照 `retrieve_image` 状态与官方 KMIP 输出。之后再做配置
+写入基线/回滚设计。
 
 ## 相关文档
 
@@ -230,6 +223,7 @@ SOAP 1.2 兼容选项，随后才进入扫描会话状态机。
 - `docs/reverse-engineering/clienttool-protocol.md`
 - `docs/reverse-engineering/protocol-notes.md`
 - `docs/reverse-engineering/scan-workflow.md`
+- `docs/reverse-engineering/tooling.md`
 - `docs/reverse-engineering/kmws-soap.md`
 - `docs/reverse-engineering/usb-path.md`
 - `docs/reverse-engineering/netviewer-log-findings.md`

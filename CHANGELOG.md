@@ -26,10 +26,18 @@
   扫描导出函数、网络 API 调用者和相关协议字符串交叉引用。
 - 新增 `tools/ghidra_scripts/DecompileAddresses.java`，用于按地址聚焦导出
   官方驱动的 URL、HTTP 和 SOAP 封装函数。
-- 2026-10-29 真机复核时 MA2000w 已上线，80/9090 监听、9091 未监听；设备处于
-  `Sleeping...`，HTTP 请求被无响应关闭，SOAP 版本协商、认证和真实响应仍未
-  验证。
-- 验证：`python3 -m unittest discover -s tests -v` → 159/159 通过；
+- 使用 Wine 10.0 和 32 位 MinGW 诊断宿主加载官方 DLL，捕获并逐字节复刻
+  SOAP 1.2、WS-Addressing Header、完整 namespace、SOAPAction 和 gSOAP
+  HTTP 头；请求样本已写入测试。
+- 新增 `tools/kmscn_scan.py`，独立完成预检、默认配置、开会话、启动扫描、
+  XOP 轮询取图、`ALL_GET_COMPLETE` 和关会话，不依赖官方 DLL。
+- 新增 `kyocera_monitor/kmscn_raw.py`，按官方状态机实现暗/亮校准、
+  阴影校正、三颜色平面合并和 24 位 BMP 输出。
+- MA2000w 真机完成单页扫描：RAW 28,275,026 字节，成功输出 2496×3520 BMP；
+  `close_session=SUCCESS`。
+- 新增 32 位 MinGW 官方 DLL 诊断宿主、回环捕获服务器，以及包含 Wine
+  安装、隔离前缀和端口绕法的逆向工具文档。
+- 验证：`python3 -m unittest discover -s tests -v` → 170/170 通过；
   公开树检查通过。
 
 ## 2026-10-18

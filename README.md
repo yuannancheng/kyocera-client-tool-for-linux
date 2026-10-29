@@ -54,6 +54,9 @@ python3 tools/kmscn_probe.py 192.168.0.220
 python3 tools/kmscn_probe.py 192.168.0.220 --capability --json
 python3 tools/kmscn_probe.py 192.168.0.220 --preflight --json --raw
 python3 tools/kmscn_probe.py 192.168.0.220 --https --insecure --json
+python3 tools/kmscn_scan.py 192.168.0.220 \
+  --format RAW --output /tmp/kyocera-scan.raw \
+  --decoded-output /tmp/kyocera-scan.bmp
 ```
 
 退出码：`0` 状态正常，`1` 未发现打印机或配置导出没有读到任何对象，`2` 连接或
@@ -63,13 +66,23 @@ python3 tools/kmscn_probe.py 192.168.0.220 --https --insecure --json
 驱动的 `get_service_information` 和 `get_capability` 请求，用于验证 HTTP 9090
 或 HTTPS 9091 上的 KM-WSDL 服务及三类扫描能力。能力响应会保留完整 XML
 层级，不提前把未知的重复元素解释为数组。探针不会打开扫描会话、开始扫描、
-取图或修改设备设置；当前客户端协议已有官方驱动的静态证据，但尚未完成
-MA2000w 真机响应验证。详细边界和复现记录见
+取图或修改设备设置。MA2000w 上已实测服务信息、能力、默认配置、打开会话、
+开始扫描、取图和关闭会话。详细边界和复现记录见
 [`docs/reverse-engineering/scan-workflow.md`](docs/reverse-engineering/scan-workflow.md)。
 `--preflight` 复刻驱动的顺序：只有服务信息成功后才发送 capability；网络异常
 会以结构化 JSON 报告失败阶段，并明确 capability 未发送。
-该探针的退出码为 `0` 请求成功、`1` 被测服务拒绝请求、返回 Fault 或缺少预期
-能力项、`2` 连接或协议错误。
+该探针的退出码为 `0` 请求成功、`1` 被测服务拒绝请求、返回 Fault 或没有返回
+任何可识别能力项、`2` 连接或协议错误。
+
+`tools/kmscn_scan.py` 是独立 Linux 扫描实现，不加载官方 DLL。它先执行与
+原厂驱动一致的预检，读取设备默认扫描配置，再执行
+`open_session -> start_scan -> retrieve_image -> ALL_GET_COMPLETE ->
+close_session`。MA2000w 返回私有 RAW 分带流；`kyocera_monitor/kmscn_raw.py`
+按原厂解析状态机还原校准、三颜色平面分带和阴影校正，并输出 24 位 BMP。
+`--no-decode` 可只保留原始流。当前已验证 2496×3520 RGB 单页扫描。
+正式扫描只需要 Python 标准库；Wine、MinGW 和官方 DLL 仅用于受控逆向对照，
+环境与复现步骤见
+[`docs/reverse-engineering/tooling.md`](docs/reverse-engineering/tooling.md)。
 
 ## 图形界面
 
