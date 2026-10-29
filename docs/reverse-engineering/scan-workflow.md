@@ -15,8 +15,10 @@
 | `Kyocera/ClientTool/KMSCN/KMSCNFOL.exe` | `19b144be1b52ad9f68f9729d984ab4c51322f04dce91f1f9fa4ce6f4ee4185b5` | Scan to Folder 应用 |
 
 分析方式：Ghidra 12.1.4 headless 静态反编译 + PE 导入表/字符串核对。
-本次没有 Windows 运行环境，也没有抓取扫描数据流量；因此“Windows 内部调用链”
-属于已验证的静态事实，“设备侧扫描数据使用何种协议”仍属未知。
+2026-10-29 又取得京瓷官方发布的 `Kyocera TWAIN Driver GX 2.1.4412`，
+补齐了网络 TWAIN 驱动栈。本文没有 Windows 运行环境，也没有抓取扫描数据
+流量；因此 Windows 内部调用链和客户端协议构造属于已验证的静态事实，设备
+实际接受的 SOAP 版本、认证前置条件和完整响应仍待真机验证。
 
 ## 2. Push Scan 调用链（已验证）
 
@@ -113,6 +115,9 @@ QuickScanSettings
 `KM_QuickScan_Mutex`、`Scanning in progress...` 以及
 `C:\Logs\LogService\ScanOutput` 日志路径。
 
+2026-10-29 的后续分析确认，网络 TWAIN 数据源内部使用 KM-WSDL/gSOAP
+客户端（第 9 节）；这不改变“Client Tool 通过 TWAIN 采集”的上层调用关系。
+
 ### 4.1 USB 分支（静态证据）
 
 `KMSTMNW.exe` 的 Push Scan 入口 `FUN_00450f20` 用接口类型区分网络与 USB：
@@ -148,8 +153,8 @@ QuickScanSettings
 
 未知：
 
-- 设备侧网络扫描的数据通道（TWAIN 驱动内部使用 SOAP、WSD、eSCL 或其他私有
-  协议）。
+- 早期样本中设备侧网络扫描的数据通道未知；2026-10-29 已由官方驱动补齐
+  KM-WSDL 客户端证据，只剩真机协商和响应验证，见第 9 节。
 - `KMSCNFOL.exe` 如何把 TWAIN 图像保存到目标目录，以及是否还有中间服务。
 - Push Scan 通知消息的完整字段布局；目前只还原了消费端读取的偏移和分支。
 - 当前 Linux 主机能否通过 SANE/eSCL/WSD 直接触发同类扫描。
@@ -294,9 +299,9 @@ retrieve_imageRequest
   传入，而扫描调用方不在随附二进制中。
 
 这与已观察到的 Client Tool 路径一致：原生 `KMSTMNW.exe` 通过 TWAIN 数据源
-采集图像，NetViewer 日志中 `KM-WSDL version` 为空并回退到 SNMP。现阶段不应
-基于这些未接入的契约编写扫描触发实现。下一步仍是取得 Windows TWAIN 驱动的
-真实流量，或取得安装包中的 `Ns1815TWGN.DLL` 做静态/动态分析。
+采集图像，NetViewer 日志中 `KM-WSDL version` 为空并回退到 SNMP。2026-10-29
+已从官方 TWAIN 安装包取得 `Ns1815TWGN.DLL`，并确认其网络实现使用 KM-WSDL，
+详见第 9 节。NetViewer 中这组未被引用的契约仍不能作为 NetViewer 扫描入口。
 
 ## 7. 对 Linux 实现的含义
 
@@ -305,7 +310,8 @@ retrieve_imageRequest
 1. 先在设备上验证是否存在 eSCL（`/eSCL/ScannerCapabilities`）或 WSD Scan
    服务；这需要设备 Web 服务可达。
 2. 若设备只支持 TWAIN，则需要在 Linux 上寻找同型号的 SANE backend，或通过
-   Windows 侧抓包确认 TWAIN 驱动实际使用的网络协议。
+   Windows 侧抓包确认 TWAIN 驱动实际使用的网络协议。该静态空白现已由第 9
+   节补齐：网络 TWAIN 使用 KM-WSDL，不再需要把 WSD/eSCL 当作唯一候选。
 3. 在协议未确认前，不在 Linux 端实现“发送扫描预设”或“伪造 Push Scan”功能。
 4. 现有 `kyocera_monitor` 仍只做只读状态查询，不包含扫描能力。
 
@@ -323,3 +329,209 @@ env XDG_CONFIG_HOME=/tmp/ghidra_config \
 
 对 `KMSCNPUS.exe` 和 `KMSCNSET.dll` 使用同一命令，替换导入路径和输出目录即可。
 生成目录 `analysis/` 不纳入版本控制。
+
+## 9. 网络 TWAIN 驱动栈与 KM-WSDL（2026-10-29）
+
+### 9.1 样本取得与完整性
+
+此前仓库只含 `Kyocera/Twain.pnf`，没有其中列出的 TWAIN 二进制。2026-10-29
+从京瓷官方下载中心取得与本机清单匹配的
+`MA 2000\W Series TWAIN Driver (2.1.4412)`：
+
+- 官方页面：
+  <https://www.kyoceradocumentsolutions.us/en/support/downloads.name-L3VzL2VuL21mcC9NQTIwMDBX.html>
+- 安装包：`Kyocera_TWAINDriver_2.1.4412.exe`
+- 安装包 SHA-256：
+  `92912ad89d780bfe39fa4b82d9d469ea9eef4c5b74de7fb97f693103451e801e`
+- 内嵌 `KmSFX.zip` SHA-256：
+  `e7691763e81a9765ade115ea80246ce9969e13907cd65276420f60dcb549fb54`
+
+安装包使用自定义自解压 PE；无需执行安装器，可从 PE 资源
+`RT_RCDATA/1` 取出内嵌 ZIP。核心成员已解出到被忽略的
+`analysis/local-only/twain-2.1.4412/Scanner/TWAIN/`：
+
+| 文件 | SHA-256 |
+| --- | --- |
+| `Ns1815TWGN.dll` | `b277ff4b1bf31f0cc39b63fc8c5fbdd4770a44261cadaddb102f4d9517cfae09` |
+| `KMNETSCN3.dll` | `99dcd56e9f1948066e13f2136b0cd711e3bf1303e023d405d595c7e135c4a29b` |
+| `KMSCNAPI.dll` | `d3e276ebe284351e46549fc1c5145c4241fa41e70f4aca306a5abc94b20f2d7a` |
+| `KMWSDLTWAING.ds` | `b054e5daf8adae18ac5e63c1885e21231a492b9500c2ce7d18e391d9fad45d5c` |
+
+这些第三方二进制只保存在本地分析目录，不进入公开树。
+
+### 9.2 驱动调用链（已验证）
+
+网络 TWAIN 的调用层级是：
+
+```text
+Ns1815TWGN.dll
+  -> LoadLibrary("%WINDIR%\\TWAIN_32\\KMTWAIN\\KMNETSCN3.dll")
+  -> KMNETSCN3.dll LoadLibrary("KMSCNAPI.dll")
+  -> KMSCNAPI.dll 实现 KM-WSDL/gSOAP 网络客户端
+```
+
+`KMNETSCN3.dll` 在初始化时解析以下 `KMSCNAPI.dll` 导出：
+
+```text
+KMSCNInit
+KMSCNGetServiceInfo
+KMSCNGetCapability
+KMSCNOpenSession
+KMSCNStartScan
+KMSCNRetrieveImage
+KMSCNCancelScan
+KMSCNCloseSession
+KMSCNExit
+```
+
+`KmNetScnThread` 的实际顺序是：
+
+1. `KMSCNGetServiceInfo`，最多重试一次。
+2. 检查型号信息是否属于该驱动支持的设备。
+3. `KMSCNGetCapability`，并检查自动输稿器是否受支持。
+4. 建立扫描子线程；收到扫描请求后调用 `KMSCNOpenSession`。
+5. 调用 `KMSCNStartScan`。
+6. 循环调用 `KMSCNRetrieveImage`，直到收到末页标记。
+7. 调用 `KMSCNCloseSession`；取消路径调用 `KMSCNCancelScan`。
+
+这说明网络扫描并不依赖 WSD Scan 或 eSCL，而是 TWAIN 数据源内部的私有
+KM-WSDL 接口。
+
+### 9.3 地址、端口和 TLS 路由（已验证的静态事实）
+
+`Ns1815TWGN.dll` 从 TWAIN 配置读取 `ScannerAddress` 和 `SSL`：
+
+- `SSL=1`：地址写成 `https://<host>`，IPv6 写成 `https://[<host>]`。
+- `SSL=0`：地址写成 `http://<host>`，IPv6 写成 `http://[<host>]`。
+
+`KMSCNAPI.dll` 在初始化时根据输入 URL 是否为 HTTPS 选择端口：
+
+| 传输 | 端口 | 根路径 |
+| --- | --- | --- |
+| HTTP | `9090` | `/ws/km-wsdl/` |
+| HTTPS | `9091` | `/ws/km-wsdl/` |
+
+三个服务路径为：
+
+```text
+/ws/km-wsdl/job/scan_operation
+/ws/km-wsdl/security/authentication_authorization
+/ws/km-wsdl/information/device_information
+```
+
+扫描客户端使用的操作与 SOAP action 为：
+
+```text
+http://www.kyoceramita.com/ws/km-wsdl/job/scan_operation/get_service_information
+http://www.kyoceramita.com/ws/km-wsdl/job/scan_operation/get_capability
+http://www.kyoceramita.com/ws/km-wsdl/job/scan_operation/get_default_configuration
+http://www.kyoceramita.com/ws/km-wsdl/job/scan_operation/open_session
+http://www.kyoceramita.com/ws/km-wsdl/job/scan_operation/start_scan
+http://www.kyoceramita.com/ws/km-wsdl/job/scan_operation/retrieve_image
+http://www.kyoceramita.com/ws/km-wsdl/job/scan_operation/cancel_scan
+http://www.kyoceramita.com/ws/km-wsdl/job/scan_operation/close_session
+```
+
+`KMSCNAPI.dll` 导入 `WININET.dll`，同时静态链接 gSOAP 2.7 与 OpenSSL。
+gSOAP 初始化时 SOAP 版本字段为 `0`，对应 SOAP 1.1 默认值；响应解析器可识别
+SOAP 1.1 和 SOAP 1.2 命名空间。因此 Linux 探针默认使用 SOAP 1.1，并提供
+`--soap-version 1.2` 作为真机兼容性选项。
+
+capability 契约的关键静态证据（地址均相对 `KMSCNAPI.dll` 映像基址）：
+
+- `0x1007eee0` 设置 `get_capability` SOAPAction，序列化空的
+  `kmscn:get_capabilityRequest`，随后反序列化
+  `kmscn:get_capabilityResponse`。
+- `0x1003ff80` 在响应中依次查找 `kmscn:result`、
+  `kmscn:scan_image_configuration_capability`、
+  `kmscn:original_configuration_capability` 和
+  `kmscn:output_image_configuration_capability`。
+- `0x1003fe00` 进入扫描图像能力子树，并保留后续原稿/输出图像能力所需状态；
+  `0x1005b120` 和 `0x1000fcb0` 分别出现在 gSOAP 响应处理与分发路径。
+
+上述函数确认顶层结构，但未对真实 XML 中的数组、可选节点或枚举作额外推断。
+
+### 9.4 只读 Linux 探针
+
+`kyocera_monitor/kmscn.py` 与 `tools/kmscn_probe.py` 只发送
+`get_service_information` 或 `get_capability`，不打开扫描会话、不启动扫描、
+不取图，也不修改任何设备设置。默认请求为 HTTP 9090 + SOAP 1.1：
+
+```bash
+python3 tools/kmscn_probe.py 192.168.0.220
+python3 tools/kmscn_probe.py 192.168.0.220 --json
+python3 tools/kmscn_probe.py 192.168.0.220 --capability --json
+python3 tools/kmscn_probe.py 192.168.0.220 --https --insecure
+python3 tools/kmscn_probe.py 192.168.0.220 --soap-version 1.2
+```
+
+探针会检查 HTTP 状态、SOAP Fault、顶层 `result` 以及
+`version`/`release_date`/`model_name`。安装包后也可使用
+`kyocera-kmscn-probe` 命令。
+
+`--capability` 发送与驱动相同的空 `get_capabilityRequest`，并解析响应中的
+三个顶层能力项：
+
+```text
+scan_image_configuration_capability
+original_configuration_capability
+output_image_configuration_capability
+```
+
+每个能力项以保留元素名、属性和子节点的树形 JSON 输出。这样可以在真实响应
+出现后核对重复值、可选节点和嵌套结构，而不在缺少样本时猜测 XML 数组映射。
+缺少任一顶层能力项、非零 `result`、SOAP Fault、非 2xx 状态或非法 XML 均
+报告为失败。解析器拒绝 DTD/实体声明，响应体上限为 2 MiB。
+
+### 9.5 证据等级和待验证项
+
+已验证：
+
+- 官方驱动安装包与内嵌载荷的 SHA-256、成员完整性和核心 DLL 哈希。
+- `Ns1815TWGN -> KMNETSCN3 -> KMSCNAPI` 动态加载关系。
+- 9090/9091 端口选择、三个 KM-WSDL 服务路径和八个扫描 action。
+- 服务信息、能力、开会话、开始、取图、取消、关会话的调用顺序。
+
+较高可信度：
+
+- 服务信息请求是一个空的 `get_service_informationRequest` 元素。
+- 客户端请求优先使用 SOAP 1.1；该判断来自 gSOAP 初始化状态和 1.1/1.2
+  响应识别分支。
+- `get_capabilityRequest` 同样是空元素；响应应包含 `result` 和上述三个能力项。
+  该判断来自 `KMSCNAPI.dll` 的 gSOAP 序列化/反序列化函数，仍未获得设备响应。
+
+仍未验证：
+
+- MA2000w 当前是否启用 9090/9091，以及设备接受 SOAP 1.1 还是 1.2。
+- HTTPS 证书链、默认认证方式、请求包装和服务器返回的真实 XML。
+- 每类能力项内部的重复元素、可选字段和枚举值真机语义。
+- `start_scan` 中枚举值与响应字段的真机语义。
+
+2026-10-29 复核时，记录地址 `192.168.0.220` 不在线；只读端口探测没有发现
+任何主机。因此本节的客户端协议是静态证据，不能据此宣称 Linux 扫描已经
+可用。下一步是在设备在线时运行上述探针并保存脱敏响应。
+
+### 9.6 复现
+
+提取内嵌 ZIP 的核心命令如下（输出保持在忽略目录）：
+
+```bash
+dd if=analysis/local-only/Kyocera_TWAINDriver_2.1.4412.exe \
+  of=/tmp/kyocera-twain-payload.bin bs=1 skip=365196 count=16235106
+unzip -t /tmp/kyocera-twain-payload.bin
+mkdir -p analysis/local-only/twain-2.1.4412
+unzip -q /tmp/kyocera-twain-payload.bin 'Scanner/TWAIN/*' \
+  -d analysis/local-only/twain-2.1.4412
+```
+
+聚焦反编译：
+
+```bash
+env XDG_CONFIG_HOME=/tmp/ghidra_config \
+  .tools/ghidra_12.1.4_PUBLIC/support/analyzeHeadless \
+  /tmp/ghidra_proj KMSCNAPI \
+  -import analysis/local-only/twain-2.1.4412/Scanner/TWAIN/KMSCNAPI.dll \
+  -scriptPath tools/ghidra_scripts \
+  -postScript InspectScanApi.java analysis/decompiled/KMSCNAPI \
+  -deleteProject
+```

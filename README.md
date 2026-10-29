@@ -50,10 +50,23 @@ python3 -m kyocera_monitor --host 192.168.0.220 --snmp --web --web-port 8080
 python3 -m kyocera_monitor --discover
 python3 -m kyocera_monitor --discover --json
 python3 -m kyocera_monitor --discover --discover-subnet 192.168.0.0/24
+python3 tools/kmscn_probe.py 192.168.0.220
+python3 tools/kmscn_probe.py 192.168.0.220 --capability --json
+python3 tools/kmscn_probe.py 192.168.0.220 --https --insecure --json
 ```
 
 退出码：`0` 状态正常，`1` 未发现打印机或配置导出没有读到任何对象，`2` 连接或
 协议错误，`3` 设备返回警告状态码，`4` 型号不匹配。
+
+`tools/kmscn_probe.py` 是网络扫描协议的只读探测工具。它复现原厂网络 TWAIN
+驱动的 `get_service_information` 和 `get_capability` 请求，用于验证 HTTP 9090
+或 HTTPS 9091 上的 KM-WSDL 服务及三类扫描能力。能力响应会保留完整 XML
+层级，不提前把未知的重复元素解释为数组。探针不会打开扫描会话、开始扫描、
+取图或修改设备设置；当前客户端协议已有官方驱动的静态证据，但尚未完成
+MA2000w 真机响应验证。详细边界和复现记录见
+[`docs/reverse-engineering/scan-workflow.md`](docs/reverse-engineering/scan-workflow.md)。
+该探针的退出码为 `0` 请求成功、`1` 被测服务拒绝请求、返回 Fault 或缺少预期
+能力项、`2` 连接或协议错误。
 
 ## 图形界面
 

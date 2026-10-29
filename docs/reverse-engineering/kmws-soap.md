@@ -127,7 +127,10 @@ cancel_scan (cancel_scanRequest / cancel_scanResponse)
 引用 `ScanOperation`、`start_scanRequest` 或 `retrieve_imageRequest`。
 因此这些类型只能证明“库中存在扫描 SOAP 数据契约”，不能证明 Client Tool
 或 NetViewer 实际使用 SOAP 扫描，也不能据此得到端点 URL 和 SOAPAction。
-实际扫描路径仍以 TWAIN 证据为准。
+2026-10-29 从官方网络 TWAIN 驱动补齐独立调用方后，已确认
+`Ns1815TWGN -> KMNETSCN3 -> KMSCNAPI` 使用 KM-WSDL；扫描端点、action 和
+只读探针见 `docs/reverse-engineering/scan-workflow.md` 第 9 节。这里的
+否定结论仅适用于当前仓库中的 NetViewer 程序集。
 
 ## 5. MA2000w 的实际回退行为
 

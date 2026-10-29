@@ -1,6 +1,6 @@
 # PROJECT PROGRESS
 
-> 最后更新：2026-10-18。详细轮次记录已归档到
+> 最后更新：2026-10-29。详细轮次记录已归档到
 > [`docs/reverse-engineering/progress-history.md`](docs/reverse-engineering/progress-history.md)；
 > 本文件只保留当前状态、优先级、阻塞和可执行的下一步。
 
@@ -10,17 +10,21 @@
 功能和通信行为，并在 Linux 上实现可移植、可测试的替代工具；长期目标不限于
 MA2000w。
 
-当前结论：**总体方向仍在计划内，但近三轮的执行重心有偏移。** 只读监控、
-设备发现、本地 Web/GUI 和配置只读导出已经可用；扫描、配置写入和 USB 物理
-验证尚未闭环。第 27–29 轮把主要精力放在全量 OID 清点和剩余字段命名上，
-覆盖率已接近收尾，但产品能力没有同步增加，继续投入的边际收益很低。
+当前结论：**扫描路径已从“材料缺失”推进到“客户端协议明确、等待真机响应”。**
+只读监控、设备发现、本地 Web/GUI 和配置只读导出已经可用。2026-10-29
+从京瓷官方安装包补齐网络 TWAIN 驱动，确认其通过 KM-WSDL/gSOAP 扫描，并
+新增只读服务信息探针；设备离线，9090/9091 响应、SOAP 版本和认证仍未实测。
 
 当前产品边界：
 
 - 已验证：TCP 9100 PJL、SNMPv1/v2c、设备发现、多设备 Web 总览、原生 GUI、
   147 项配置对象只读导出（MA2000w 实测 96/147 返回 `STATUS=0`）。
+- 静态已验证：网络 TWAIN 使用 `Ns1815TWGN -> KMNETSCN3 -> KMSCNAPI`；
+  KM-WSDL 使用 HTTP 9090 或 HTTPS 9091，扫描 action 已还原。
+- 已提供但未真机验证：只读 `get_service_information` KM-WSDL 探针。
 - 离线实现：USB `usblp` 路径、PJL 分段补发、PTY 假设备往返。
-- 未闭环：物理 USB 验证、Linux 扫描、配置写入、其他机型的兼容性验证。
+- 未闭环：KM-WSDL 真机响应与 Linux 取图、物理 USB 验证、配置写入、
+  其他机型的兼容性验证。
 
 ## 计划对齐检查
 
@@ -28,9 +32,9 @@ MA2000w。
 | --- | --- | --- |
 | 研究范围 | 仍限定在 `Kyocera/ClientTool` 及 Linux 实现所需协议 | 未偏移 |
 | 产品目标 | 仍以复刻设备侧可验证功能为目标，没有转向通用 SNMP 工具 | 未偏移 |
-| 用户可见能力 | 近三轮新增的是 OID 清单和字段语义，扫描/写入仍未实现 | 有偏移 |
-| 阶段重点 | 736 个设备 OID 中仅剩 `42.27.6.0` 无语义，收尾成本高于收益 | 应冻结清点 |
-| 进度记录 | 原文件 1751 行、约 97 KB，混入 29 轮详细交接和重复里程碑 | 已压缩归档 |
+| 用户可见能力 | 扫描尚未闭环，但已新增可执行的只读 KM-WSDL 探针 | 持续对齐 |
+| 阶段重点 | 已取得原厂网络 TWAIN 驱动并还原客户端协议 | 转入真机验证 |
+| 进度记录 | 详细交接继续归档，总览保留当前事实和阻塞 | 保持 |
 
 判断依据不是工作量多少，而是这些工作是否直接解除当前产品阻塞。OID 命名对
 配置写入和扫描仍有支撑价值，但应改为“遇到具体字段再查”，不再作为主攻方向。
@@ -45,8 +49,11 @@ MA2000w。
 | 设备发现与 Web/GUI | `DONE` | `/api/discover`、多设备总览、GTK3/WebKit2 窗口实测 |
 | Client Tool 配置只读导出 | `DONE` | 147 项对象表；MA2000w 96/147；PJL 与 SNMP 后备路径 |
 | 维护协议静态拆解 | `DONE` | KPSL 帧、维护包、request id 已落表；动态字段未验证 |
+| 网络 TWAIN/KM-WSDL 客户端静态还原 | `DONE` | 官方 2.1.4412 安装包；DLL 哈希；9090/9091 路由与 8 个 action |
+| KM-WSDL 只读服务信息探针 | `DONE` | 生成请求、Fault/result 处理、JSON 输出；10 个专项测试 |
+| KM-WSDL 只读能力探针 | `DONE` | 空 capability 请求；三类能力树、缺项/Fault/非法 XML 处理；专项测试 |
+| Linux 扫描端到端 | `IN_PROGRESS` | 客户端已实现；等待设备在线验证响应、能力、会话和取图 |
 | USB 物理验证 | `BLOCKED` | 物理连接未确认；仅完成离线 PTY 测试 |
-| Linux 扫描路径 | `BLOCKED` | WSD 无扫描服务，631 关闭，eSCL/KM-WSDL 无响应；TWAIN 未取得 |
 | 配置写入与回滚 | `TODO` | 尚无只读基线、备份、写入、回读和恢复流程 |
 
 ## 已验证能力
@@ -71,13 +78,18 @@ MA2000w。
   还原；维护包已离线提取出 39 条 request 和 177 个 request id 映射；
   公开仓库只保留 request id、item id 和数据类型，不包含密钥、解包工具或
   提取出的 XML/PNG。动态帧字段仍待真实设备确认。
+- **网络 TWAIN**：官方 `Kyocera TWAIN Driver GX 2.1.4412` 已取得并校验；
+  `KMSCNAPI.dll` 使用 gSOAP 2.7 调用 KM-WSDL。明文 HTTP 路径为 9090，
+  HTTPS 路径为 9091，scan operation 路径及 action 已落表。
 - **OID 语义**：827 个唯一文本 OID，其中 91 个为第三方库常量；736 个设备
   OID 中 735 个已有名称或语义，仅 `1.3.6.1.4.1.1347.42.27.6.0` 未知。
 
 ## 当前优先级
 
-1. **P0：打通 Linux 扫描路径。** 取得 `Ns1815TWGN.DLL` 做静态分析，或在
-   Windows 主机抓取 TWAIN 流量；没有调用方和真实请求前不实现扫描触发。
+1. **P0：完成 KM-WSDL 真机验证。** 设备在线时先运行只读
+   `tools/kmscn_probe.py`，依次核对服务信息和 capability 的 HTTP 9090、
+   HTTPS 9091、SOAP 1.1/1.2；保存脱敏响应后再实现
+   open/start/retrieve/close。
 2. **P1：USB 硬件验证。** 接入设备后跑 `--list-usb`、`--usb --json`，与 TCP
    结果逐项对照；同时验证断线重连和睡眠唤醒。
 3. **P2：配置写入前置设计。** 先建立只读基线、备份、最小写入、回读和回滚；
@@ -86,6 +98,12 @@ MA2000w。
 
 ## 待验证假设
 
+- KM-WSDL 客户端默认使用 SOAP 1.1；该结论来自 gSOAP 初始化字段和响应版本
+  分支，但尚无设备接受或拒绝的实测响应。
+- `get_service_informationRequest` 为空元素、HTTPS 证书处理方式以及服务信息
+  响应 XML 结构，需要设备在线时由探针确认。
+- `get_capabilityRequest` 为空元素，响应应含 `result` 与三类能力项；这些
+  结构来自官方驱动的序列化函数，能力项内部字段仍需真机响应确认。
 - USB 原始 UEL 帧是否与 TCP 9100 完全一致；语言监视器是否增加额外封装。
 - 原厂程序在 USB 与网络连接下是否使用相同的 PJL 查询序列。
 - `43.5.1.1.33/34/35` 的厂商名称虽已匹配，仍需写入回读或原厂界面确认。
@@ -100,7 +118,8 @@ MA2000w。
 - 当前主机没有 Windows 运行环境，无法对原厂程序做动态抓包。
 - USB 物理验证受硬件接入限制；历史检查未发现 `0482:0d51`，本次 `lsusb`
   因执行环境无法初始化 libusb（`-99`）而未能复核，接入时需重新确认。
-- 本机样本缺少 TWAIN 驱动 `Ns1815TWGN.DLL`；扫描入口无法继续静态追踪。
+- 2026-10-29 复核时 `192.168.0.220` 不在线，无法验证 KM-WSDL 9090/9091、
+  SOAP 版本、认证、能力响应和实际取图。
 - 设备只发布 WSD 打印服务，`631/tcp` 关闭，eSCL/KM-WSDL 无应用层响应。
 - SNMPv2c `GET`/`GETNEXT` 正常，`GETBULK` 无响应；实现继续默认 SNMPv1。
 - 设备睡眠时 PJL 9100 可能连续无响应，配置读取应使用 `--config --snmp`。
@@ -141,46 +160,57 @@ MA2000w。
 - 干净归档和 Git bundle 位于 `/tmp/kyocera-client-tool-for-linux-20261018.tar.gz`
   和 `/tmp/kyocera-client-tool-for-linux-20261018.bundle`。
 
-## 最近一次工作交接（第二十九轮）
+## 最近一次工作交接（第三十一轮）
 
-日期：2026-10-18。范围：修复 UTF‑16 OID 扫描边界，解析托管元数据常量，
-补齐 Wi‑Fi/PAC/LDAP/面板单位/鼓计数语义，并对 MA2000w 做只读核对。
-没有执行 SNMP SET、`KSETOBJ`、重启、组权限或 Wi‑Fi 配置写入。
+日期：2026-10-29。范围：补齐网络 TWAIN 驱动，静态还原 KM-WSDL 扫描客户端，
+新增只读服务信息和能力探针，并以通用树形解析保留尚不确定的能力字段结构。
+没有执行扫描会话、扫描、取图、SNMP SET、`KSETOBJ`、重启或配置写入。
 
 完成与证据：
 
-- `tools/clienttool_all_oids.py` 修复“前导点 + NUL 终止”的 UTF‑16 漏扫，
-  OID 从 712 增至 827（40 个文件、1708 次出现）。
-- 新增 `tools/managed_constants.py`，只读解析 PE/CLI 常量表和
-  `#Strings`/`#Blob` 堆，还原 `WifiSetupToolModels.dll` 的 47 个 OID 字段。
-- 确认 Wi‑Fi AP 扫描表 `40.39.1.1.*`、设置表 `40.40.1.1.*`、
-  `wifi_connection_state=3`、`wifi_capable_1/2` 和 WPS PIN 对象。
-- 确认 PAC/LDAP `42.26.*`、组权限 `42.27.*`、面板单位、鼓计数、
-  DP/ADF 连接标志和重启触发对象；MA2000w 的 `42.26` walk 返回 0 行。
-- `clienttool-oid-semantics.tsv` 扩展到 62 行；设备 OID 命名覆盖 735/736。
-- 验证：`python3 -m unittest discover -s tests -v` → 140/140 通过
-  （合规改造后；移除了 2 个本地解包公开测试，新增 1 个发布检查测试）。
-- 真实 MA2000w 只读值：`WifiCapable1=3`、`WifiCapable2=NoSuchObject`、
-  `40.42.1.1.1.1=3`、`panel_size_unit=4`、`drum_counter=129`；未写入。
+- 从京瓷官方站点取得 TWAIN Driver 2.1.4412：
+  `92912ad89d780bfe39fa4b82d9d469ea9eef4c5b74de7fb97f693103451e801e`。
+- 从 PE 资源无损取出 16,235,106 字节内嵌 ZIP，完整性测试通过；
+  `Ns1815TWGN.dll` SHA-256 为
+  `b277ff4b1bf31f0cc39b63fc8c5fbdd4770a44261cadaddb102f4d9517cfae09`。
+- 确认调用链 `Ns1815TWGN -> KMNETSCN3 -> KMSCNAPI`；`KMSCNAPI.dll`
+  导入 `WININET.dll`、静态链接 gSOAP 2.7 与 OpenSSL。
+- 确认 HTTP 9090、HTTPS 9091、三个 KM-WSDL 服务路径、八个扫描 action，
+  以及 service info → capability → open → start → retrieve → close 顺序。
+- 新增 `kyocera_monitor/kmscn.py`、`tools/kmscn_probe.py`、
+  `tools/ghidra_scripts/InspectScanApi.java` 和 10 个专项测试；探针只发送
+  `get_service_information`。
+- 从 `KMSCNAPI.dll` 的 gSOAP 序列化函数确认 `get_capabilityRequest` 为空，
+  响应根包含 `result`、`scan_image_configuration_capability`、
+  `original_configuration_capability` 和
+  `output_image_configuration_capability`。
+- `--capability` 新增为只读操作；响应保留 XML 元素名、属性和子节点树，
+  不猜测数组语义。缺少预期项、Fault、非零 result、非 2xx 或非法 XML 均失败。
+- 解析器新增 DTD/实体声明拒绝和 2 MiB 响应上限测试；新增 6 个 capability
+  请求、响应和网络边界测试。
+- 验证：`python3 -m unittest discover -s tests -v` → 156/156 通过；
+  `python3 tools/check_publication.py` 通过。
+- 真机复核：通过 `pkexec nmap` 再次检查 `192.168.0.220` 的
+  80/9090/9091，未发现在线主机，因此未发送 KM-WSDL 请求。
 
 遗留问题：
 
-- `42.27.6.0` 只出现在一个未对齐的 UTF‑16 数据块中，没有可定位的 `ldstr`
-  引用；按当前优先级暂不继续追查。
-- 面板单位存在“代码映射 CM / UI 标签 Millimeters”的冲突，需原厂界面或
-  另一机型交叉确认。
-- Wi‑Fi 枚举、WPS/PAC 组权限和标准 MIB 部分列因设备睡眠未取得，不能据此
-  推断对象不存在。
+- 设备在线后才能确认 SOAP 版本、HTTPS 证书、认证前置条件和真实响应。
+- 能力响应仅由静态契约和合成 XML 验证，尚未确认真实设备的重复元素、
+  可选字段、数值单位或枚举。
+- 尚未验证 `start_scan` 枚举值、取图分页、末页标记和失败码的真机语义。
+- Windows TWAIN 动态流量仍未抓取；当前网络协议依据官方二进制静态分析。
 
-本次文档整理：把原有里程碑和 29 轮交接完整移入
-`docs/reverse-engineering/progress-history.md`，本文件只保留当前结论。
+上一轮文档整理已把原有里程碑和 29 轮交接完整移入
+`docs/reverse-engineering/progress-history.md`；本文件继续只保留当前结论。
 
 ## 下一步
 
-优先执行：在现有 Windows 安装包或 Windows 主机中取得
-`Ns1815TWGN.DLL`，按 `docs/reverse-engineering/scan-workflow.md` 继续追踪
-TWAIN 初始化、传输方式和图像回收；若拿不到 DLL，则改用 Windows 侧抓包。
-扫描路径取得真实请求前，不新增猜测性的扫描实现。
+优先执行：设备恢复在线后运行
+`python3 tools/kmscn_probe.py <device> --json --raw`，成功后运行
+`python3 tools/kmscn_probe.py <device> --capability --json --raw`；再根据结果
+测试 `--https --insecure` 和 `--soap-version 1.2`。确认服务信息与能力响应后，
+才进入扫描会话状态机。
 
 ## 相关文档
 

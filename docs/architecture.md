@@ -76,12 +76,15 @@ MA2000w（`0482:0d51`），多个候选时要求显式 `--device`。
   `2.10.2.1.4.1.1` 也返回 `129`，两者共同确认 `lifetime_counter`。
   Client Tool 的网络监视也读取同一 SNMP 对象。SNMP 纸盒容量与 PJL 口径
   不同，不作为权威值。
-- WSD 只发现打印服务，未发现扫描服务；Linux 扫描协议仍未确认。
+- WSD 只发现打印服务，未发现扫描服务。网络 TWAIN 驱动已静态确认使用
+  KM-WSDL（HTTP 9090/HTTPS 9091）；Linux 端目前只有只读服务信息探针，
+  扫描会话和取图尚未实现。
 - Windows Client Tool 的 USB 路径经打印后台 + Kyocera 语言监视器 mailslot
   转发 PJL，未直接打开 USB 设备；Linux 使用 `usblp` 发送同一 UEL 帧，属于
   原生等价实现。
 - USB 原始帧是否与 TCP 完全一致仍是待验证假设；物理 USB 接入后再做完整对照。
 - Web 界面只读，默认绑定 `127.0.0.1`，没有认证；不提供配置写入或扫描。
+  `tools/kmscn_probe.py` 是独立的只读 KM-WSDL 协议探针。
   多设备总览和手动添加主机已实现，主机允许列表只保存在当前进程内存中。
 - 原生 GUI 是 Web 仪表盘的 GTK3/WebKit2 外壳，不复制状态解析逻辑；需要
   无界面运行或未安装 WebKit 时使用 `--web`。

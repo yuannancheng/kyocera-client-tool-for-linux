@@ -18,6 +18,7 @@ Homepage = "https://github.com/yuannancheng/kyocera-client-tool-for-linux"
 [project.scripts]
 kyocera-monitor = "kyocera_monitor.cli:main"
 kyocera-gui = "kyocera_monitor.gui:main"
+kyocera-kmscn-probe = "kyocera_monitor.kmscn:main"
 
 [tool.setuptools]
 packages = ["kyocera_monitor"]

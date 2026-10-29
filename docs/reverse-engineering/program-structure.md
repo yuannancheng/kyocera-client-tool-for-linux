@@ -128,6 +128,11 @@ item id 和数据类型。
 完整调用链、注册表/INI 路径和未确认项见
 `docs/reverse-engineering/scan-workflow.md`。
 
+2026-10-29 从官方 TWAIN Driver 2.1.4412 补齐网络驱动后，进一步确认
+`Ns1815TWGN.dll -> KMNETSCN3.dll -> KMSCNAPI.dll`；最后一级使用
+KM-WSDL/gSOAP，HTTP 为 9090、HTTPS 为 9091。端点、action、调用顺序和只读
+探针见 `docs/reverse-engineering/scan-workflow.md` 第 9 节。
+
 历史 NetViewer 日志进一步显示 `KmwsDeviceController` 使用 SOAP/HTTP(S) 进行
 配置读写（`AdaptorSoapParams.IsUseSSL`），而发现/轮询使用 SNMP；详见
 `netviewer-log-findings.md`。该日志含敏感信息，未纳入仓库。

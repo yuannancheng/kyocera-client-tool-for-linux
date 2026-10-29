@@ -1,5 +1,31 @@
 # CHANGELOG
 
+## 2026-10-29
+
+### Added — network TWAIN/KM-WSDL evidence and read-only probe
+
+- 从京瓷官方下载中心取得 `Kyocera TWAIN Driver GX 2.1.4412`，在不执行安装器
+  的情况下定位并校验内嵌 `KmSFX.zip`，补齐 `Ns1815TWGN.dll`、
+  `KMNETSCN3.dll`、`KMSCNAPI.dll` 和 `KMWSDLTWAING.ds`。原厂二进制只保存在
+  被忽略的 `analysis/local-only/`。
+- 确认网络 TWAIN 的实际调用链为
+  `Ns1815TWGN -> KMNETSCN3 -> KMSCNAPI`，并由 `KMSCNAPI.dll` 实现
+  KM-WSDL/gSOAP：HTTP 使用 9090，HTTPS 使用 9091，固定服务路径为
+  `/ws/km-wsdl/job/scan_operation`。
+- 还原服务信息、能力、默认配置、开会话、开始扫描、取图、取消和关会话的
+  SOAP action，以及驱动实际调用顺序。
+- 新增 `kyocera_monitor/kmscn.py`、`tools/kmscn_probe.py` 和
+  `kyocera-kmscn-probe` 命令。探针只发送 `get_service_information` 或
+  `--capability` 对应的 `get_capability`，不会打开扫描会话、开始扫描、取图
+  或写入设置。能力响应保留完整 XML 层级，缺失项、Fault、非零结果和非法 XML
+  均显式报错。
+- 新增聚焦 Ghidra 脚本 `tools/ghidra_scripts/InspectScanApi.java`，仅导出
+  扫描导出函数、网络 API 调用者和相关协议字符串交叉引用。
+- 2026-10-29 复核时 MA2000w 记录地址不在线；9090/9091 真机响应、SOAP 版本
+  协商和认证要求仍未验证。
+- 验证：`python3 -m unittest discover -s tests -v` → 156/156 通过；
+  公开树检查通过。
+
 ## 2026-10-18
 
 ### Changed — publication content cleanup and licensing
