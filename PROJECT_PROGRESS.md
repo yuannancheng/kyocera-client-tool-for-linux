@@ -13,7 +13,8 @@ MA2000w。
 当前结论：**扫描路径已从“材料缺失”推进到“客户端协议明确、等待真机响应”。**
 只读监控、设备发现、本地 Web/GUI 和配置只读导出已经可用。2026-10-29
 从京瓷官方安装包补齐网络 TWAIN 驱动，确认其通过 KM-WSDL/gSOAP 扫描，并
-新增只读服务信息探针；设备离线，9090/9091 响应、SOAP 版本和认证仍未实测。
+新增只读服务信息、能力和顺序预检。设备已上线但处于睡眠，80/9090 监听，
+9091 未监听；HTTP 请求在应用层被静默关闭，真实 SOAP 响应仍未取得。
 
 当前产品边界：
 
@@ -52,6 +53,7 @@ MA2000w。
 | 网络 TWAIN/KM-WSDL 客户端静态还原 | `DONE` | 官方 2.1.4412 安装包；DLL 哈希；9090/9091 路由与 8 个 action |
 | KM-WSDL 只读服务信息探针 | `DONE` | 生成请求、Fault/result 处理、JSON 输出；10 个专项测试 |
 | KM-WSDL 只读能力探针 | `DONE` | 空 capability 请求；三类能力树、缺项/Fault/非法 XML 处理；专项测试 |
+| 官方扫描预检顺序复刻 | `DONE` | service info 成功后才请求 capability；失败阶段结构化记录 |
 | Linux 扫描端到端 | `IN_PROGRESS` | 客户端已实现；等待设备在线验证响应、能力、会话和取图 |
 | USB 物理验证 | `BLOCKED` | 物理连接未确认；仅完成离线 PTY 测试 |
 | 配置写入与回滚 | `TODO` | 尚无只读基线、备份、写入、回读和恢复流程 |
@@ -87,8 +89,8 @@ MA2000w。
 ## 当前优先级
 
 1. **P0：完成 KM-WSDL 真机验证。** 设备在线时先运行只读
-   `tools/kmscn_probe.py`，依次核对服务信息和 capability 的 HTTP 9090、
-   HTTPS 9091、SOAP 1.1/1.2；保存脱敏响应后再实现
+   `tools/kmscn_probe.py --preflight`，依次核对服务信息和 capability 的
+   HTTP 9090、HTTPS 9091、SOAP 1.1/1.2；保存脱敏响应后再实现
    open/start/retrieve/close。
 2. **P1：USB 硬件验证。** 接入设备后跑 `--list-usb`、`--usb --json`，与 TCP
    结果逐项对照；同时验证断线重连和睡眠唤醒。
@@ -118,8 +120,9 @@ MA2000w。
 - 当前主机没有 Windows 运行环境，无法对原厂程序做动态抓包。
 - USB 物理验证受硬件接入限制；历史检查未发现 `0482:0d51`，本次 `lsusb`
   因执行环境无法初始化 libusb（`-99`）而未能复核，接入时需重新确认。
-- 2026-10-29 复核时 `192.168.0.220` 不在线，无法验证 KM-WSDL 9090/9091、
-  SOAP 版本、认证、能力响应和实际取图。
+- 2026-10-29 复核时 `192.168.0.220` 已在线，但面板状态为 `Sleeping...`。
+  80/9090 监听，9091 未监听；HTTP GET、OPTIONS 和 KM-WSDL POST 均被无响应
+  关闭，因此无法验证 SOAP 版本、认证、能力响应和实际取图。
 - 设备只发布 WSD 打印服务，`631/tcp` 关闭，eSCL/KM-WSDL 无应用层响应。
 - SNMPv2c `GET`/`GETNEXT` 正常，`GETBULK` 无响应；实现继续默认 SNMPv1。
 - 设备睡眠时 PJL 9100 可能连续无响应，配置读取应使用 `--config --snmp`。
@@ -186,16 +189,25 @@ MA2000w。
   `output_image_configuration_capability`。
 - `--capability` 新增为只读操作；响应保留 XML 元素名、属性和子节点树，
   不猜测数组语义。缺少预期项、Fault、非零 result、非 2xx 或非法 XML 均失败。
-- 解析器新增 DTD/实体声明拒绝和 2 MiB 响应上限测试；新增 6 个 capability
-  请求、响应和网络边界测试。
-- 验证：`python3 -m unittest discover -s tests -v` → 156/156 通过；
+- 根据 `KMSCNAPI.dll` 的 HTTP 生成路径，将传输改为显式 gSOAP 2.7 风格
+  `POST`：`User-Agent: gSOAP/2.7`、带引号 SOAPAction、`Content-Length`
+  和 `Connection: close`，不再由 `urllib` 自动附加额外 Accept-Encoding。
+- 新增 `--preflight`，复刻官方 `service_info -> capability` 顺序；服务信息
+  失败时 capability 保持未发送，网络异常记录在 `failed_stage` 和 `error`。
+- 解析器新增 DTD/实体声明拒绝和 2 MiB 响应上限测试；新增 capability、
+  预检顺序和网络异常测试。新增 `DecompileAddresses.java` 用于按地址聚焦
+  反编译。
+- 验证：`python3 -m unittest discover -s tests -v` → 159/159 通过；
   `python3 tools/check_publication.py` 通过。
-- 真机复核：通过 `pkexec nmap` 再次检查 `192.168.0.220` 的
-  80/9090/9091，未发现在线主机，因此未发送 KM-WSDL 请求。
+- 真机复核：`pkexec nmap` 确认主机在线、80/9090 开放、9091 关闭；PJL
+  状态读取成功并确认 `Sleeping...`。HTTP GET/OPTIONS 与三种 KM-WSDL
+  只读请求均被服务器无响应关闭。
 
 遗留问题：
 
 - 设备在线后才能确认 SOAP 版本、HTTPS 证书、认证前置条件和真实响应。
+- 当前最先要排除的阻塞是设备睡眠：需在打印机面板物理唤醒后重跑
+  preflight。若唤醒后仍为空响应，再排查 Web 服务禁用或来源 IP 过滤。
 - 能力响应仅由静态契约和合成 XML 验证，尚未确认真实设备的重复元素、
   可选字段、数值单位或枚举。
 - 尚未验证 `start_scan` 枚举值、取图分页、末页标记和失败码的真机语义。
@@ -207,10 +219,9 @@ MA2000w。
 ## 下一步
 
 优先执行：设备恢复在线后运行
-`python3 tools/kmscn_probe.py <device> --json --raw`，成功后运行
-`python3 tools/kmscn_probe.py <device> --capability --json --raw`；再根据结果
-测试 `--https --insecure` 和 `--soap-version 1.2`。确认服务信息与能力响应后，
-才进入扫描会话状态机。
+`python3 tools/kmscn_probe.py <device> --preflight --json --raw`；失败时按
+结构化 `failed_stage` 排查。服务信息和 capability 都成功后再测试 HTTPS 或
+SOAP 1.2 兼容选项，随后才进入扫描会话状态机。
 
 ## 相关文档
 

@@ -8,11 +8,10 @@ scan. This module implements those two read-only discovery calls.
 from __future__ import annotations
 
 import argparse
+import http.client
 import json
 import ssl
 import sys
-import urllib.error
-import urllib.request
 import xml.etree.ElementTree as ET
 from dataclasses import asdict, dataclass
 from urllib.parse import urlsplit
@@ -84,6 +83,17 @@ class CapabilityResult:
     fault_code: str | None
     fault_reason: str | None
     raw: str | None = None
+
+
+@dataclass(frozen=True)
+class PreflightResult:
+    ok: bool
+    endpoint: str
+    soap_version: str
+    service_information: ProbeResult | None
+    capability: CapabilityResult | None
+    failed_stage: str | None
+    error: str | None
 
 
 def build_operation_request(
@@ -318,24 +328,43 @@ def _post(
     timeout: float,
     insecure: bool,
 ) -> tuple[int, bytes]:
-    request = urllib.request.Request(
-        endpoint, data=payload, headers=headers, method="POST"
-    )
+    parsed = urlsplit(endpoint)
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+        raise ValueError("endpoint must use http:// or https:// and a host")
     context = None
-    if endpoint.startswith("https://"):
+    if parsed.scheme == "https":
         context = ssl.create_default_context()
         if insecure:
             context.check_hostname = False
             context.verify_mode = ssl.CERT_NONE
+        connection = http.client.HTTPSConnection(
+            parsed.hostname,
+            parsed.port,
+            timeout=timeout,
+            context=context,
+        )
+    else:
+        connection = http.client.HTTPConnection(
+            parsed.hostname,
+            parsed.port,
+            timeout=timeout,
+        )
+    path = parsed.path or "/"
+    if parsed.query:
+        path = f"{path}?{parsed.query}"
     try:
-        with urllib.request.urlopen(  # nosec: endpoint is caller-selected
-            request, timeout=timeout, context=context
-        ) as response:
-            body = response.read(2 * 1024 * 1024 + 1)
-            status = response.status
-    except urllib.error.HTTPError as error:
-        body = error.read(2 * 1024 * 1024 + 1)
-        status = error.code
+        connection.putrequest("POST", path, skip_accept_encoding=True)
+        connection.putheader("Host", parsed.netloc)
+        for name, value in headers.items():
+            connection.putheader(name, value)
+        connection.putheader("Content-Length", str(len(payload)))
+        connection.putheader("Connection", "close")
+        connection.endheaders(payload)
+        response = connection.getresponse()
+        body = response.read(2 * 1024 * 1024 + 1)
+        status = response.status
+    finally:
+        connection.close()
     if len(body) > 2 * 1024 * 1024:
         raise ValueError("KM-WSDL response exceeds 2 MiB")
     return status, body
@@ -393,6 +422,72 @@ def probe_capability(
     )
 
 
+def preflight(
+    endpoint: str,
+    *,
+    soap_version: str = "1.1",
+    timeout: float = 5.0,
+    insecure: bool = False,
+    include_raw: bool = False,
+) -> PreflightResult:
+    """Reproduce the driver's ordered service-info/capability preflight."""
+    try:
+        service_information = probe(
+            endpoint,
+            soap_version=soap_version,
+            timeout=timeout,
+            insecure=insecure,
+            include_raw=include_raw,
+        )
+    except (OSError, ValueError) as error:
+        return PreflightResult(
+            ok=False,
+            endpoint=endpoint,
+            soap_version=soap_version,
+            service_information=None,
+            capability=None,
+            failed_stage="service_information",
+            error=str(error),
+        )
+    if not service_information.ok:
+        return PreflightResult(
+            ok=False,
+            endpoint=endpoint,
+            soap_version=soap_version,
+            service_information=service_information,
+            capability=None,
+            failed_stage="service_information",
+            error=None,
+        )
+    try:
+        capability = probe_capability(
+            endpoint,
+            soap_version=soap_version,
+            timeout=timeout,
+            insecure=insecure,
+            include_raw=include_raw,
+        )
+    except (OSError, ValueError) as error:
+        return PreflightResult(
+            ok=False,
+            endpoint=endpoint,
+            soap_version=soap_version,
+            service_information=service_information,
+            capability=None,
+            failed_stage="capability",
+            error=str(error),
+        )
+    return PreflightResult(
+        ok=capability.ok,
+        endpoint=endpoint,
+        soap_version=soap_version,
+        service_information=service_information,
+        capability=capability,
+        failed_stage=None if capability.ok else "capability",
+        error=None,
+    )
+
+
 def _print_human(result: ProbeResult) -> None:
     print(f"endpoint: {result.endpoint}")
     print(f"HTTP: {result.http_status}")
@@ -407,6 +502,28 @@ def _print_human(result: ProbeResult) -> None:
         print(f"fault_reason: {result.fault_reason}")
     if result.raw is not None:
         print(result.raw)
+
+
+def _print_preflight(
+    result: PreflightResult,
+) -> None:
+    print(f"endpoint: {result.endpoint}")
+    print(f"SOAP: {result.soap_version}")
+    if result.failed_stage is not None:
+        print(f"failed_stage: {result.failed_stage}")
+    if result.error is not None:
+        print(f"error: {result.error}")
+    if result.service_information is None:
+        print("service information: not received")
+        print("capability: not sent")
+        return
+    print("service information:")
+    _print_human(result.service_information)
+    if result.capability is None:
+        print("capability: skipped because service information failed")
+        return
+    print("capability:")
+    _print_capability(result.capability)
 
 
 def _print_capability(result: CapabilityResult) -> None:
@@ -443,12 +560,21 @@ def main(argv: list[str] | None = None) -> int:
         type=int,
         help="override the endpoint port (defaults: HTTP 9090, HTTPS 9091)",
     )
-    parser.add_argument(
+    operation_group = parser.add_mutually_exclusive_group()
+    operation_group.add_argument(
         "--capability",
         action="store_true",
         help=(
             "send the read-only get_capability request instead of "
             "get_service_information"
+        ),
+    )
+    operation_group.add_argument(
+        "--preflight",
+        action="store_true",
+        help=(
+            "send get_service_information, then get_capability only if the "
+            "first response is accepted"
         ),
     )
     parser.add_argument(
@@ -469,7 +595,15 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         _, endpoint = build_endpoint(args.target, args.https, args.port)
-        if args.capability:
+        if args.preflight:
+            preflight_result = preflight(
+                endpoint,
+                soap_version=args.soap_version,
+                timeout=args.timeout,
+                insecure=args.insecure,
+                include_raw=args.raw,
+            )
+        elif args.capability:
             capability = probe_capability(
                 endpoint,
                 soap_version=args.soap_version,
@@ -488,6 +622,21 @@ def main(argv: list[str] | None = None) -> int:
     except (OSError, ValueError) as error:
         print(f"KM-WSDL probe failed: {error}", file=sys.stderr)
         return 2
+
+    if args.preflight:
+        if args.json:
+            print(
+                json.dumps(
+                    asdict(preflight_result),
+                    ensure_ascii=False,
+                    indent=2,
+                )
+            )
+        else:
+            _print_preflight(preflight_result)
+            if not preflight_result.ok:
+                print("KM-WSDL preflight was not accepted", file=sys.stderr)
+        return 0 if preflight_result.ok else 1
 
     if args.capability:
         if args.json:

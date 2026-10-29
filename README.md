@@ -52,6 +52,7 @@ python3 -m kyocera_monitor --discover --json
 python3 -m kyocera_monitor --discover --discover-subnet 192.168.0.0/24
 python3 tools/kmscn_probe.py 192.168.0.220
 python3 tools/kmscn_probe.py 192.168.0.220 --capability --json
+python3 tools/kmscn_probe.py 192.168.0.220 --preflight --json --raw
 python3 tools/kmscn_probe.py 192.168.0.220 --https --insecure --json
 ```
 
@@ -65,6 +66,8 @@ python3 tools/kmscn_probe.py 192.168.0.220 --https --insecure --json
 取图或修改设备设置；当前客户端协议已有官方驱动的静态证据，但尚未完成
 MA2000w 真机响应验证。详细边界和复现记录见
 [`docs/reverse-engineering/scan-workflow.md`](docs/reverse-engineering/scan-workflow.md)。
+`--preflight` 复刻驱动的顺序：只有服务信息成功后才发送 capability；网络异常
+会以结构化 JSON 报告失败阶段，并明确 capability 未发送。
 该探针的退出码为 `0` 请求成功、`1` 被测服务拒绝请求、返回 Fault 或缺少预期
 能力项、`2` 连接或协议错误。
 

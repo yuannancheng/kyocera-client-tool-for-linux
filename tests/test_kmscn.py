@@ -229,44 +229,68 @@ class NetworkTests(unittest.TestCase):
     class Response:
         status = 200
 
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *args):
-            return False
-
         def read(self, limit):
             return ResponseTests.RESPONSE
+
+    class Connection:
+        def __init__(self):
+            self.request = None
+            self.headers = []
+            self.body = None
+            self.closed = False
+
+        def putrequest(self, method, path, skip_accept_encoding):
+            self.request = (method, path, skip_accept_encoding)
+
+        def putheader(self, name, value):
+            self.headers.append((name, value))
+
+        def endheaders(self, body):
+            self.body = body
+
+        def getresponse(self):
+            return NetworkTests.Response()
+
+        def close(self):
+            self.closed = True
 
     def test_probe_posts_the_read_only_operation(self):
         endpoint = f"http://192.0.2.1:9090{kmscn.SCAN_PATH}"
         with mock.patch.object(
-            kmscn.urllib.request, "urlopen", return_value=self.Response()
-        ) as opened:
+            kmscn.http.client, "HTTPConnection", return_value=self.Connection()
+        ) as created:
             result = kmscn.probe(endpoint, timeout=1)
-        request = opened.call_args.args[0]
-        self.assertEqual(request.full_url, endpoint)
-        self.assertEqual(request.get_method(), "POST")
-        self.assertIn(b"get_service_informationRequest", request.data)
+        connection = created.return_value
         self.assertEqual(
-            request.get_header("Soapaction"),
+            connection.request,
+            ("POST", kmscn.SCAN_PATH, True),
+        )
+        headers = dict(connection.headers)
+        self.assertEqual(headers["Host"], "192.0.2.1:9090")
+        self.assertEqual(headers["User-Agent"], "gSOAP/2.7")
+        self.assertEqual(headers["Connection"], "close")
+        self.assertEqual(
+            headers["SOAPAction"],
             f'"{kmscn.GET_SERVICE_INFORMATION_ACTION}"',
         )
+        self.assertIn(b"get_service_informationRequest", connection.body)
+        self.assertTrue(connection.closed)
         self.assertTrue(result.ok)
 
     def test_capability_probe_posts_only_get_capability(self):
         endpoint = f"http://192.0.2.1:9090{kmscn.SCAN_PATH}"
         with mock.patch.object(
-            kmscn.urllib.request,
-            "urlopen",
-            return_value=self.Response(),
-        ) as opened:
+            kmscn.http.client,
+            "HTTPConnection",
+            return_value=self.Connection(),
+        ) as created:
             result = kmscn.probe_capability(endpoint, timeout=1)
-        request = opened.call_args.args[0]
-        self.assertIn(b"get_capabilityRequest", request.data)
-        self.assertNotIn(b"start_scanRequest", request.data)
+        connection = created.return_value
+        headers = dict(connection.headers)
+        self.assertIn(b"get_capabilityRequest", connection.body)
+        self.assertNotIn(b"start_scanRequest", connection.body)
         self.assertEqual(
-            request.get_header("Soapaction"),
+            headers["SOAPAction"],
             f'"{kmscn.GET_CAPABILITY_ACTION}"',
         )
         self.assertFalse(result.ok)
@@ -274,6 +298,60 @@ class NetworkTests(unittest.TestCase):
             result.missing_capabilities,
             kmscn.CAPABILITY_ENTRY_NAMES,
         )
+
+
+class PreflightTests(unittest.TestCase):
+    def test_service_failure_stops_before_capability(self):
+        service_result = mock.Mock(ok=False)
+        with mock.patch.object(
+            kmscn,
+            "probe",
+            return_value=service_result,
+        ), mock.patch.object(kmscn, "probe_capability") as capability:
+            result = kmscn.preflight(
+                f"http://192.0.2.1:9090{kmscn.SCAN_PATH}"
+            )
+        self.assertFalse(result.ok)
+        self.assertIs(result.service_information, service_result)
+        self.assertIsNone(result.capability)
+        self.assertEqual(result.failed_stage, "service_information")
+        capability.assert_not_called()
+
+    def test_service_success_then_capability(self):
+        service_result = mock.Mock(ok=True)
+        capability_result = mock.Mock(ok=True)
+        with mock.patch.object(
+            kmscn,
+            "probe",
+            return_value=service_result,
+        ), mock.patch.object(
+            kmscn,
+            "probe_capability",
+            return_value=capability_result,
+        ) as capability:
+            result = kmscn.preflight(
+                f"http://192.0.2.1:9090{kmscn.SCAN_PATH}"
+            )
+        self.assertTrue(result.ok)
+        self.assertIs(result.service_information, service_result)
+        self.assertIs(result.capability, capability_result)
+        capability.assert_called_once()
+
+    def test_connection_failure_is_structured_and_stops_early(self):
+        with mock.patch.object(
+            kmscn,
+            "probe",
+            side_effect=ConnectionResetError("closed without response"),
+        ), mock.patch.object(kmscn, "probe_capability") as capability:
+            result = kmscn.preflight(
+                f"http://192.0.2.1:9090{kmscn.SCAN_PATH}"
+            )
+        self.assertFalse(result.ok)
+        self.assertIsNone(result.service_information)
+        self.assertIsNone(result.capability)
+        self.assertEqual(result.failed_stage, "service_information")
+        self.assertIn("closed without response", result.error)
+        capability.assert_not_called()
 
 
 if __name__ == "__main__":

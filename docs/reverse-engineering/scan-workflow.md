@@ -437,6 +437,16 @@ gSOAP 初始化时 SOAP 版本字段为 `0`，对应 SOAP 1.1 默认值；响应
 SOAP 1.1 和 SOAP 1.2 命名空间。因此 Linux 探针默认使用 SOAP 1.1，并提供
 `--soap-version 1.2` 作为真机兼容性选项。
 
+HTTP 传输层使用以下已还原的 gSOAP 2.7 特征：
+
+- 请求行为 `POST <path> HTTP/1.1`，`Host` 包含非默认端口。
+- `User-Agent` 固定为 `gSOAP/2.7`（`.rdata:0x10159634`）。
+- SOAP 1.1 使用 `Content-Type: text/xml; charset=utf-8` 和带引号的
+  `SOAPAction: "<action>"`；后者由 `0x1009be40` 附近的格式化逻辑生成。
+- 显式发送 `Content-Length`；非 keep-alive 路径发送 `Connection: close`。
+- Linux 探针使用低层 `http.client` 构造这些头部，避免自动附加额外的
+  `Accept-Encoding: identity`。
+
 capability 契约的关键静态证据（地址均相对 `KMSCNAPI.dll` 映像基址）：
 
 - `0x1007eee0` 设置 `get_capability` SOAPAction，序列化空的
@@ -461,6 +471,7 @@ capability 契约的关键静态证据（地址均相对 `KMSCNAPI.dll` 映像�
 python3 tools/kmscn_probe.py 192.168.0.220
 python3 tools/kmscn_probe.py 192.168.0.220 --json
 python3 tools/kmscn_probe.py 192.168.0.220 --capability --json
+python3 tools/kmscn_probe.py 192.168.0.220 --preflight --json --raw
 python3 tools/kmscn_probe.py 192.168.0.220 --https --insecure
 python3 tools/kmscn_probe.py 192.168.0.220 --soap-version 1.2
 ```
@@ -482,6 +493,17 @@ output_image_configuration_capability
 出现后核对重复值、可选节点和嵌套结构，而不在缺少样本时猜测 XML 数组映射。
 缺少任一顶层能力项、非零 `result`、SOAP Fault、非 2xx 状态或非法 XML 均
 报告为失败。解析器拒绝 DTD/实体声明，响应体上限为 2 MiB。
+
+`--preflight` 复刻 `KmNetScnConnect` 经 `KmNetScnThread` 执行的原厂校验顺序：
+
+1. 调用 `KMSCNGetServiceInfo`，失败时最多重试一次。
+2. 检查返回型号是否属于该驱动支持范围。
+3. 调用 `KMSCNGetCapability`，并读取 ADF/双面等能力位。
+4. 两项成功后才允许进入后续 open/start/retrieve/close 会话。
+
+Linux 预检目前实现第 1 和第 3 步；服务信息失败时不会发送 capability。
+网络异常同样进入结构化结果，记录 `failed_stage`、异常文本，并将 capability
+保持为 `null`。型号接受列表和 ADF/双面解释要在取得真实响应后再补入。
 
 ### 9.5 证据等级和待验证项
 
@@ -507,9 +529,10 @@ output_image_configuration_capability
 - 每类能力项内部的重复元素、可选字段和枚举值真机语义。
 - `start_scan` 中枚举值与响应字段的真机语义。
 
-2026-10-29 复核时，记录地址 `192.168.0.220` 不在线；只读端口探测没有发现
-任何主机。因此本节的客户端协议是静态证据，不能据此宣称 Linux 扫描已经
-可用。下一步是在设备在线时运行上述探针并保存脱敏响应。
+2026-10-29 真机复核时，记录地址 `192.168.0.220` 已上线，80 和 9090 监听，
+但面板状态为 `Sleeping...`；所有受控 HTTP 请求均在应用层无响应关闭，9091
+未监听。因此本节的客户端协议是静态证据，不能据此宣称 Linux 扫描已经可用。
+下一步需在设备唤醒后运行 preflight 并保存脱敏响应。
 
 ### 9.6 复现
 

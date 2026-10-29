@@ -19,11 +19,17 @@
   `--capability` 对应的 `get_capability`，不会打开扫描会话、开始扫描、取图
   或写入设置。能力响应保留完整 XML 层级，缺失项、Fault、非零结果和非法 XML
   均显式报错。
+- HTTP 传输改为显式构造 gSOAP 2.7 风格的 HTTP/1.1 请求，避免标准库自动
+  添加额外请求头；新增 `--preflight`，严格按服务信息成功后再请求 capability
+  的顺序执行，并结构化记录失败阶段。
 - 新增聚焦 Ghidra 脚本 `tools/ghidra_scripts/InspectScanApi.java`，仅导出
   扫描导出函数、网络 API 调用者和相关协议字符串交叉引用。
-- 2026-10-29 复核时 MA2000w 记录地址不在线；9090/9091 真机响应、SOAP 版本
-  协商和认证要求仍未验证。
-- 验证：`python3 -m unittest discover -s tests -v` → 156/156 通过；
+- 新增 `tools/ghidra_scripts/DecompileAddresses.java`，用于按地址聚焦导出
+  官方驱动的 URL、HTTP 和 SOAP 封装函数。
+- 2026-10-29 真机复核时 MA2000w 已上线，80/9090 监听、9091 未监听；设备处于
+  `Sleeping...`，HTTP 请求被无响应关闭，SOAP 版本协商、认证和真实响应仍未
+  验证。
+- 验证：`python3 -m unittest discover -s tests -v` → 159/159 通过；
   公开树检查通过。
 
 ## 2026-10-18
