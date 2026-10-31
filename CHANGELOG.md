@@ -1,5 +1,31 @@
 # CHANGELOG
 
+## 2026-10-31
+
+### Added — scan option parity, multipage handling, and grayscale RAW
+
+- 以校验后的官方 `KMSCNAPI.dll` 枚举表和 `start_scanRequest` 为依据，限制
+  扫描 CLI 只接受官方 token：颜色、分辨率、`SIMPLEX/DUPLEX/BOOKLET`、
+  `AUTO/PLATEN/ADF`、连续扫描 `OFF/ON`、原稿类型和输出格式。
+- 新增按官方序列化顺序插入缺失配置字段的逻辑；默认仍以设备返回配置为准。
+- 官方 DLL 诊断实测 `CONTINUE_SCAN` 返回码 `10010` 且无图像；
+  `KMNETSCN3` 对非终止状态继续取图。Linux 客户端现将该状态作为等待，
+  并支持逐页保存到 `ALL_GET_COMPLETE`。
+- 新增多页模拟测试，覆盖
+  `CONTINUE_SCAN -> 第1页 -> 第2页 -> ALL_GET_COMPLETE`、
+  `ADF/BOOKLET/ON` 请求字段和 `close_session`。
+- MA2000w 真机完成 `GRAYSCALE + RAW` 扫描：RAW 9,425,014 字节，单平面
+  8 带 2496×440；独立解码为 2496×3520、清晰可见的 24 位灰度 BMP。
+- 修复解码格式选择：以响应 `file_type` 为准。MA2000w 请求 JPEG 时仍返回
+  RAW，客户端会按实际 RAW 解码。
+- `http.client.IncompleteRead` 现在转换为结构化传输错误，不再输出未处理的
+  Python traceback；不解析不完整图像。
+- 新增 `--max-response-bytes`，允许高分辨率场景显式提高单次取图的内存上限；
+  默认仍为 64 MiB。
+- 官方 DLL 诊断宿主新增受控 dword 配置覆盖实验参数，捕获服务器新增
+  `--retrieve-result`。
+- 验证：扫描专项 38/38；全量测试 178/178；公开树检查通过。
+
 ## 2026-10-29
 
 ### Added — network TWAIN/KM-WSDL evidence and read-only probe

@@ -1,6 +1,6 @@
 # PROJECT PROGRESS
 
-> 最后更新：2026-10-29。详细轮次记录已归档到
+> 最后更新：2026-10-31。详细轮次记录已归档到
 > [`docs/reverse-engineering/progress-history.md`](docs/reverse-engineering/progress-history.md)；
 > 本文件只保留当前状态、优先级、阻塞和可执行的下一步。
 
@@ -11,11 +11,12 @@
 MA2000w。
 
 当前结论：**MA2000w 网络扫描已在 Linux 端独立打通。** 只读监控、设备发现、
-本地 Web/GUI、配置只读导出和单页扫描均可用。2026-10-29 使用 32 位 Wine
+本地 Web/GUI、配置只读导出和单页扫描均可用；彩色与灰度 RAW、官方扫描参数
+覆盖和多页状态机处理均已实现。2026-10-29 使用 32 位 Wine
 诊断宿主捕获官方 DLL 的真实 SOAP 1.2 请求，随后在不依赖官方 DLL 的 Python
 实现中完成预检、默认配置读取、开会话、启动扫描、XOP 取图、RAW 分带解码、
-BMP 输出和关会话。最大风险已从“协议方法猜测”转为“默认 RAW 色彩路径和
-其他机型/双面路径的兼容性验证”。
+BMP 输出和关会话。最大风险已从“协议方法猜测”转为“其他输出格式、其他机型
+和 ADF/双面硬件路径的验证”。
 
 **最高优先级工程约束：** 官方二进制可观察到的行为优先于项目自身推断；
 正式 Linux 功能只复刻行为，不在运行时依赖官方 DLL/EXE。详细规则见
@@ -28,10 +29,12 @@ BMP 输出和关会话。最大风险已从“协议方法猜测”转为“默�
 - 静态已验证：网络 TWAIN 使用 `Ns1815TWGN -> KMNETSCN3 -> KMSCNAPI`；
   KM-WSDL 使用 HTTP 9090 或 HTTPS 9091，扫描 action 已还原。
 - 已真机验证：KM-WSDL SOAP 1.2 预检、默认配置、扫描会话、XOP 取图、
-  `ALL_GET_COMPLETE`、关会话以及独立 RAW→BMP 解调。
+  `ALL_GET_COMPLETE`、关会话以及彩色/灰度独立 RAW→BMP 解调。
+- 已验证协议/模拟：`CONTINUE_SCAN` 官方返回码、ADF/双面/连续扫描字段、
+  多页逐页保存和最终关会话。
 - 离线实现：USB `usblp` 路径、PJL 分段补发、PTY 假设备往返。
-- 未闭环：物理 USB、配置写入、其他机型的兼容性、完整色彩管理和复杂双面/
-  ADF 多页路径。
+- 未闭环：物理 USB、配置写入、其他机型兼容性、完整色彩管理，以及
+  ADF/双面/多页硬件验证。MA2000w 本身没有输稿器。
 
 ## 计划对齐检查
 
@@ -39,8 +42,8 @@ BMP 输出和关会话。最大风险已从“协议方法猜测”转为“默�
 | --- | --- | --- |
 | 研究范围 | 仍限定在 `Kyocera/ClientTool` 及 Linux 实现所需协议 | 未偏移 |
 | 产品目标 | 仍以复刻设备侧可验证功能为目标，没有转向通用 SNMP 工具 | 未偏移 |
-| 用户可见能力 | Linux 已可独立完成 MA2000w 单页网络扫描并输出 BMP | 已对齐 |
-| 阶段重点 | SOAP 1.2、会话、XOP 和 RAW 分带均由官方行为驱动 | 转入兼容性收尾 |
+| 用户可见能力 | Linux 已可独立完成 MA2000w 彩色/灰度单页网络扫描并输出 BMP | 已对齐 |
+| 阶段重点 | SOAP 1.2、会话、XOP、参数枚举和多页状态均由官方证据驱动 | 转入跨机型验证 |
 | 进度记录 | 详细交接继续归档，总览保留当前事实和阻塞 | 保持 |
 
 判断依据不是工作量多少，而是这些工作是否直接解除当前产品阻塞。OID 命名对
@@ -61,6 +64,10 @@ BMP 输出和关会话。最大风险已从“协议方法猜测”转为“默�
 | KM-WSDL 只读能力探针 | `DONE` | 空 capability 请求；三类能力树、缺项/Fault/非法 XML 处理；专项测试 |
 | 官方扫描预检顺序复刻 | `DONE` | service info 成功后才请求 capability；失败阶段结构化记录 |
 | Linux 扫描端到端 | `DONE` | MA2000w 真机单页：SOAP 1.2、XOP、RAW 解码、2496×3520 BMP、正常关会话 |
+| 扫描非默认颜色与灰度 RAW | `DONE` | MA2000w 真机 `GRAYSCALE`；9,425,014 字节 RAW，独立输出 2496×3520 BMP |
+| 官方扫描参数覆盖 | `DONE` | 官方 DLL 枚举表与请求；CLI 仅接受已知 token，序列化顺序有测试 |
+| ADF/双面/多页客户端路径 | `DONE` | 官方 `CONTINUE_SCAN=10010` 证据；多页模拟覆盖两页、ADF/BOOKLET/ON 和关会话 |
+| ADF/双面其他机型真机 | `BLOCKED` | 当前只有 MA2000w，无输稿器；不能据模拟测试宣称硬件兼容 |
 | USB 物理验证 | `BLOCKED` | 物理连接未确认；仅完成离线 PTY 测试 |
 | 配置写入与回滚 | `TODO` | 尚无只读基线、备份、写入、回读和恢复流程 |
 
@@ -93,14 +100,22 @@ BMP 输出和关会话。最大风险已从“协议方法猜测”转为“默�
   启动、轮询取图、`ALL_GET_COMPLETE` 和关闭；`kmscn_raw.py` 按官方
   `CScanData::PrepareImageData` 状态机解析校准和颜色分带。真机样本为
   2496×3520 BMP，原始流 28,275,026 字节。
+- **扫描参数与灰度**：颜色、分辨率、单双面、原稿位置、连续扫描、原稿类型
+  和输出格式只暴露官方 token。MA2000w 灰度 RAW 为单平面颜色值 `1`，
+  9,425,014 字节；真机解码为清晰 2496×3520 BMP。请求 JPEG 时设备仍返回
+  RAW，客户端按响应 `file_type` 选择解码器。
+- **多页状态机**：官方宿主实测 `CONTINUE_SCAN=10010`、无图像；官方线程继续
+  取图。Linux 客户端支持 `CONTINUE_SCAN`、`IMAGE_CREATING_NOW`、
+  每页 `SUCCESS` 和 `ALL_GET_COMPLETE`，逐页命名并支持 `--max-pages`；
+  模拟测试已覆盖两页和 `ADF/BOOKLET/ON` 请求。
 - **OID 语义**：827 个唯一文本 OID，其中 91 个为第三方库常量；736 个设备
   OID 中 735 个已有名称或语义，仅 `1.3.6.1.4.1.1347.42.27.6.0` 未知。
 
 ## 当前优先级
 
-1. **P0：验证扫描参数与多页路径。** 使用非空白页面分别测试 SIMPLEX/DUPLEX、
-   ADF/平板、非默认分辨率与颜色配置；将官方 KMIP 色彩矩阵和分页状态逐项
-   对照，不以猜测补齐。
+1. **P0：在有 ADF/双面硬件的其他机型上验证已实现的协议路径。** MA2000w
+   没有输稿器；可在其他机型测试 `ADF + SIMPLEX/DUPLEX/BOOKLET + 多页`，
+   对照官方 KMIP 输出。没有相应硬件时不得标记为跨机型兼容已验证。
 2. **P1：USB 硬件验证。** 接入设备后跑 `--list-usb`、`--usb --json`，与 TCP
    结果逐项对照；同时验证断线重连和睡眠唤醒。
 3. **P2：配置写入前置设计。** 先建立只读基线、备份、最小写入、回读和回滚；
@@ -109,8 +124,10 @@ BMP 输出和关会话。最大风险已从“协议方法猜测”转为“默�
 
 ## 待验证假设
 
-- 官方 KMIP 色彩矩阵在非默认颜色/画质模式下是否会影响当前 RAW→RGB 结果。
-- ADF、双面和第二页的 `retrieve_image` 结果序列。
+- 官方 KMIP 完整色彩矩阵在更复杂颜色/画质模式下是否会影响当前 RAW→RGB。
+- ADF、双面和第二页在其他机型上的 `retrieve_image` 结果序列和硬件行为。
+- MA2000w 接受 `RESOLUTION_200X200` 但返回尺寸/字节数未变化；是否钳制参数未知。
+- 请求 JPEG 时 MA2000w 仍返回 RAW；其他输出格式的返回类型和设备支持范围未知。
 - HTTPS 9091 的证书和认证行为；MA2000w 当前未监听 9091。
 - USB 原始 UEL 帧是否与 TCP 9100 完全一致；语言监视器是否增加额外封装。
 - 原厂程序在 USB 与网络连接下是否使用相同的 PJL 查询序列。
@@ -125,6 +142,8 @@ BMP 输出和关会话。最大风险已从“协议方法猜测”转为“默�
 
 - 当前没有真实 Windows 主机；已安装 Wine/32 位 MinGW 作为本地行为观测
   环境，但它不能覆盖所有 Windows TWAIN UI 和驱动动态路径。
+- 当前 MA2000w 没有输稿器；ADF、双面和真正多页只能完成协议构造与模拟状态机
+  验证，跨机型硬件验证阻塞。
 - USB 物理验证受硬件接入限制；历史检查未发现 `0482:0d51`，本次 `lsusb`
   因执行环境无法初始化 libusb（`-99`）而未能复核，接入时需重新确认。
 - MA2000w 的 9090 在睡眠状态可正常完成扫描；此前失败已确认是简化 SOAP 1.1
@@ -169,52 +188,47 @@ BMP 输出和关会话。最大风险已从“协议方法猜测”转为“默�
 - 干净归档和 Git bundle 位于 `/tmp/kyocera-client-tool-for-linux-20261018.tar.gz`
   和 `/tmp/kyocera-client-tool-for-linux-20261018.bundle`。
 
-## 最近一次工作交接（第三十二轮）
+## 最近一次工作交接（第三十三轮）
 
-日期：2026-10-29。范围：以官方二进制和真实请求为基准，完成 MA2000w
-KM-WSDL 网络扫描、XOP 取图和 RAW 图像解码的独立 Linux 实现。执行了真实
-单页扫描；没有执行 SNMP SET、`KSETOBJ`、重启或配置写入。
+日期：2026-10-31。范围：补齐扫描参数、多页状态机与灰度 RAW；没有执行
+SNMP SET、`KSETOBJ`、重启或配置写入。
 
 完成与证据：
 
-- 安装 Wine 10.0 和 i686 MinGW，在独立前缀
-  `/home/ync/.wine-kyocera-scan` 中加载官方 32 位 `KMSCNAPI.dll`；使用
-  `127.0.0.2:9090` 绕开本机 `sing-box` 对 `127.0.0.1:9090` 的占用。
-- 捕获并逐字节复刻官方 SOAP 1.2 请求：完整 namespace、
-  `<wsa:Action>` Header、`application/soap+xml`、带引号 SOAPAction；
-  `get_service_information` 请求体 1657 字节，SHA-256 为
-  `ae4f8f9a43f2f46a3b76e2a1190dd5990d62d1699aaaeb14ac1264def76f3a0c`。
-- 真机返回服务信息 `SUCCESS`、版本 `30.0.134.1`、型号 `MA2000w`，
-  capability 包含 `duplex_mode=DUPLEX`，默认配置为 FULL_COLOR、300×300、
-  A4、RAW。
-- 真机完整执行 `open_session -> start_scan -> retrieve_image* ->
-  ALL_GET_COMPLETE -> close_session`；`close_session` 返回 `SUCCESS`。
-- 确认取图为 `multipart/related` + XOP；生成中返回
-  `IMAGE_CREATING_NOW`，结束时返回 `ALL_GET_COMPLETE`。
-- 从 `KMNETSCN3.dll` 还原 RAW 状态机和 `KMIPAPI.dll` 的校准/合并行为；
-  新增 `kyocera_monitor/kmscn_raw.py`，独立完成暗/亮校准、阴影校正、
-  三颜色平面合并和 24 位 BMP 输出。
-- 新增 `tools/kmscn_scan.py`，正式扫描不加载 Wine 或官方 DLL。
-- 真机结果：RAW 28,275,026 字节；BMP 2496×3520、26,357,814 字节；
-  非空白页面视觉检查正常。
-- 验证：`python3 -m unittest discover -s tests -v` → 170/170 通过；
-  `python3 tools/check_publication.py` 通过。
+- 官方 `KMSCNAPI.dll` 哈希仍为
+  `d3e276ebe284351e46549fc1c5145c4241fa41e70f4aca306a5abc94b20f2d7a`。
+- 从枚举表和官方 `start_scanRequest` 固化颜色、分辨率、双面、原稿位置、
+  连续扫描、原稿类型和输出格式 token；`continuous_scan_mode` 为 `OFF/ON`。
+- 官方 DLL 对本地假服务返回 `CONTINUE_SCAN` 时，
+  `KMSCNRetrieveImage=10010`、无图像；客户端改为等待后继续取图。
+- 新增分辨率、颜色、双面、原稿位置、连续扫描和原稿类型限制选项；新增多页
+  逐页保存测试，覆盖两页和 `ADF/BOOKLET/ON`。
+- MA2000w `GRAYSCALE + RAW` 真机成功：RAW 9,425,014 字节，单平面 8 带；
+  BMP 2496×3520、26,357,814 字节，图像清晰；关会话成功。
+- 请求 JPEG 的一次真机运行仍返回 RAW 分带体；解码改为以响应
+  `file_type` 为准。另一次格式协商在读取 11.7 MB 后 chunked 响应中断，
+  客户端已把该异常转为结构化错误。
+- 中断后的最终只读预检仍返回 `SUCCESS`，服务能力可读，未观察到遗留扫描会话。
+- 用户确认 MA2000w 没有输稿器；ADF/多页保留用于其他机型，未宣称为本机
+  或跨机型硬件验证完成。
+- 验证：扫描专项 38/38；全量测试 178/178；公开树检查通过。
 
 遗留问题：
 
-- 官方 KMIP 的完整色彩矩阵仅在默认 RAW 配置下完成路径复刻；其他颜色/画质
-  枚举仍需非默认设置对照。
-- 双面、ADF、多页分页和取消路径尚未真机验证。
+- ADF、双面、BOOKLET 和真正多页需其他有输稿器的机型验证。
+- 600 DPI、非 RAW 输出、取消和异常中断恢复仍需真机样本。
+- MA2000w 的 200 DPI 请求未改变输出尺寸；参数钳制行为未知。
 - HTTPS 9091、认证和跨机型兼容性未验证。
 
-Wine 截图/捕获环境、编译命令和 `127.0.0.2` 端口冲突绕法已写入
+Wine 捕获环境、`CONTINUE_SCAN` 返回码实验和端口绕法已写入
 `docs/reverse-engineering/tooling.md`。
 
 ## 下一步
 
-优先执行：用一页有清晰正文的原稿测试非默认分辨率、双面/ADF（若设备支持）
-和多页路径；逐项对照 `retrieve_image` 状态与官方 KMIP 输出。之后再做配置
-写入基线/回滚设计。
+优先执行：在具备 ADF/双面的其他机型上验证
+`ADF + DUPLEX/BOOKLET + 多页` 和响应 `file_type`；逐项对照官方 KMIP
+输出。没有此类硬件时，转做 USB 物理验证或配置写入基线/回滚设计，不继续
+猜协议。
 
 ## 相关文档
 

@@ -613,3 +613,86 @@ env XDG_CONFIG_HOME=/tmp/ghidra_config \
   -postScript InspectScanApi.java analysis/decompiled/KMSCNAPI \
   -deleteProject
 ```
+
+### 9.9 扫描选项、灰度与多页扩展（2026-10-31）
+
+本轮继续以已校验的 `KMSCNAPI.dll`
+（SHA-256 `d3e276ebe284351e46549fc1c5145c4241fa41e70f4aca306a5abc94b20f2d7a`）
+和官方 DLL 诊断宿主为依据。MA2000w 没有输稿器，因此本机只能验证平板路径；
+ADF/双面能力保留在 Linux 客户端中，但不能把模拟测试描述成其他机型真机兼容。
+
+#### 9.9.1 官方枚举与默认请求
+
+从 `KMSCNAPI.dll` 的 gSOAP 枚举表、`startScanReqInit` 关联函数和官方宿主
+产生的 `start_scanRequest` 得到以下线协议值：
+
+| 字段 | 已验证 token |
+| --- | --- |
+| `color_selection` | `FULL_COLOR`、`GRAYSCALE`、`BLACK_AND_WHITE`、`AUTO_BLACK_AND_WHITE`、`AUTO_GRAYSCALE` |
+| `scan_resolution` | `RESOLUTION_150X150`、`RESOLUTION_200X100`、`RESOLUTION_200X200`、`RESOLUTION_200X400`、`RESOLUTION_300X300`、`RESOLUTION_400X400`、`RESOLUTION_600X600` |
+| `duplex_mode` | `SIMPLEX`、`DUPLEX`、`BOOKLET` |
+| `original_placement` | `AUTO`、`PLATEN`、`ADF` |
+| `continuous_scan_mode` | `OFF`、`ON`（`ON_OFF_TYPE`） |
+| `original_image` | `TEXT`、`TEXT_AND_PHOTO`、`PHOTO`、`FOR_OCR`、`MAP`、`LIGHT_TEXT` |
+| `image_file_format` | `PDF`、`TIFF`、`JPEG`、`HIGH_COMPRESSION_PDF`、`XPS`、`RAW` |
+
+官方捕获的零初始化 `start_scanRequest` 明确包含
+`continuous_scan_mode=OFF`、`duplex_mode=SIMPLEX`、
+`original_placement=AUTO`、`original_image=TEXT` 和
+`image_file_format=PDF`。枚举表存在只说明官方可序列化该 token，不代表
+每台设备都支持每种组合。
+
+#### 9.9.2 `CONTINUE_SCAN`
+
+本地假服务向官方 DLL 返回 `CONTINUE_SCAN` 后，
+`KMSCNRetrieveImage` 实测返回码为 `10010`，长度为 `UINT32_MAX`，图像指针
+为空。`KMNETSCN3` 的取图线程只把 `SUCCESS` 和 `ALL_GET_COMPLETE` 路径送入
+图像解析；其他非终止值继续取图。因此 Linux 客户端把 `CONTINUE_SCAN` 视为
+成功但尚无图像的等待状态，而不是失败。
+
+#### 9.9.3 多页与 ADF 客户端路径
+
+`tools/kmscn_scan.py` 新增官方受限枚举覆盖：
+
+```bash
+# 其他支持 ADF/双面的机型示例；MA2000w 无输稿器，不能据此宣称本机已验证
+python3 tools/kmscn_scan.py 192.0.2.10 \
+  --original-placement ADF --duplex DUPLEX \
+  --max-pages 20 \
+  --output /tmp/page.raw --decoded-output /tmp/page.bmp
+```
+
+客户端继续使用设备返回的默认配置，仅在显式参数存在时覆盖字段；缺失字段按
+官方序列化顺序插入。取图循环处理
+`CONTINUE_SCAN/IMAGE_CREATING_NOW -> SUCCESS* -> ALL_GET_COMPLETE`，每页
+独立保存，最后调用 `close_session`。模拟设备测试覆盖了
+`CONTINUE_SCAN -> 第1页 -> 第2页 -> ALL_GET_COMPLETE`，并核对
+`ADF/BOOKLET/ON` 字段顺序。
+
+#### 9.9.4 灰度 RAW
+
+MA2000w 真机请求 `GRAYSCALE + RAW` 后得到：
+
+- RAW 9,425,014 字节；SHA-256
+  `b414916c04c2a5739e79290f5bbc64281c773df10e05d0e76422c50e13a611de`。
+- 一条颜色值 `1` 的暗校准、一条亮校准和 8 条 `82/81` 图像分带。
+- 分带为 2496×440，单平面总计 2496×3520。
+- 独立解码输出 24 位灰度 BMP，26,357,814 字节；SHA-256
+  `fd313fcda85dd565fb62be54a48a4deaf54821fe3e8a10251fddeb9bf98bb92a`。
+- `close_session=SUCCESS`，人工查看图像内容清晰。
+
+实现使用与彩色路径相同的官方暗/亮列均值与阴影校正公式。官方 TWAIN 最终写入
+文件的 BMP 位深尚未单独捕获，因此当前只宣称像素内容可恢复，不宣称 BMP
+封装与官方逐字节一致。
+
+#### 9.9.5 分辨率与输出格式边界
+
+- MA2000w 接受 `RESOLUTION_200X200`，但返回流仍为 28,275,026 字节、
+  2496×3520。该机型是否钳制或忽略此参数仍未知。
+- 请求 `image_file_format=JPEG` 的一次运行仍返回 RAW 分带体；因此解码必须
+  依据 `retrieve_imageResponse/file_type`，不能依据请求值。
+- 后续一次格式协商在 chunked 响应读取约 11.7 MB 后提前断开。客户端现在把
+  `http.client.IncompleteRead` 报告为结构化传输错误，不解析部分图像。
+- 其他输出格式、600 DPI、ADF、多页和双面仍需在相应机型上真机验证。
+- 单次 `retrieve_image` 默认上限为 64 MiB；`--max-response-bytes` 可显式
+  提高上限。该参数是本地资源保护，不是协议字段。

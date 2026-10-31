@@ -20,6 +20,29 @@ typedef int (__cdecl *kmscn_retrieve_image_fn)(void *context, void **data, unsig
 typedef int (__cdecl *kmscn_close_session_fn)(void *context);
 typedef void (__cdecl *kmscn_exit_fn)(void *context);
 
+static void apply_config_override(unsigned char *output)
+{
+    const char *offset_text = getenv("KMSCN_SET_DWORD_OFFSET");
+    const char *value_text = getenv("KMSCN_SET_DWORD_VALUE");
+    char *offset_end;
+    char *value_end;
+    unsigned long offset;
+    unsigned long value;
+
+    if (offset_text == NULL || value_text == NULL) {
+        return;
+    }
+    offset = strtoul(offset_text, &offset_end, 0);
+    value = strtoul(value_text, &value_end, 0);
+    if (*offset_text == '\0' || *offset_end != '\0'
+        || *value_text == '\0' || *value_end != '\0'
+        || offset % 4 != 0 || offset > 65532) {
+        fprintf(stderr, "invalid KMSCN_SET_DWORD_OFFSET/VALUE\n");
+        return;
+    }
+    *(unsigned int *)(output + offset) = (unsigned int)value;
+}
+
 int main(int argc, char **argv)
 {
     HMODULE library;
@@ -112,6 +135,7 @@ int main(int argc, char **argv)
         if (result == 0 && strcmp(operation, "scan-sequence") == 0) {
             memset(output, 0, 65536);
             /* Default scan configuration is filled by KMSCNAPI serialization. */
+            apply_config_override(output);
             result = start_scan(context, output);
             printf("KMSCNStartScan=%d\n", result);
             if (result == 0) {
@@ -135,6 +159,7 @@ int main(int argc, char **argv)
         }
     } else if (strcmp(operation, "start-scan") == 0) {
         memset(output, 0, 65536);
+        apply_config_override(output);
         result = start_scan(context, output);
         printf("KMSCNStartScan=%d\n", result);
     } else {

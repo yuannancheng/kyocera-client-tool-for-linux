@@ -27,6 +27,85 @@ GET_SERVICE_INFORMATION_ACTION = f"{SCAN_NAMESPACE}/get_service_information"
 GET_CAPABILITY_ACTION = f"{SCAN_NAMESPACE}/get_capability"
 GET_DEFAULT_CONFIGURATION_ACTION = f"{SCAN_NAMESPACE}/get_default_configuration"
 
+# Enumeration tokens serialized by the official KMSCNAPI.dll. Keep these
+# explicit so callers cannot invent undocumented wire values.
+COLOR_SELECTIONS = (
+    "FULL_COLOR",
+    "GRAYSCALE",
+    "BLACK_AND_WHITE",
+    "AUTO_BLACK_AND_WHITE",
+    "AUTO_GRAYSCALE",
+)
+SCAN_RESOLUTIONS = (
+    "RESOLUTION_150X150",
+    "RESOLUTION_200X100",
+    "RESOLUTION_200X200",
+    "RESOLUTION_200X400",
+    "RESOLUTION_300X300",
+    "RESOLUTION_400X400",
+    "RESOLUTION_600X600",
+)
+DUPLEX_MODES = ("SIMPLEX", "DUPLEX", "BOOKLET")
+ORIGINAL_PLACEMENTS = ("AUTO", "PLATEN", "ADF")
+CONTINUOUS_SCAN_MODES = ("OFF", "ON")
+ORIGINAL_IMAGES = (
+    "TEXT",
+    "TEXT_AND_PHOTO",
+    "PHOTO",
+    "FOR_OCR",
+    "MAP",
+    "LIGHT_TEXT",
+)
+IMAGE_FILE_FORMATS = (
+    "PDF",
+    "TIFF",
+    "JPEG",
+    "HIGH_COMPRESSION_PDF",
+    "XPS",
+    "RAW",
+)
+
+_CONFIGURATION_CHILD_ORDER = {
+    "scan_image_configuration": (
+        "color_selection",
+        "exposure_level",
+        "background_exposure_adjust",
+        "sharpness",
+        "border_erase",
+        "scan_resolution",
+        "continuous_scan_mode",
+        "duplex_mode",
+        "binding",
+        "multi_page_form",
+        "original_size_mixed",
+        "prevent_bleed_through",
+        "sharpness_emphasis",
+        "sharpness_mode",
+        "ocr",
+        "silent_mode",
+    ),
+    "original_configuration": (
+        "original_image",
+        "original_size",
+        "original_orientation",
+        "original_custom_size",
+        "original_placement",
+    ),
+    "output_image_configuration": (
+        "image_file_format",
+        "sending_size",
+        "image_compress_level",
+        "zoom",
+        "centering",
+        "encrypt_pdf",
+        "file_name",
+        "file_separation",
+        "pdf_type",
+        "bates_stamp",
+        "high_compression_pdf_quality",
+    ),
+}
+
 _READ_ONLY_OPERATIONS = {
     "get_service_information",
     "get_capability",
@@ -494,6 +573,56 @@ def replace_configuration_value(
     )
 
 
+def configuration_value(node: XmlNode, name: str) -> str | None:
+    """Return the first configured field value with the requested name."""
+    if node.name == name:
+        return node.text
+    for child in node.children:
+        value = configuration_value(child, name)
+        if value is not None:
+            return value
+    return None
+
+
+def set_configuration_value(
+    node: XmlNode,
+    name: str,
+    value: str,
+) -> XmlNode:
+    """Set a field, inserting a missing field in official serialization order."""
+    children = list(node.children)
+    for index, child in enumerate(children):
+        if child.name == name:
+            children[index] = XmlNode(
+                name=child.name,
+                attributes=child.attributes,
+                text=value,
+                children=child.children,
+            )
+            break
+        children[index] = set_configuration_value(child, name, value)
+    else:
+        order = _CONFIGURATION_CHILD_ORDER.get(node.name, ())
+        if name in order:
+            new_child = XmlNode(name=name, attributes={}, text=value, children=())
+            new_index = next(
+                (
+                    index
+                    for index, child in enumerate(children)
+                    if child.name in order
+                    and order.index(child.name) > order.index(name)
+                ),
+                len(children),
+            )
+            children.insert(new_index, new_child)
+    return XmlNode(
+        name=node.name,
+        attributes=node.attributes,
+        text=node.text,
+        children=tuple(children),
+    )
+
+
 def build_open_session_request(
     soap_version: str = "1.2",
 ) -> tuple[bytes, dict[str, str]]:
@@ -648,7 +777,7 @@ def parse_scan_response(
     except ValueError:
         file_size = None
     http_ok = 200 <= http_status < 300
-    retrieval_pending = result == "IMAGE_CREATING_NOW"
+    retrieval_pending = result in {"IMAGE_CREATING_NOW", "CONTINUE_SCAN"}
     retrieval_complete = result == "ALL_GET_COMPLETE"
     return ScanResponse(
         ok=(
@@ -763,7 +892,16 @@ def _post_response(
         connection.putheader("Connection", "close")
         connection.endheaders(payload)
         response = connection.getresponse()
-        body = response.read(max_response_bytes + 1)
+        try:
+            body = response.read(max_response_bytes + 1)
+        except http.client.IncompleteRead as error:
+            partial_length = (
+                len(error.partial) if error.partial is not None else 0
+            )
+            raise ValueError(
+                "KM-WSDL response ended before its declared length "
+                f"({partial_length} bytes received)"
+            ) from error
         status = response.status
         response_headers = {
             name.lower(): value for name, value in response.getheaders()
@@ -938,8 +1076,11 @@ def retrieve_image(
     timeout: float = 30.0,
     insecure: bool = False,
     include_raw: bool = False,
+    max_response_bytes: int = 64 * 1024 * 1024,
 ) -> ScanResponse:
     """Retrieve the next page or completion status from an active scan."""
+    if max_response_bytes < 1:
+        raise ValueError("max_response_bytes must be positive")
     return _perform_scan_operation(
         endpoint,
         "retrieve_image",
@@ -948,7 +1089,7 @@ def retrieve_image(
         timeout=timeout,
         insecure=insecure,
         include_raw=include_raw,
-        max_response_bytes=64 * 1024 * 1024,
+        max_response_bytes=max_response_bytes,
     )
 
 

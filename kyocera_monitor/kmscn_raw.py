@@ -7,6 +7,7 @@ from dataclasses import dataclass
 
 HEADER_SIZE = 11
 COLOR_PLANES = (2, 3, 4)
+SUPPORTED_COLOR_PLANES = (COLOR_PLANES, (1,))
 
 
 class RawScanError(ValueError):
@@ -101,27 +102,28 @@ def decode_raw(data: bytes) -> DecodedScan:
     chunks = parse_chunks(data)
     dark: dict[int, bytes] = {}
     white: dict[int, bytes] = {}
-    bands: dict[int, list[RawChunk]] = {
-        color: [] for color in COLOR_PLANES
-    }
+    bands: dict[int, list[RawChunk]] = {}
 
     for chunk in chunks:
-        if chunk.color not in COLOR_PLANES:
-            continue
         if chunk.command == 0x8A and chunk.subtype in {0x8A, 0x8B}:
             target = dark if chunk.subtype == 0x8A else white
             target[chunk.color] = _average_columns(chunk)
         elif chunk.command == 0x82 and chunk.subtype == 0x81:
-            bands[chunk.color].append(chunk)
+            bands.setdefault(chunk.color, []).append(chunk)
 
-    if set(dark) != set(COLOR_PLANES) or set(white) != set(COLOR_PLANES):
+    colors = tuple(sorted(set(dark) | set(white) | set(bands)))
+    if colors not in SUPPORTED_COLOR_PLANES:
+        raise RawScanError(
+            f"unsupported color plane set: {colors!r}"
+        )
+    if set(dark) != set(colors) or set(white) != set(colors):
         raise RawScanError("missing dark or white calibration band")
-    if any(not bands[color] for color in COLOR_PLANES):
+    if any(not bands.get(color) for color in colors):
         raise RawScanError("missing one or more color planes")
 
     widths = {
         chunk.width
-        for color in COLOR_PLANES
+        for color in colors
         for chunk in bands[color]
     }
     if len(widths) != 1:
@@ -129,16 +131,16 @@ def decode_raw(data: bytes) -> DecodedScan:
     width = widths.pop()
     heights = {
         color: sum(chunk.height for chunk in bands[color])
-        for color in COLOR_PLANES
+        for color in colors
     }
     if len(set(heights.values())) != 1:
         raise RawScanError("color planes use inconsistent heights")
     height = next(iter(heights.values()))
 
     planes: dict[int, bytearray] = {
-        color: bytearray(width * height) for color in COLOR_PLANES
+        color: bytearray(width * height) for color in colors
     }
-    for color in COLOR_PLANES:
+    for color in colors:
         correction = bytearray(width * 256)
         for column in range(width):
             base = column * 256
@@ -167,9 +169,15 @@ def decode_raw(data: bytes) -> DecodedScan:
     rgb = bytearray(width * height * 3)
     for position in range(width * height):
         target = position * 3
-        rgb[target] = planes[2][position]
-        rgb[target + 1] = planes[3][position]
-        rgb[target + 2] = planes[4][position]
+        if colors == (1,):
+            value = planes[1][position]
+            rgb[target] = value
+            rgb[target + 1] = value
+            rgb[target + 2] = value
+        else:
+            rgb[target] = planes[2][position]
+            rgb[target + 1] = planes[3][position]
+            rgb[target + 2] = planes[4][position]
     return DecodedScan(
         width=width,
         height=height,

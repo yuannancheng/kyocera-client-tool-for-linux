@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run one KM-WSDL scan using the device's reported default configuration."""
+"""Run KM-WSDL scans using the device's reported default configuration."""
 
 from __future__ import annotations
 
@@ -56,9 +56,45 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--max-polls", type=int, default=60)
     parser.add_argument("--poll-interval", type=float, default=1.0)
     parser.add_argument(
+        "--max-response-bytes",
+        type=int,
+        default=64 * 1024 * 1024,
+        help="maximum bytes accepted for one retrieve_image response",
+    )
+    parser.add_argument(
         "--format",
-        choices=("RAW", "JPEG", "TIFF"),
+        choices=kmscn.IMAGE_FILE_FORMATS,
         help="override the device default image_file_format",
+    )
+    parser.add_argument(
+        "--resolution",
+        choices=kmscn.SCAN_RESOLUTIONS,
+        help="override scan_resolution using an official KM-WSDL enum",
+    )
+    parser.add_argument(
+        "--color",
+        choices=kmscn.COLOR_SELECTIONS,
+        help="override color_selection using an official KM-WSDL enum",
+    )
+    parser.add_argument(
+        "--duplex",
+        choices=kmscn.DUPLEX_MODES,
+        help="override duplex_mode using an official KM-WSDL enum",
+    )
+    parser.add_argument(
+        "--original-placement",
+        choices=kmscn.ORIGINAL_PLACEMENTS,
+        help="override original_placement using an official KM-WSDL enum",
+    )
+    parser.add_argument(
+        "--continuous-scan",
+        choices=kmscn.CONTINUOUS_SCAN_MODES,
+        help="override continuous_scan_mode using an official KM-WSDL enum",
+    )
+    parser.add_argument(
+        "--original-image",
+        choices=kmscn.ORIGINAL_IMAGES,
+        help="override original_image using an official KM-WSDL enum",
     )
     parser.add_argument(
         "--operation-id",
@@ -76,6 +112,8 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("--max-pages must be positive")
     if args.max_polls < 1:
         parser.error("--max-polls must be positive")
+    if args.max_response_bytes < 1:
+        parser.error("--max-response-bytes must be positive")
     if args.retrieve_only and args.operation_id is None:
         parser.error("--retrieve-only requires --operation-id")
 
@@ -103,12 +141,29 @@ def main(argv: list[str] | None = None) -> int:
             print(json.dumps(payload, ensure_ascii=False, indent=2) if args.json else payload)
             return 1
         configuration = defaults.configuration
-        if args.format is not None:
-            configuration = kmscn.replace_configuration_value(
-                configuration,
-                "image_file_format",
-                args.format,
+        requested_overrides = {
+            name: value
+            for name, value in (
+                ("image_file_format", args.format),
+                ("scan_resolution", args.resolution),
+                ("color_selection", args.color),
+                ("duplex_mode", args.duplex),
+                ("original_placement", args.original_placement),
+                ("continuous_scan_mode", args.continuous_scan),
+                ("original_image", args.original_image),
             )
+            if value is not None
+        }
+        for name, value in requested_overrides.items():
+            configuration = kmscn.set_configuration_value(
+                configuration,
+                name,
+                value,
+            )
+        effective_format = kmscn.configuration_value(
+            configuration,
+            "image_file_format",
+        )
 
         if args.operation_id is not None:
             operation_id = args.operation_id
@@ -145,6 +200,7 @@ def main(argv: list[str] | None = None) -> int:
                     timeout=args.timeout,
                     insecure=args.insecure,
                     include_raw=args.raw,
+                    max_response_bytes=args.max_response_bytes,
                 )
                 if not started.ok:
                     payload = {
@@ -185,7 +241,7 @@ def main(argv: list[str] | None = None) -> int:
                 if retrieved.result == "ALL_GET_COMPLETE":
                     completed = True
                     break
-                if retrieved.result == "IMAGE_CREATING_NOW":
+                if retrieved.result in {"IMAGE_CREATING_NOW", "CONTINUE_SCAN"}:
                     time.sleep(args.poll_interval)
                     continue
                 data = decode_image_data(retrieved.image_data)
@@ -215,14 +271,20 @@ def main(argv: list[str] | None = None) -> int:
                         f"{output.stem}-{pages_saved}{output.suffix}"
                     )
                 output.write_bytes(data)
+                received_format = retrieved.file_type
                 output_files.append(
                     {
                         "path": str(output),
                         "bytes": len(data),
                         "sha256": hashlib.sha256(data).hexdigest(),
+                        "file_type": received_format,
                     }
                 )
-                if not args.no_decode:
+                if (
+                    not args.no_decode
+                    and (received_format or effective_format or "").upper()
+                    == "RAW"
+                ):
                     try:
                         decoded = kmscn_raw.decode_raw(data)
                         decoded_path = (
@@ -288,6 +350,8 @@ def main(argv: list[str] | None = None) -> int:
             "ok": completed,
             "endpoint": endpoint,
             "operation_id": operation_id,
+            "configuration_overrides": requested_overrides,
+            "effective_format": effective_format,
             "outputs": output_files,
             "decoded_outputs": decoded_outputs,
             "completed": completed,

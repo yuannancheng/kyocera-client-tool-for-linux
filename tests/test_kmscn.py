@@ -5,6 +5,64 @@ from kyocera_monitor import kmscn
 
 
 class RequestTests(unittest.TestCase):
+    def test_official_scan_enum_tokens_are_explicit(self):
+        self.assertEqual(
+            kmscn.COLOR_SELECTIONS,
+            (
+                "FULL_COLOR",
+                "GRAYSCALE",
+                "BLACK_AND_WHITE",
+                "AUTO_BLACK_AND_WHITE",
+                "AUTO_GRAYSCALE",
+            ),
+        )
+        self.assertEqual(
+            kmscn.SCAN_RESOLUTIONS,
+            (
+                "RESOLUTION_150X150",
+                "RESOLUTION_200X100",
+                "RESOLUTION_200X200",
+                "RESOLUTION_200X400",
+                "RESOLUTION_300X300",
+                "RESOLUTION_400X400",
+                "RESOLUTION_600X600",
+            ),
+        )
+        self.assertEqual(
+            kmscn.DUPLEX_MODES,
+            ("SIMPLEX", "DUPLEX", "BOOKLET"),
+        )
+        self.assertEqual(
+            kmscn.ORIGINAL_PLACEMENTS,
+            ("AUTO", "PLATEN", "ADF"),
+        )
+        self.assertEqual(
+            kmscn.CONTINUOUS_SCAN_MODES,
+            ("OFF", "ON"),
+        )
+        self.assertEqual(
+            kmscn.ORIGINAL_IMAGES,
+            (
+                "TEXT",
+                "TEXT_AND_PHOTO",
+                "PHOTO",
+                "FOR_OCR",
+                "MAP",
+                "LIGHT_TEXT",
+            ),
+        )
+        self.assertEqual(
+            kmscn.IMAGE_FILE_FORMATS,
+            (
+                "PDF",
+                "TIFF",
+                "JPEG",
+                "HIGH_COMPRESSION_PDF",
+                "XPS",
+                "RAW",
+            ),
+        )
+
     def test_soap_11_keeps_official_wsa_action_header(self):
         payload, headers = kmscn.build_request("1.1")
         text = payload.decode("utf-8")
@@ -314,6 +372,18 @@ class SessionRequestTests(unittest.TestCase):
                         "FULL_COLOR",
                         (),
                     ),
+                    kmscn.XmlNode(
+                        "scan_resolution",
+                        {},
+                        "RESOLUTION_300X300",
+                        (),
+                    ),
+                    kmscn.XmlNode(
+                        "duplex_mode",
+                        {},
+                        "SIMPLEX",
+                        (),
+                    ),
                 ),
             ),
             kmscn.XmlNode(
@@ -367,6 +437,45 @@ class SessionRequestTests(unittest.TestCase):
         self.assertEqual(changed.name, self.CONFIGURATION.name)
         self.assertEqual(changed.children[-1].children[0].text, "JPEG")
 
+    def test_multiple_configuration_replacements_are_serialized(self):
+        changed = kmscn.replace_configuration_value(
+            self.CONFIGURATION,
+            "scan_resolution",
+            "RESOLUTION_200X200",
+        )
+        changed = kmscn.replace_configuration_value(
+            changed,
+            "duplex_mode",
+            "DUPLEX",
+        )
+        payload, _ = kmscn.build_start_scan_request("18", changed)
+        text = payload.decode("utf-8")
+        self.assertIn(
+            "<kmscn:scan_resolution>RESOLUTION_200X200</kmscn:scan_resolution>",
+            text,
+        )
+        self.assertIn(
+            "<kmscn:duplex_mode>DUPLEX</kmscn:duplex_mode>",
+            text,
+        )
+
+    def test_missing_field_is_inserted_in_official_order(self):
+        changed = kmscn.set_configuration_value(
+            self.CONFIGURATION,
+            "continuous_scan_mode",
+            "ON",
+        )
+        text = kmscn._render_xml_node(changed)
+        self.assertLess(
+            text.index("<kmscn:scan_resolution>"),
+            text.index("<kmscn:continuous_scan_mode>"),
+        )
+        self.assertLess(
+            text.index("<kmscn:continuous_scan_mode>"),
+            text.index("<kmscn:duplex_mode>"),
+        )
+        self.assertEqual(text.count("continuous_scan_mode"), 2)
+
 
 class SessionResponseTests(unittest.TestCase):
     MIME_RESPONSE = b"""--test-boundary\r
@@ -419,6 +528,34 @@ Content-ID: <id1>\r
         )
         self.assertTrue(result.ok)
         self.assertEqual(result.result, "ALL_GET_COMPLETE")
+
+    def test_continue_scan_is_a_successful_pending_state(self):
+        response = b"""<SOAP-ENV:Envelope
+ xmlns:SOAP-ENV="http://www.w3.org/2003/05/soap-envelope"
+ xmlns:kmscn="http://www.kyoceramita.com/ws/km-wsdl/job/scan_operation">
+ <SOAP-ENV:Body><kmscn:retrieve_imageResponse>
+  <kmscn:result>CONTINUE_SCAN</kmscn:result>
+ </kmscn:retrieve_imageResponse></SOAP-ENV:Body>
+</SOAP-ENV:Envelope>"""
+        result = kmscn.parse_scan_response(
+            response,
+            operation="retrieve_image",
+            endpoint="http://192.0.2.1:9090/scan",
+            http_status=200,
+            soap_version="1.2",
+            content_type="application/soap+xml; charset=utf-8",
+        )
+        self.assertTrue(result.ok)
+        self.assertEqual(result.result, "CONTINUE_SCAN")
+        self.assertIsNone(result.image_data)
+
+    def test_retrieve_rejects_nonpositive_response_limit(self):
+        with self.assertRaisesRegex(ValueError, "must be positive"):
+            kmscn.retrieve_image(
+                "http://192.0.2.1:9090/scan",
+                "17",
+                max_response_bytes=0,
+            )
 
 
 class NetworkTests(unittest.TestCase):
@@ -497,6 +634,36 @@ class NetworkTests(unittest.TestCase):
             result.missing_capabilities,
             kmscn.CAPABILITY_ENTRY_NAMES,
         )
+
+    def test_truncated_chunked_response_is_a_structured_error(self):
+        class TruncatedResponse:
+            status = 200
+
+            def read(self, limit):
+                raise kmscn.http.client.IncompleteRead(b"partial", 10157)
+
+            def getheaders(self):
+                return [("Content-Type", "application/soap+xml")]
+
+        connection = self.Connection()
+        connection.getresponse = lambda: TruncatedResponse()
+        with mock.patch.object(
+            kmscn.http.client,
+            "HTTPConnection",
+            return_value=connection,
+        ):
+            with self.assertRaisesRegex(
+                ValueError,
+                "ended before its declared length",
+            ):
+                kmscn._post_response(
+                    f"http://192.0.2.1:9090{kmscn.SCAN_PATH}",
+                    b"request",
+                    {},
+                    timeout=1,
+                    insecure=False,
+                )
+        self.assertTrue(connection.closed)
 
 
 class PreflightTests(unittest.TestCase):

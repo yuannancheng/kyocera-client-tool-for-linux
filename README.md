@@ -57,6 +57,9 @@ python3 tools/kmscn_probe.py 192.168.0.220 --https --insecure --json
 python3 tools/kmscn_scan.py 192.168.0.220 \
   --format RAW --output /tmp/kyocera-scan.raw \
   --decoded-output /tmp/kyocera-scan.bmp
+python3 tools/kmscn_scan.py 192.168.0.220 \
+  --color GRAYSCALE --output /tmp/kyocera-gray.raw \
+  --decoded-output /tmp/kyocera-gray.bmp
 ```
 
 退出码：`0` 状态正常，`1` 未发现打印机或配置导出没有读到任何对象，`2` 连接或
@@ -79,7 +82,20 @@ python3 tools/kmscn_scan.py 192.168.0.220 \
 `open_session -> start_scan -> retrieve_image -> ALL_GET_COMPLETE ->
 close_session`。MA2000w 返回私有 RAW 分带流；`kyocera_monitor/kmscn_raw.py`
 按原厂解析状态机还原校准、三颜色平面分带和阴影校正，并输出 24 位 BMP。
-`--no-decode` 可只保留原始流。当前已验证 2496×3520 RGB 单页扫描。
+灰度 RAW 使用单一颜色值 `1` 平面，也已按同一官方校准公式解码。
+`--no-decode` 可只保留原始流。
+
+扫描参数只接受官方 DLL 枚举表中的 token，包括颜色、分辨率、单双面、
+`AUTO/PLATEN/ADF` 原稿位置、连续扫描 `OFF/ON`、原稿类型和输出格式。
+多页取图处理 `CONTINUE_SCAN`、`IMAGE_CREATING_NOW`、每页 `SUCCESS` 和最终
+`ALL_GET_COMPLETE`，可用 `--max-pages` 限制保存页数。解码依据设备响应中的
+`file_type`，不依据请求参数；MA2000w 请求 JPEG 时仍实测返回 RAW。
+单次取图默认最多接受 64 MiB；需要更高分辨率/更大响应时，可用
+`--max-response-bytes` 显式提高内存上限。
+
+MA2000w 当前验证了 2496×3520 RGB 和灰度平板单页扫描。该机型没有输稿器，
+因此 ADF、双面和多页字段已按官方协议实现并完成模拟状态机测试，但尚未在
+具备相应硬件的其他机型上验证，不能表述为跨机型兼容已验证。
 正式扫描只需要 Python 标准库；Wine、MinGW 和官方 DLL 仅用于受控逆向对照，
 环境与复现步骤见
 [`docs/reverse-engineering/tooling.md`](docs/reverse-engineering/tooling.md)。
@@ -230,7 +246,7 @@ python3 -m unittest discover -s tests -v
 python3 tools/check_publication.py
 ```
 
-当前 140 个测试覆盖 PJL 解析/帧格式、分段补发与合并、KGETOBJ 结构化字段、
+当前 178 个测试覆盖 PJL 解析/帧格式、分段补发与合并、KGETOBJ 结构化字段、
 147 项配置对象表与 CLI 配置导出、`KMUTLCFG` UI 控件字符串提取、
 147 项对象→模型偏移映射与首批控件→OID 对照、
 配置 SNMP 后备读取、
@@ -238,7 +254,8 @@ python3 tools/check_publication.py
 SNMP 编码与 walk/行读取边界、SNMP 到 `PrinterSnapshot` 的字段映射、USB
 sysfs 发现、PTY 假设备往返、SNMP/WSD 发现与结果合并，以及 Web 快照缓存、
 设备允许列表与手动添加、多设备并发读取、JSON、页面自包含性、无默认设备启动
-和 GUI 依赖缺失时的回退，以及公开树合规检查。
+和 GUI 依赖缺失时的回退、KM-WSDL 扫描多页/ADF 状态机、灰度 RAW 解码、
+截断 chunked 响应处理，以及公开树合规检查。
 
 ## 研究资料
 

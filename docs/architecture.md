@@ -78,7 +78,9 @@ MA2000w（`0482:0d51`），多个候选时要求显式 `--device`。
   不同，不作为权威值。
 - WSD 只发现打印服务，未发现扫描服务。网络 TWAIN 驱动使用 KM-WSDL
   （HTTP 9090/HTTPS 9091）；Linux 端已独立实现 SOAP 1.2 预检、扫描会话、
-  XOP 取图、RAW 分带解调和 BMP 输出。正式路径不加载官方 DLL。
+  XOP 多页取图、彩色/灰度 RAW 分带解调和 BMP 输出。ADF/双面参数只使用
+  官方枚举；MA2000w 无输稿器，跨机型硬件路径仍待验证。正式路径不加载
+  官方 DLL。
 - Windows Client Tool 的 USB 路径经打印后台 + Kyocera 语言监视器 mailslot
   转发 PJL，未直接打开 USB 设备；Linux 使用 `usblp` 发送同一 UEL 帧，属于
   原生等价实现。

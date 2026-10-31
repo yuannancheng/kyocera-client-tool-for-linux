@@ -84,6 +84,7 @@ scan-sequence
 pkexec --user ync python3 \
   tools/kmscn_capture_server.py \
   --host 127.0.0.2 --port 9090 --requests 4 \
+  --retrieve-result CONTINUE_SCAN \
   --output /tmp/kmscn-official-full-sequence.http
 ```
 
@@ -108,6 +109,22 @@ start_scan
 retrieve_image
 close_session
 ```
+
+`--retrieve-result` 可返回官方 `RESULT_CODE_TYPE` token，用于观察官方 DLL
+对 `CONTINUE_SCAN`、`ALL_GET_COMPLETE` 或错误结果的返回码。2026-10-31
+实测 `CONTINUE_SCAN` 返回码为 `10010`。
+
+诊断宿主可通过以下环境变量设置一个 32 位对齐的配置 dword，用于探测
+`start_scan` 输入布局：
+
+```bash
+KMSCN_SET_DWORD_OFFSET=0x20 KMSCN_SET_DWORD_VALUE=1 \
+  wine /tmp/kmscn_driver_harness-override.exe ... start-scan
+```
+
+该实验入口只验证官方 DLL 的序列化行为；本轮测试表明零初始化输入会得到
+完整默认配置，但单独改写偏移 `0x1c/0x20` 没有改变请求字段，不能据此推断
+生产配置结构。
 
 不要将 `analysis/`、官方 DLL、安装包或含设备凭据的日志提交到公开仓库。
 

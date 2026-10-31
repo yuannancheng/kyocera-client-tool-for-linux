@@ -68,6 +68,35 @@ class RawScanTests(unittest.TestCase):
         self.assertEqual(len(bmp), 54 + 8)
         self.assertEqual(bmp[54:62], b"\x00\x00\xff\x00\xff\x00\x00\x00")
 
+    def test_decodes_single_plane_grayscale_stream(self):
+        parts = [
+            packet(0x8A, 0x8A, 1, 2, 2, bytes((10, 10, 10, 10))),
+            packet(0x8A, 0x8B, 1, 2, 2, bytes((100, 100, 100, 100))),
+            packet(0x82, 0x81, 1, 2, 2, bytes((10, 100, 200, 50))),
+            bytes.fromhex("0000000482820db3"),
+        ]
+
+        scan = kmscn_raw.decode_raw(b"".join(parts))
+
+        self.assertEqual((scan.width, scan.height), (2, 2))
+        self.assertEqual(
+            list(scan.rgb),
+            [
+                13,
+                13,
+                13,
+                255,
+                255,
+                255,
+                255,
+                255,
+                255,
+                120,
+                120,
+                120,
+            ],
+        )
+
     def test_truncated_chunk_is_rejected(self):
         with self.assertRaises(kmscn_raw.RawScanError):
             kmscn_raw.decode_raw(bytes.fromhex("00000020000000000000"))

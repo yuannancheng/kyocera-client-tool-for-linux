@@ -73,6 +73,25 @@ RETRIEVE_IMAGE_RESPONSE = b"""<?xml version="1.0" encoding="UTF-8"?>
 </SOAP-ENV:Envelope>
 """
 
+RETRIEVE_RESULTS = (
+    "SUCCESS",
+    "ALL_GET_COMPLETE",
+    "MODIFIED_SCAN_CONFIG",
+    "INVALID_SCAN_CONFIG_ERROR",
+    "JOB_CANCELED_ERROR",
+    "IMAGE_CREATING_NOW",
+    "JAM_OCCURRED_ERROR",
+    "SYSTEM_BUSY_ERROR",
+    "NOW_POWERSAVING_MODE_ERROR",
+    "INVALID_HOST_INFORMATION_ERROR",
+    "INVALID_OPERATION_ID_ERROR",
+    "INVALID_ACCOUNT_CODE_ERROR",
+    "PAGE_SIZE_NOT_DETECTED_ERROR",
+    "ALLOWED_SCAN_EXCEEDED_ERROR",
+    "JOB_SUSPENDED_ERROR",
+    "CONTINUE_SCAN",
+)
+
 CLOSE_SESSION_RESPONSE = b"""<?xml version="1.0" encoding="UTF-8"?>
 <SOAP-ENV:Envelope xmlns:SOAP-ENV="http://www.w3.org/2003/05/soap-envelope"
  xmlns:kmscn="http://www.kyoceramita.com/ws/km-wsdl/job/scan_operation">
@@ -91,6 +110,7 @@ class CaptureServer(socketserver.TCPServer):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.captures: list[bytes] = []
+        self.retrieve_result = "SUCCESS"
 
 
 class Handler(socketserver.BaseRequestHandler):
@@ -129,7 +149,14 @@ class Handler(socketserver.BaseRequestHandler):
         elif b"start_scanRequest" in data:
             response = START_SCAN_RESPONSE
         elif b"retrieve_imageRequest" in data:
-            response = RETRIEVE_IMAGE_RESPONSE
+            response = RETRIEVE_IMAGE_RESPONSE.replace(
+                b"<kmscn:result>SUCCESS</kmscn:result>",
+                (
+                    "<kmscn:result>"
+                    f"{self.server.retrieve_result}"
+                    "</kmscn:result>"
+                ).encode("ascii"),
+            )
         elif b"close_sessionRequest" in data:
             response = CLOSE_SESSION_RESPONSE
         self.request.sendall(
@@ -147,9 +174,16 @@ def main() -> int:
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=9090)
     parser.add_argument("--requests", type=int, default=1)
+    parser.add_argument(
+        "--retrieve-result",
+        choices=RETRIEVE_RESULTS,
+        default="SUCCESS",
+        help="result token returned for retrieve_imageRequest",
+    )
     args = parser.parse_args()
 
     with CaptureServer((args.host, args.port), Handler) as server:
+        server.retrieve_result = args.retrieve_result
         print(
             json.dumps(
                 {
