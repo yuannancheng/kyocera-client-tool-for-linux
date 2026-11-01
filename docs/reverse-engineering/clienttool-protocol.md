@@ -1005,6 +1005,28 @@ FAX 设置页 `FUN_004144c0` 从栈地址 `0x3da8..0x3dc0` 读取这些值；该
 `kmFaxTxResultReportAttachedImage`、`kmFaxRxResultReportEnable` 逐项吻合。
 因此这些映射标为 `confidence=inferred`：静态路径和名称一致，但尚未做写入回读。
 
+### 6.6.3 Quiet mode 写入序列化静态路径
+
+item 50 `Quiet mode` 的完整静态路径已在
+`63e202a050fe44611377deb4c5d01246da45fd51cda22f308ff990867730c9ea`
+上复核：
+
+1. `FUN_00405c10` 对主对话框控件 `0x455` 发送 `BM_SETCHECK`，值来自模型
+   `+0x18`。
+2. 确认对话框时，`FUN_0040b6f0` 用 `BM_GETCHECK` 读回 `0x455`，把非零值
+   归一化为 `1`，写入快照 `+0x18`。
+3. `FUN_00410740` 的对象索引 `0x31`（十进制 49，对应 item 50）比较模型
+   `+0x18` 与快照 `+0x18`；变化时生成 OID `1001.2.1.1.1.14.1`，类型字节
+   `0x69`（字符 `i`），值由 `setne` 归一化为 `0/1`。
+4. `FUN_00401b20` 调用该差异生成器，并把变化记录交给网络 Net-SNMP SET；
+   `FUN_00402ec0` 用相对前缀 `1.` 生成
+   `@PJL KSETOBJ OBJ="1.1001.2.1.1.1.14.1" VALUE =<0|1>`。
+
+该 case 不写应用的控制器重置请求标志 `[application+0x57ec]`；通信页的 LAN、
+DHCP、LPD、Raw、WSD 和社区字段等分支会设置该标志。因此官方程序不会因
+Quiet mode 单独追加重置 OID，但这不排除设备内部自行重启。字段仍未做真机
+写入回读，公开对象表继续标为 `inferred`。
+
 ### 6.7 对象索引与模型偏移
 
 `FUN_0040e820` 在收到一个配置值后，先由 `FUN_00410380` 把 OID 转成

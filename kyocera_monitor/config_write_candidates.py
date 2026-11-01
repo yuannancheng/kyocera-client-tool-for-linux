@@ -26,6 +26,7 @@ class CandidateDefinition:
     ui_control: str
     model_offset: str
     mapping_confidence: str
+    static_evidence: dict[str, str]
     rationale: str
 
 
@@ -41,13 +42,33 @@ NEXT_WRITE_CANDIDATES: tuple[CandidateDefinition, ...] = (
         ui_dialog="0x006b",
         ui_control="0x0455",
         model_offset="0x0018",
-        mapping_confidence="inferred",
+        mapping_confidence="static_verified",
+        static_evidence={
+            "ui_initialization": (
+                "0x00405ff4 in FUN_00405c10: GetDlgItem(0x455), "
+                "BM_SETCHECK(0x00f1)"
+            ),
+            "ui_value_read": (
+                "0x0040b869 in FUN_0040b6f0: BM_GETCHECK(0x00f0), "
+                "store boolean at snapshot +0x18"
+            ),
+            "change_serialization": (
+                "0x00411b85 in FUN_00410740 case 0x31: compare model "
+                "+0x18, emit OID 1001.2.1.1.1.14.1 as integer 0/1"
+            ),
+            "serialized_type": "0x69 ('i')",
+            "network_writer": "0x00401b57 in FUN_00401b20",
+            "usb_writer": (
+                "0x0040314f in FUN_00402ec0: relative prefix '1.'"
+            ),
+            "reset_request_set_by_item50": "false",
+        },
         rationale=(
-            "The checked Client Tool mapping connects the main-dialog "
-            "checkbox 0x0455 and model offset 0x0018 to item 50.  The "
-            "reviewed evidence does not connect this object to an IP, "
-            "Wi-Fi, or SNMP credential setting, but that classification "
-            "remains inferred until a write/readback experiment is run."
+            "The checked Client Tool path connects checkbox 0x0455 to "
+            "snapshot offset 0x0018, compares it in diff case 0x31, and "
+            "serializes OID 1001.2.1.1.1.14.1 as an integer 0/1.  The "
+            "network and USB writers consume the same record.  No device "
+            "write/readback experiment has yet established behavior."
         ),
     ),
 )
@@ -126,10 +147,11 @@ def build_config_candidate_report(snapshot: dict[str, Any]) -> dict[str, Any]:
             _append_once(read_blockers, "unexpected_current_value")
 
         write_blockers = list(read_blockers)
-        if candidate.mapping_confidence != "verified":
-            _append_once(write_blockers, "field_mapping_inferred")
         _append_once(write_blockers, "same_oid_write_readback_unverified")
-        _append_once(write_blockers, "restart_and_failure_side_effects_unknown")
+        _append_once(
+            write_blockers,
+            "device_failure_and_reboot_behavior_unverified",
+        )
         _append_once(write_blockers, "explicit_user_authorization_required")
 
         reports.append(
@@ -155,6 +177,7 @@ def build_config_candidate_report(snapshot: dict[str, Any]) -> dict[str, Any]:
                     "ui_control": candidate.ui_control,
                     "model_offset": candidate.model_offset,
                     "mapping_confidence": candidate.mapping_confidence,
+                    "static_data_flow": candidate.static_evidence,
                     "source": (
                         "docs/reverse-engineering/data/"
                         "clienttool-control-oids.tsv"

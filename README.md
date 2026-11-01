@@ -216,8 +216,11 @@ kyocera-monitor --host 192.168.0.220 --config --snmp \
 
 报告当前只评估 item 50 `Quiet mode`（`1001.2.1.1.1.14.1`）。它核对对象是否
 可读、类型是否为整数、当前值是否落在已记录的 `OFF/ON` 范围，并把“当前读取
-有效”和“允许写入”分开：字段映射仍为 `inferred`，同 OID 写入回读、失败/重启
-副作用和用户授权都尚未确认，因此报告中的 `write.allowed` 始终为 `false`。
+有效”和“允许写入”分开。官方静态路径已确认 `0x455` 控件值经模型 `+0x18`
+序列化为该 OID 的整数 `0/1`，网络和 USB 写入器都消费同一记录；原厂 item 50
+差异分支不设置控制器重启请求。实际设备写入回读、失败/重启行为和用户授权
+仍未确认，因此 `mapping_confidence` 为 `static_verified`，但
+`write.allowed` 始终为 `false`。
 `--json` 只输出 `candidate_report` 摘要，不附带完整 147 项对象表；该模式不
 生成写入计划，也不发送任何 `KSETOBJ` 或 SNMP SET。
 

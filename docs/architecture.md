@@ -78,8 +78,10 @@ MA2000w（`0482:0d51`），多个候选时要求显式 `--device`。
   `Auto error clear` 的 `OFF -> ON -> OFF`。执行器在正向写入或回读失败时仍
   尝试回滚，并要求最终同 OID 回读为 `0`。
 - `--config-candidates` 只评估 item 50 `Quiet mode` 的读取状态、类型和枚举，
-  不生成写入计划或确认令牌；`write.allowed` 固定为 `false`。推断映射、缺少
-  写后回读/副作用证据或缺少用户授权都会保留为 blockers。
+  不生成写入计划或确认令牌；`write.allowed` 固定为 `false`。候选报告记录
+  已静态核对的 `BM_GETCHECK → model +0x18 → OID → integer 0/1` 数据流和
+  未设置原厂重启请求标志的事实；缺少写后回读、设备失败/重启证据或用户授权
+  仍会保留为 blockers。
 - 不把 KGETOBJ 的数值无标记地解释成未经验证的业务字段；推断字段必须带
   `confidence` 标记，原始键值始终保留。
 - Windows 原工具的网络路径使用 SNMP；Linux 实现优先使用已验证的 PJL 9100

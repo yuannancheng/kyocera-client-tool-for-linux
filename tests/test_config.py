@@ -680,7 +680,11 @@ class ConfigWriteCandidateTests(unittest.TestCase):
         self.assertEqual(candidate["observed"]["display"], "OFF")
         self.assertTrue(candidate["review"]["current_read_valid"])
         self.assertFalse(candidate["write"]["allowed"])
-        self.assertIn(
+        self.assertEqual(
+            candidate["evidence"]["mapping_confidence"],
+            "static_verified",
+        )
+        self.assertNotIn(
             "field_mapping_inferred",
             candidate["write"]["blockers"],
         )
@@ -689,9 +693,18 @@ class ConfigWriteCandidateTests(unittest.TestCase):
             candidate["write"]["blockers"],
         )
         self.assertIn(
+            "device_failure_and_reboot_behavior_unverified",
+            candidate["write"]["blockers"],
+        )
+        self.assertIn(
             "explicit_user_authorization_required",
             candidate["write"]["blockers"],
         )
+        evidence = candidate["evidence"]["static_data_flow"]
+        self.assertEqual(evidence["serialized_type"], "0x69 ('i')")
+        self.assertIn("0x00401b57", evidence["network_writer"])
+        self.assertIn("0x0040314f", evidence["usb_writer"])
+        self.assertEqual(evidence["reset_request_set_by_item50"], "false")
 
     def test_unreadable_or_unknown_values_block_the_candidate(self):
         missing = copy.deepcopy(self.records)

@@ -3,7 +3,7 @@ dialog	control_id	label	companion_controls	model_offset	item_id	oid	confidence	n
 0x006b	0x03f4	Auto error clear timeout	0x03f3	0x0008	3	43.5.1.1.35.1	inferred	UI seconds = model * 5
 0x006b	0x03f2	Sleep time	0x03f1	0x0010	1	43.5.1.1.23.1	inferred	
 0x006b	0x0463	Power off timer		0x0014	4	42.5.1.1.43.1	inferred	Combo bucket, not a linear scale
-0x006b	0x0455	Quiet mode		0x0018	50	1001.2.1.1.1.14.1	inferred	
+0x006b	0x0455	Quiet mode		0x0018	50	1001.2.1.1.1.14.1	inferred	BM_GETCHECK 0x455 -> model +0x18 -> diff case 0x31 -> OID as integer 0/1; network and USB writers traced; no device write/readback
 0x006b	0x0411	Form feed timeout	0x0410	0x2ffc	52	43.5.1.1.22.1	inferred	UI seconds = model * 5; current device value 60 -> 300 s
 0x006b	0x03f5	Media type	0x0402	0x300c	9	43.8.1.1.4.1.1	inferred	
 0x006b	0x03f8	Paper size	0x0403	0x3000	6	43.8.1.1.11.1.1	inferred	
