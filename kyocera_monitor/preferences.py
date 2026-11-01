@@ -27,6 +27,7 @@ _PRESET_FIELDS = {
     "max_pages",
     "output_format",
 }
+MAX_PUSH_SCAN_PRESET = 30
 
 
 class SettingsError(ValueError):
@@ -131,7 +132,9 @@ def normalize_scan_directory(value: object) -> str:
 def normalize_preset(value: object, index: int) -> dict[str, object]:
     if not isinstance(value, dict):
         raise SettingsError(f"presets[{index}] must be an object")
-    unknown = set(value) - (_PRESET_FIELDS | {"id", "name"})
+    unknown = set(value) - (
+        _PRESET_FIELDS | {"id", "name", "push_scan_slot"}
+    )
     if unknown:
         raise SettingsError(
             f"presets[{index}] has unsupported fields: "
@@ -162,6 +165,17 @@ def normalize_preset(value: object, index: int) -> dict[str, object]:
         )
     except ValueError as exc:
         raise SettingsError(f"presets[{index}]: {exc}") from exc
+    push_scan_slot = value.get("push_scan_slot")
+    if push_scan_slot is not None:
+        if (
+            isinstance(push_scan_slot, bool)
+            or not isinstance(push_scan_slot, int)
+            or not 0 <= push_scan_slot <= MAX_PUSH_SCAN_PRESET
+        ):
+            raise SettingsError(
+                f"presets[{index}].push_scan_slot must be an integer "
+                f"from 0 to {MAX_PUSH_SCAN_PRESET} or null"
+            )
     return {
         "id": preset_id,
         "name": name,
@@ -170,6 +184,7 @@ def normalize_preset(value: object, index: int) -> dict[str, object]:
         "original_image": options.original_image,
         "max_pages": options.max_pages,
         "output_format": options.output_format,
+        "push_scan_slot": push_scan_slot,
     }
 
 
@@ -201,6 +216,13 @@ def normalize_settings(value: object) -> dict[str, object]:
     ids = [preset["id"] for preset in normalized_presets]
     if len(ids) != len(set(ids)):
         raise SettingsError("preset ids must be unique")
+    push_scan_slots = [
+        preset["push_scan_slot"]
+        for preset in normalized_presets
+        if preset["push_scan_slot"] is not None
+    ]
+    if len(push_scan_slots) != len(set(push_scan_slots)):
+        raise SettingsError("Push Scan slots must be unique")
     return {
         "version": SETTINGS_VERSION,
         "scan_directory": normalize_scan_directory(
@@ -283,7 +305,10 @@ class SettingsStore:
             raise
 
 
-def preset_payload(settings: dict[str, object], preset_id: object) -> dict[str, object] | None:
+def preset_payload(
+    settings: dict[str, object],
+    preset_id: object,
+) -> dict[str, object] | None:
     if preset_id in (None, ""):
         return None
     if not isinstance(preset_id, str):
@@ -292,6 +317,30 @@ def preset_payload(settings: dict[str, object], preset_id: object) -> dict[str, 
         if preset["id"] == preset_id:
             return preset
     raise SettingsError(f"unknown preset: {preset_id}")
+
+
+def preset_for_push_scan_slot(
+    settings: dict[str, object],
+    slot: object,
+) -> dict[str, object] | None:
+    """Return the local preset explicitly mapped to a device slot.
+
+    ``None`` means the slot is intentionally unmapped. Invalid values are
+    rejected so an event can never silently select a different preset.
+    """
+
+    if (
+        isinstance(slot, bool)
+        or not isinstance(slot, int)
+        or not 0 <= slot <= MAX_PUSH_SCAN_PRESET
+    ):
+        raise SettingsError(
+            f"Push Scan slot must be an integer from 0 to {MAX_PUSH_SCAN_PRESET}"
+        )
+    for preset in settings["presets"]:
+        if preset["push_scan_slot"] == slot:
+            return preset
+    return None
 
 
 def merge_scan_payload(

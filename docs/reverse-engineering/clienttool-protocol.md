@@ -1191,9 +1191,16 @@ preset = status - 89000
 `FUN_004b14f0` 写 `1001.4.1.3.0`：
 
 ```text
-0 = NG
-1 = OK
+0 = OK
+1 = NG
 ```
+
+原始字符串字节进一步消除了此前的表格冲突：`KMSTMVM.exe!FUN_00419570`
+在参数 `0` 时选择 `0x0042f6a4 = "OK"`，参数 `1` 时选择
+`0x0042f6a8 = "NG"`，并合成 `@PJL KPUSHSCAN STATUS=OK|NG`；
+`KMSTMNET.exe!FUN_004b14f0` 对参数 `0` 选择 `0x004eb94c = "OK"`，对参数
+`1` 选择 `0x004eb948 = "NG"`。当前只确认了这两个底层写值函数，尚未定位
+扫描应用在成功或失败后向它们发送 `0x1a` 命令的调用方。
 
 ### 8.4 KPUSHSCAN
 
@@ -1459,7 +1466,7 @@ MaintenancePackage/Define/RequestParameter/Value
 | 维护协议使用 KPSL over TCP 9100/USB | 已验证 | `FUN_0040ce20` 端口 `0x238c`、`PrnUSBComm` KPSL 检查 |
 | KPSL 帧头/校验和/混淆 | 已验证（静态） | `FUN_004ab0a0`、`FUN_004aaed0`、`FUN_004ab110` |
 | 20 项维护参数类型表 | 已验证（静态） | `0x004e7900`、构造/编解码函数 |
-| Print Box/Push Scan 结果码语义 | 较高可信度 | 反编译分支 + 字符串标签，尚未逐一写入验证 |
+| Print Box/Push Scan 结果码语义 | 已验证（静态） | 反编译分支 + 原始字符串字节；未逐一写入验证 |
 | `type_code=6` 为 MAC | 待验证假设 | 表位置与编码推断 |
 | 预设安全锁 `L` 的具体含义 | 未知 | 只确认对象存在和加/解锁写法 |
 | 维护包目录提取 | 已验证（本地离线） | 只公开 request id、item id 和数据类型；密钥与提取物不公开 |

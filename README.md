@@ -170,7 +170,7 @@ python3 -m pip install --user .
 
 ```bash
 python3 tools/build_deb.py
-sudo apt install ./dist/kyocera-monitor_0.2.4-1_all.deb
+sudo apt install ./dist/kyocera-monitor_0.2.5-1_all.deb
 ```
 
 构建过程只使用本地 Python 和 `dpkg-deb`，不联网。包的运行依赖声明为
@@ -280,9 +280,20 @@ Push Scan 触发码进一步确认为 `89000 + preset`：`89000–89999` 的状�
 官方程序中减去 `89000` 后作为预设号。`--push-scan-listen` 只读轮询厂商告警
 文本列 `1.3.6.1.4.1.1347.43.18.2.1.3`，在首个状态码从其他值变为
 `89xxx` 时输出事件；相同状态不会重复触发，离开后可接受下一次事件。
+设备详情页可把本地预设绑定到 `0–30` 的 Push Scan 槽位。显式加入
+`--push-scan-run` 后，监听器会用普通扫描任务执行匹配预设，并保存到已配置的
+扫描目录。执行前会重新读取目标，只有状态为 `ready` 时才继续；其他主机、
+USB、未配置和查询失败均不会执行。未绑定、重复绑定和越界配置同样不会执行。
 监听器不发送 PJL
-`USTATUS=ON`、不运行本地预设、不回写结果 OID。MA2000w 两次真机轮询均为
-`35078`，未产生虚假 Push Scan 事件。
+`USTATUS=ON`，结果 OID 回写仍因为官方完成判定调用方未知而禁用。
+
+```bash
+kyocera-monitor --host 192.168.0.220 --push-scan-listen \
+  --push-scan-run --push-scan-poll-interval 0.5 \
+  --snmp-version 2c --json
+```
+
+MA2000w 两次真机轮询均为 `35078`，未产生虚假 Push Scan 事件。
 
 可基于基线生成单字段写入预演。计划器支持：
 
@@ -380,7 +391,8 @@ options、Communication、SNMP trap、Wi‑Fi 状态、音量与 FAX notificatio
 隐藏。Web/GUI 不提供配置写入、写入计划或回滚实验入口，也不注册
 `/api/config/plan` 和 `/api/config/apply`；受控实验只保留在研究用途的 CLI
 工作流中。详情页的 Push Scan 区通过 `/api/push-scan` 显示只读就绪状态，
-不会启动扫描或写结果 OID。
+扫描预设编辑区可设置对应的设备槽位；自动执行入口仍是显式 CLI 监听器，
+Web 页面不会自行启动扫描或写结果 OID。
 服务没有认证，默认只绑定回环地址；使用 `--web-bind 0.0.0.0` 暴露到局域网时
 需要自行增加访问控制。
 
@@ -402,7 +414,7 @@ python3 -m unittest discover -s tests -v
 python3 tools/check_publication.py
 ```
 
-当前 283 个测试覆盖 PJL 解析/帧格式、分段补发与合并、KGETOBJ 结构化字段、
+当前 290 个测试覆盖 PJL 解析/帧格式、分段补发与合并、KGETOBJ 结构化字段、
 147 项配置对象表与 CLI 配置导出、`KMUTLCFG` UI 控件字符串提取、
 147 项对象→模型偏移映射与首批控件→OID 对照、
 配置 SNMP 后备读取、
@@ -416,7 +428,7 @@ PNG/PDF/JPEG/TIFF/高压缩 PDF/XPS 导出、扫描后台任务与下载、设�
 `file_size` 不作为传输长度、截断 chunked 响应处理、扫描预设/保存目录、
 计数 CSV、配置工作台/敏感值脱敏/写入令牌、Debian 包内容和公开树合规检查。
 Push Scan 专项测试覆盖 IPv4/IPv6/主机名匹配、USB 与未配置状态、缺失对象、
-上次结果语义、CLI 只读读取和 Web API。
+上次结果语义、CLI 只读读取、槽位映射、明确启用的本地预设执行和 Web API。
 
 ## 研究资料
 

@@ -10,6 +10,7 @@ from kyocera_monitor.preferences import (
     SettingsStore,
     merge_scan_payload,
     normalize_settings,
+    preset_for_push_scan_slot,
 )
 from kyocera_monitor.reporting import counters_csv
 
@@ -36,11 +37,17 @@ class SettingsTests(unittest.TestCase):
                         "original_image": "TEXT_AND_PHOTO",
                         "max_pages": 2,
                         "output_format": "pdf",
+                        "push_scan_slot": 3,
                     }
                 ],
             }
             saved = store.save(settings)
             self.assertEqual(store.load(), saved)
+            self.assertEqual(saved["presets"][0]["push_scan_slot"], 3)
+            self.assertEqual(
+                preset_for_push_scan_slot(saved, 3)["id"],
+                "a4-color",
+            )
             self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o600)
             self.assertEqual(json.loads(path.read_text())["version"], 1)
             self.assertEqual(
@@ -132,6 +139,37 @@ class SettingsTests(unittest.TestCase):
             },
             {
                 "scan_directory": "/tmp",
+                "presets": [
+                    {
+                        "id": "slot",
+                        "name": "Slot",
+                        "output_format": "png",
+                        "max_pages": 1,
+                        "push_scan_slot": 31,
+                    }
+                ],
+            },
+            {
+                "scan_directory": "/tmp",
+                "presets": [
+                    {
+                        "id": "first",
+                        "name": "First",
+                        "output_format": "png",
+                        "max_pages": 1,
+                        "push_scan_slot": 2,
+                    },
+                    {
+                        "id": "second",
+                        "name": "Second",
+                        "output_format": "png",
+                        "max_pages": 1,
+                        "push_scan_slot": 2,
+                    },
+                ],
+            },
+            {
+                "scan_directory": "/tmp",
                 "presets": [],
                 "saved_printers": ["http://192.168.0.220"],
             },
@@ -164,6 +202,23 @@ class SettingsTests(unittest.TestCase):
         self.assertEqual(merged["output_format"], "pdf")
         self.assertNotIn("preset_id", merged)
         self.assertNotIn("save_to_folder", merged)
+
+    def test_legacy_preset_without_push_slot_is_unmapped(self):
+        settings = normalize_settings(
+            {
+                "scan_directory": "/tmp",
+                "presets": [
+                    {
+                        "id": "legacy",
+                        "name": "Legacy",
+                        "output_format": "png",
+                        "max_pages": 1,
+                    }
+                ],
+            }
+        )
+        self.assertIsNone(settings["presets"][0]["push_scan_slot"])
+        self.assertIsNone(preset_for_push_scan_slot(settings, 0))
 
 
 class CounterExportTests(unittest.TestCase):

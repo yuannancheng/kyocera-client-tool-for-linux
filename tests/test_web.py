@@ -514,6 +514,7 @@ class ScanApiTests(unittest.TestCase):
                 "original_image": None,
                 "max_pages": 1,
                 "output_format": "pdf",
+                "push_scan_slot": None,
             }
         ]
         status, _, body = self.request("POST", "/api/settings", initial)

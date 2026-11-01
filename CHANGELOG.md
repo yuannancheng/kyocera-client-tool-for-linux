@@ -2,6 +2,25 @@
 
 ## 2026-11-01
 
+### Added — mapped Push Scan preset execution
+
+- 本地扫描预设新增可选 `push_scan_slot`（`0–30`）绑定，对应官方
+  `KMQSEnablePreset` 接受的 Quick Scan 槽位；重复槽位、越界值和错误类型在
+  设置载入时拒绝，旧预设保持未绑定。
+- Web/GUI 设备页的预设编辑区可设置并显示 Push Scan 槽位。绑定是 Linux 产品
+  层的显式映射，不宣称与 Windows 预设内容等价。
+- CLI 新增 `--push-scan-run`，必须与 `--push-scan-listen` 同时使用。观察到
+  `89xxx` 后，监听器通过现有 `ScanJobManager` 执行槽位匹配的本地预设，继承
+  单设备忙保护、扫描阶段、格式导出和配置目录自动保存。执行前重新读取目标，
+  只在目标仍匹配本机且状态为 `ready` 时继续，避免为发往其他主机的请求启动扫描。
+- 未绑定槽位返回 `unmapped`，设备忙返回 `busy`，测试映射不会启动扫描；
+  JSON 事件记录本地任务 ID、阶段和落盘结果。
+- 原始字符串字节确认 Push Scan 结果码为 `0=OK`、`1=NG`，修正协议文档中的
+  冲突。仍未找到扫描应用决定成功/失败并触发结果写入的上游调用方，因此
+  `1001.4.1.3.0` 自动回写继续禁用。
+- 尚未取得真实网络 Push Scan 触发；本次不能据此宣称 F20 硬件闭环完成。
+- 版本升级为 `0.2.5`。
+
 ### Added — Push Scan trigger detection
 
 - 通过原始指令和反编译复核确认 Push Scan 触发码为 `89000–89999`，预设号为

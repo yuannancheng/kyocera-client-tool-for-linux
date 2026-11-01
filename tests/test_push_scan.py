@@ -5,6 +5,7 @@ from contextlib import redirect_stderr, redirect_stdout
 from unittest import mock
 
 from kyocera_monitor import cli
+from kyocera_monitor.preferences import normalize_settings
 from kyocera_monitor.push_scan import (
     PUSH_SCAN_OIDS,
     VENDOR_ALERT_STATUS_ROOT,
@@ -63,7 +64,9 @@ class PushScanInterpretationTests(unittest.TestCase):
         self.assertTrue(result["target_matches_local"])
         self.assertTrue(result["readiness"]["ready"])
         self.assertEqual(result["readiness"]["state"], "ready")
-        self.assertFalse(result["execution"]["supported"])
+        self.assertTrue(result["execution"]["supported"])
+        self.assertEqual(result["execution"]["state"], "mapped_cli_listener")
+        self.assertFalse(result["execution"]["result_writeback_supported"])
 
     def test_usb_destination_is_not_network_ready(self):
         result = interpret_push_scan(
@@ -304,6 +307,80 @@ class PushScanCliTests(unittest.TestCase):
         self.assertFalse(event["execution_supported"])
         self.assertEqual(read.call_count, 2)
 
+    def test_cli_listener_can_execute_an_explicitly_mapped_preset(self):
+        codes = iter([[35078], [89005]])
+        settings = normalize_settings(
+            {
+                "scan_directory": "/tmp/scans",
+                "presets": [
+                    {
+                        "id": "mapped",
+                        "name": "Mapped",
+                        "output_format": "png",
+                        "max_pages": 1,
+                        "push_scan_slot": 5,
+                    }
+                ],
+            }
+        )
+        execution = {
+            "mode": "local_preset_mapping",
+            "status": "succeeded",
+            "preset_number": 5,
+            "result_writeback": "not_attempted",
+        }
+        store = mock.Mock()
+        store.load.return_value = settings
+        push_state = interpret_push_scan(
+            push_scan_values(),
+            host="192.168.0.220",
+            local_identity=LOCAL_IDENTITY,
+        )
+        with mock.patch.object(
+            cli,
+            "read_vendor_status_codes",
+            side_effect=lambda *_args, **_kwargs: next(codes),
+        ), mock.patch.object(cli.time, "sleep"), mock.patch.object(
+            cli,
+            "SettingsStore",
+            return_value=store,
+        ), mock.patch.object(cli, "ScanJobManager"), mock.patch.object(
+            cli,
+            "read_push_scan",
+            return_value=push_state,
+        ), mock.patch.object(
+            cli,
+            "execute_push_scan_event",
+            return_value=execution,
+        ) as execute:
+            output = io.StringIO()
+            with redirect_stdout(output), redirect_stderr(io.StringIO()):
+                status = cli.main(
+                    [
+                        "--host",
+                        "192.168.0.220",
+                        "--push-scan-listen",
+                        "--push-scan-run",
+                        "--push-scan-poll-interval",
+                        "0.1",
+                        "--push-scan-max-polls",
+                        "2",
+                        "--snmp-version",
+                        "2c",
+                        "--json",
+                    ]
+                )
+        self.assertEqual(status, 0)
+        event = json.loads(output.getvalue())
+        self.assertEqual(event["preset_number"], 5)
+        self.assertTrue(event["execution_supported"])
+        self.assertEqual(event["local_execution"]["status"], "succeeded")
+        self.assertEqual(
+            execute.call_args.kwargs["push_state"]["readiness"]["state"],
+            "ready",
+        )
+        execute.assert_called_once()
+
 
 class PushScanWebTests(unittest.TestCase):
     def setUp(self):
@@ -351,6 +428,8 @@ class PushScanWebTests(unittest.TestCase):
         self.assertIn("/api/push-scan", DEVICE_HTML)
         self.assertIn('id="push-scan-read"', DEVICE_HTML)
         self.assertIn('id="push-scan-grid"', DEVICE_HTML)
+        self.assertIn('id="preset-push-slot"', DEVICE_HTML)
+        self.assertIn("push_scan_slot", DEVICE_HTML)
         self.assertNotIn("/api/push-scan/execute", DEVICE_HTML)
         self.assertIn(".push-result.ready { color: #145014; }", DEVICE_HTML)
         self.assertIn(".push-result.ready { color: #d3f2d8; }", DEVICE_HTML)

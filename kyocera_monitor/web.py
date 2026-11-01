@@ -655,6 +655,11 @@ DEVICE_HTML = """<!doctype html>
       <label>预设名称
         <input id="preset-name" maxlength="80" placeholder="例如：A4 彩扫">
       </label>
+      <label>Push Scan 槽位
+        <select id="preset-push-slot">
+          <option value="">不绑定</option>
+        </select>
+      </label>
       <label class="wide">保存目录
         <input id="scan-directory" maxlength="4096" placeholder="/home/user/Pictures/Kyocera Scans">
       </label>
@@ -1054,10 +1059,23 @@ function renderPresets(selectedId = "") {
   for (const preset of (userSettings?.presets || [])) {
     const option = document.createElement("option");
     option.value = preset.id;
-    option.textContent = preset.name;
+    option.textContent = preset.push_scan_slot == null
+      ? preset.name
+      : `${preset.name}（Push ${preset.push_scan_slot}）`;
     select.append(option);
   }
   select.value = selectedId;
+}
+
+function populatePushScanSlots() {
+  const select = byId("preset-push-slot");
+  if (select.options.length > 1) return;
+  for (let slot = 0; slot <= 30; slot += 1) {
+    const option = document.createElement("option");
+    option.value = String(slot);
+    option.textContent = `设备预设 ${slot}（状态码 ${89000 + slot}）`;
+    select.append(option);
+  }
 }
 
 function applyPreset() {
@@ -1070,6 +1088,8 @@ function applyPreset() {
   byId("scan-pages").value = String(preset.max_pages || 1);
   byId("scan-format").value = preset.output_format || "png";
   byId("preset-name").value = preset.name || "";
+  byId("preset-push-slot").value =
+    preset.push_scan_slot == null ? "" : String(preset.push_scan_slot);
 }
 
 async function loadSettings() {
@@ -1079,6 +1099,7 @@ async function loadSettings() {
     if (!response.ok) throw new Error(payload.error || String(response.status));
     userSettings = payload;
     byId("scan-directory").value = payload.scan_directory || "";
+    populatePushScanSlots();
     renderPresets();
     setSettingsStatus("");
   } catch (err) {
@@ -1131,7 +1152,10 @@ async function savePreset() {
     resolution: byId("scan-resolution").value || null,
     original_image: byId("scan-original-image").value || null,
     max_pages: Number(byId("scan-pages").value),
-    output_format: byId("scan-format").value
+    output_format: byId("scan-format").value,
+    push_scan_slot: byId("preset-push-slot").value === ""
+      ? null
+      : Number(byId("preset-push-slot").value)
   };
   const presets = (userSettings.presets || []).filter((item) => item.id !== presetId);
   presets.push(preset);
@@ -1150,6 +1174,7 @@ async function deletePreset() {
   await persistSettings("预设已删除");
   renderPresets();
   byId("preset-name").value = "";
+  byId("preset-push-slot").value = "";
 }
 
 function setConfigStatus(message, error = false) {
@@ -1315,7 +1340,7 @@ function renderPushScan(data) {
     ["目标匹配本机", data.target_matches_local === true ? "是"
       : data.target_matches_local === false ? "否" : "未知"],
     ["上次报告结果", objects.result?.display || "未知"],
-    ["执行入口", "只读状态（尚未实现）"]
+    ["待机入口", "--push-scan-listen"]
   ];
   for (const [name, value] of entries) {
     const item = document.createElement("div");
@@ -1337,7 +1362,8 @@ function renderPushScan(data) {
       : readiness.ready === false ? "warning" : "");
   const note = byId("push-scan-note");
   note.textContent = "此页面只检查当前目标和上次结果。命令行 " +
-    "--push-scan-listen 可报告 89xxx 触发事件，但不会启动本地预设或回写结果。";
+    "--push-scan-listen 可报告 89xxx；显式加上 --push-scan-run 会执行" +
+    "“Push Scan 槽位”匹配的本地预设。结果 OID 回写仍未启用。";
 }
 
 async function readPushScan() {

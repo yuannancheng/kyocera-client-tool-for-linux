@@ -45,8 +45,12 @@ RESULT_NAMES = {
 }
 
 EXECUTION_LIMITATION = (
-    "Preset execution and result writeback are not implemented; "
-    "the read-only listener reports requests but does not launch a scan."
+    "Mapped local preset execution requires --push-scan-run and a unique "
+    "0-30 slot binding; automatic result writeback is not implemented."
+)
+EVENT_LIMITATION = (
+    "This listener-only event does not launch a scan; add --push-scan-run "
+    "to execute the mapped local preset. Automatic result writeback is disabled."
 )
 PUSH_SCAN_STATUS_MIN = 89000
 PUSH_SCAN_STATUS_MAX = 89999
@@ -296,10 +300,11 @@ def interpret_push_scan(
             "summary": summary,
         },
         "execution": {
-            "supported": False,
-            "state": "listener_only",
+            "supported": True,
+            "state": "mapped_cli_listener",
             "trigger_observed": False,
             "listener_entrypoint": "kyocera-monitor --push-scan-listen",
+            "execution_option": "--push-scan-run",
             "preset_selection": "status_code_minus_89000",
             "result_writeback_supported": False,
             "reason": EXECUTION_LIMITATION,
@@ -436,7 +441,7 @@ def push_scan_event(code: int, *, host: str) -> dict[str, object] | None:
         "execution_state": "listener_only",
         "execution_supported": False,
         "result_writeback_supported": False,
-        "limitation": EXECUTION_LIMITATION,
+        "limitation": EVENT_LIMITATION,
     }
 
 

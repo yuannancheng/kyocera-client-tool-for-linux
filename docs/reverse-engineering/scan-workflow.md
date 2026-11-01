@@ -238,13 +238,13 @@ python3 -m kyocera_monitor --host 192.168.0.220 \
 
 Linux 监听器只在首个状态码发生过渡时产生事件；持续相同的 `89xxx` 不会重复
 触发。事件包含设备地址、状态码、预设号、是否落在官方 0–30 范围，以及
-`execution_supported=false`。`--json` 输出逐行 JSON，便于脚本消费。
+未启用 `--push-scan-run` 时的 `execution_supported=false`。`--json` 输出
+逐行 JSON，便于脚本消费。
 
 仍未确认：
 
 - 当前 MA2000w 的网络目标为 USB，本轮没有在面板中切换配置，因此未观察到真实
   `89xxx` 事件；
-- Linux 本地预设 ID/参数与设备 0–30 预设号的产品映射；
 - 自动执行扫描后的完成/失败判定，以及是否、何时回写 `.3.0=0/1`；
 - 网络 Client Tool 在检测到 `89xxx` 后清除或保持该厂商告警文本的时序。
 
@@ -254,6 +254,46 @@ Linux 监听器只在首个状态码发生过渡时产生事件；持续相同�
 python3 -m kyocera_monitor --host 192.168.0.220 --push-scan \
   --snmp-version 2c --json
 ```
+
+### 5.3 Linux 本地预设槽位执行（2026-11-01）
+
+官方 `KMQSEnablePreset` 接受 `0–30`，并只把该整数写入
+`QUICKSCN.ini` 的 `[Globals] Preset`；`KMSCNPUS.exe` 再启动
+`KMSCNFOL.exe /D`。因此设备状态码到扫描槽位的关系有直接证据。
+
+Linux 的扫描实现不复用 Windows TWAIN 或 `QUICKSCN.ini`。为了连接设备请求与
+本地扫描参数，每个 Linux 扫描预设可显式保存 `push_scan_slot`（`0–30`）：
+
+```text
+status code = 89000 + device slot
+device slot = local preset.push_scan_slot
+```
+
+该槽位绑定是 Linux 产品层的显式映射，不宣称与 Windows 的具体预设内容等价。
+缺失槽位时事件状态为 `unmapped`，不会尝试另一个预设。重复槽位和越界值在
+设置加载时 fail closed。
+
+监听器只有在用户显式加入 `--push-scan-run` 时才执行映射预设：
+
+```bash
+python3 -m kyocera_monitor --host 192.168.0.220 \
+  --push-scan-listen --push-scan-run \
+  --push-scan-poll-interval 0.5 --snmp-version 2c --json
+```
+
+收到事件后，监听器会重新读取六个 Push Scan 设置对象；只有当前目标仍匹配
+本机且状态为 `ready` 时才继续。USB、未配置、其他主机、未知目标和读取失败
+均返回非执行状态。匹配的预设通过现有 `ScanJobManager` 运行，因此继续享有
+单设备忙保护、阶段状态、格式导出和设置目录自动保存。执行输出记录任务 ID、
+阶段和落盘路径。
+
+仍未完成：
+
+- 尚未在真实网络目标下观察 `89xxx` 并完成硬件触发；
+- 尚未查明哪个官方组件在扫描成功或失败后向
+  `KMSTMVM!FUN_00419570` / `KMSTMNET!FUN_004b14f0` 发送结果写入命令；
+- 因此 `1001.4.1.3.0` 自动回写仍禁用，Linux 执行结果没有冒充官方设备结果；
+- 监听器是轮询模型，短于轮询间隔的状态变化仍可能漏掉。
 
 ## 6. 网络扫描协议实测（2026-10-18）
 

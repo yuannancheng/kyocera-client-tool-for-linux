@@ -50,10 +50,13 @@ from .push_scan import (
     read_push_scan,
     read_vendor_status_codes,
 )
+from .push_scan_exec import execute_push_scan_event
+from .preferences import SettingsError, SettingsStore
 from .snmp_status import collect_snmp_snapshot
 from .snmp import BerError, SnmpClient
 from .scan import (
     LOCAL_OUTPUT_FORMATS,
+    ScanJobManager,
     ScanError,
     ScanOptions,
     scan_device,
@@ -368,7 +371,15 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help=(
             "listen for official 89xxx Push Scan status events through "
-            "read-only SNMP polling; does not execute a preset"
+            "read-only SNMP polling"
+        ),
+    )
+    parser.add_argument(
+        "--push-scan-run",
+        action="store_true",
+        help=(
+            "with --push-scan-listen, execute the local preset mapped to "
+            "the observed 0-30 Push Scan slot"
         ),
     )
     parser.add_argument(
@@ -536,6 +547,8 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("--snmp requires --host")
     if args.push_scan and args.push_scan_listen:
         parser.error("--push-scan and --push-scan-listen are mutually exclusive")
+    if args.push_scan_run and not args.push_scan_listen:
+        parser.error("--push-scan-run requires --push-scan-listen")
     if args.push_scan or args.push_scan_listen:
         if not args.host:
             parser.error("Push Scan inspection requires --host")
@@ -704,6 +717,16 @@ def main(argv: list[str] | None = None) -> int:
                 retries=args.snmp_retries,
             )
 
+        settings_store = None
+        scan_manager = None
+        if args.push_scan_run:
+            settings_store = SettingsStore()
+            scan_manager = ScanJobManager()
+            try:
+                settings_store.load()
+            except SettingsError as exc:
+                print(f"Push Scan settings failed: {exc}", file=sys.stderr)
+                return 2
         max_polls = args.push_scan_max_polls or None
         if not args.json:
             print(
@@ -719,10 +742,46 @@ def main(argv: list[str] | None = None) -> int:
                 max_polls=max_polls,
             ):
                 if event is not None:
+                    payload = dict(event)
+                    if (
+                        settings_store is not None
+                        and scan_manager is not None
+                    ):
+                        try:
+                            push_state = read_push_scan(
+                                args.host,
+                                community=args.snmp_community,
+                                version=args.snmp_version,
+                                port=args.snmp_port,
+                                timeout=args.snmp_timeout,
+                                retries=args.snmp_retries,
+                            )
+                            execution = execute_push_scan_event(
+                                event,
+                                settings_store.load(),
+                                scan_manager,
+                                push_state=push_state,
+                            )
+                        except (
+                            BerError,
+                            OSError,
+                            TimeoutError,
+                            SettingsError,
+                            ValueError,
+                        ) as exc:
+                            execution = {
+                                "mode": "local_preset_mapping",
+                                "status": "readiness_error",
+                                "error": str(exc),
+                                "result_writeback": "not_attempted",
+                            }
+                        payload["execution_supported"] = True
+                        payload["execution_state"] = execution["status"]
+                        payload["local_execution"] = execution
                     if args.json:
                         print(
                             json.dumps(
-                                event,
+                                payload,
                                 ensure_ascii=False,
                                 separators=(",", ":"),
                             ),
@@ -734,6 +793,11 @@ def main(argv: list[str] | None = None) -> int:
                             f"{event['preset_number']} requested "
                             f"(status {event['status_code']})"
                         )
+                        if "local_execution" in payload:
+                            print(
+                                "Local preset execution: "
+                                f"{payload['local_execution']['status']}"
+                            )
                 elif not args.json:
                     current = codes[0] if codes else "unavailable"
                     print(
