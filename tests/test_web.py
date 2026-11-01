@@ -257,6 +257,23 @@ class PageTests(unittest.TestCase):
             self.assertIn(f'id="{element_id}"', DEVICE_HTML)
         self.assertIn("/api/settings", DEVICE_HTML)
 
+    def test_device_page_has_guarded_configuration_workflow(self):
+        for element_id in (
+            "config-read",
+            "config-baseline-save",
+            "config-baseline-compare",
+            "config-status-grid",
+            "config-objects",
+            "config-write-item",
+            "config-plan",
+            "config-apply",
+            "config-authorize",
+        ):
+            self.assertIn(f'id="{element_id}"', DEVICE_HTML)
+        self.assertIn("/api/config/plan", DEVICE_HTML)
+        self.assertIn("/api/config/apply", DEVICE_HTML)
+        self.assertIn("OFF → ON → OFF", DEVICE_HTML)
+
     def test_pages_are_self_contained(self):
         for page in (OVERVIEW_HTML, DEVICE_HTML):
             self.assertNotIn("http://", page)
@@ -287,6 +304,7 @@ class CliTests(unittest.TestCase):
                 self.assertEqual(cli.main(["--web"]), 0)
         registry = server.call_args.args[0]
         self.assertEqual(registry.hosts(), [])
+        self.assertIsNotNone(server.call_args.kwargs["config_workbench"])
 
     def test_gui_can_start_without_a_printer(self):
         with mock.patch("kyocera_monitor.gui.run_gui") as gui:
@@ -294,6 +312,7 @@ class CliTests(unittest.TestCase):
                 self.assertEqual(cli.main(["--gui"]), 0)
         registry = gui.call_args.args[0]
         self.assertEqual(registry.hosts(), [])
+        self.assertIsNotNone(gui.call_args.kwargs["config_workbench"])
 
     def test_gui_reports_missing_gtk(self):
         from kyocera_monitor.gui import GuiUnavailable
@@ -535,6 +554,112 @@ class ScanApiTests(unittest.TestCase):
         text = body.decode("utf-8-sig")
         self.assertIn("device,model,serial", text)
         self.assertIn("192.0.2.1,MA2000w,REDACTED", text)
+
+
+class ConfigApiTests(unittest.TestCase):
+    def setUp(self):
+        registry = DeviceRegistry(
+            lambda key: snapshot(), "192.0.2.1", min_interval=0
+        )
+        self.workbench = mock.Mock()
+        self.handler = make_handler(
+            registry,
+            config_workbench=self.workbench,
+        )
+
+    def request(self, method, path, payload=None):
+        body = json.dumps(payload).encode() if payload is not None else None
+        request = self.handler.__new__(self.handler)
+        request.path = path
+        request.headers = {
+            "Content-Length": str(len(body or b"")),
+            "Content-Type": "application/json",
+        }
+        request.rfile = io.BytesIO(body or b"")
+        request.wfile = io.BytesIO()
+        request._status = None
+        request._headers = {}
+
+        def send_response(status):
+            request._status = status
+
+        def send_header(name, value):
+            request._headers[name] = value
+
+        request.send_response = send_response
+        request.send_header = send_header
+        request.end_headers = lambda: None
+        request.log_message = lambda *_args: None
+        getattr(request, f"do_{method}")()
+        return request._status, request._headers, request.wfile.getvalue()
+
+    def test_config_read_and_baseline_info_are_dispatched(self):
+        self.workbench.overview.return_value = {
+            "host": "192.0.2.1",
+            "read": 96,
+            "total": 147,
+            "status_objects": [],
+            "objects": [],
+            "candidates": [],
+        }
+        self.workbench.baseline_info.return_value = {"available": False}
+        status, _, body = self.request(
+            "GET", "/api/config?host=192.0.2.1"
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(body)["read"], 96)
+        self.workbench.overview.assert_called_once_with("192.0.2.1")
+
+        status, _, body = self.request(
+            "GET", "/api/config/baseline?host=192.0.2.1"
+        )
+        self.assertEqual(status, 200)
+        self.assertFalse(json.loads(body)["baseline"]["available"])
+
+    def test_baseline_plan_and_apply_dispatch(self):
+        self.workbench.save_baseline.return_value = {"saved": True}
+        status, _, _ = self.request(
+            "POST",
+            "/api/config/baseline",
+            {"host": "192.0.2.1"},
+        )
+        self.assertEqual(status, 200)
+        self.workbench.save_baseline.assert_called_once_with("192.0.2.1")
+
+        self.workbench.plan.return_value = {"plan": {"ok": True}}
+        status, _, _ = self.request(
+            "POST",
+            "/api/config/plan",
+            {"host": "192.0.2.1", "item_id": 2, "value": "ON"},
+        )
+        self.assertEqual(status, 200)
+        self.workbench.plan.assert_called_once_with("192.0.2.1", 2, "ON")
+
+        self.workbench.apply.return_value = {"execution": {"status": "success"}}
+        status, _, _ = self.request(
+            "POST",
+            "/api/config/apply",
+            {
+                "host": "192.0.2.1",
+                "item_id": 2,
+                "value": "ON",
+                "confirmation_token": "sha256:" + "a" * 64,
+            },
+        )
+        self.assertEqual(status, 200)
+        self.workbench.apply.assert_called_once_with(
+            "192.0.2.1", 2, "ON", "sha256:" + "a" * 64
+        )
+
+    def test_apply_without_confirmation_never_reaches_workbench(self):
+        status, _, body = self.request(
+            "POST",
+            "/api/config/apply",
+            {"host": "192.0.2.1", "item_id": 2, "value": "ON"},
+        )
+        self.assertEqual(status, 400)
+        self.assertIn("confirmation_token", json.loads(body)["error"])
+        self.workbench.apply.assert_not_called()
 
 
 if __name__ == "__main__":

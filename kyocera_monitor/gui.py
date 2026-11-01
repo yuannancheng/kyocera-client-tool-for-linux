@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Callable
 from urllib.parse import urlsplit
 
+from .config_web import ConfigWorkbench
 from .scan import ScanArtifact, ScanJobManager
 from .web import DeviceRegistry, create_server
 
@@ -226,6 +227,7 @@ def run_gui(
     registry: DeviceRegistry,
     *,
     discover_fn: Callable[[], list] | None = None,
+    config_workbench: ConfigWorkbench | None = None,
     title: str = "KYOCERA 打印机",
 ) -> None:
     """Open the dashboard in a native window and block until it closes."""
@@ -240,6 +242,7 @@ def run_gui(
         port=0,
         discover_fn=discover_fn,
         scan_manager=manager,
+        config_workbench=config_workbench,
     )
     port = server.server_address[1]
     thread = threading.Thread(target=server.serve_forever, daemon=True)

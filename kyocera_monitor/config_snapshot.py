@@ -60,9 +60,9 @@ _OPTIONAL_RECORD_FIELDS = (
 _SENSITIVE_OIDS = {
     "1.3.6.1.2.1.1.4.0",  # sysContact
     "1.3.6.1.2.1.1.6.0",  # sysLocation
-    "40.26.2.1.3.1",  # SNMP read community
-    "40.26.2.1.4.1",  # SNMP write community
-    "40.42.1.1.4.1",  # Wi-Fi SSID
+    absolute_config_oid("40.26.2.1.3.1"),  # SNMP read community
+    absolute_config_oid("40.26.2.1.4.1"),  # SNMP write community
+    absolute_config_oid("40.42.1.1.4.1"),  # Wi-Fi SSID
 }
 _VOLATILE_ITEMS = {
     142,  # Wi-Fi connection state

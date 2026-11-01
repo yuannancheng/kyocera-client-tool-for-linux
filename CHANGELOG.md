@@ -2,6 +2,28 @@
 
 ## 2026-11-01
 
+### Added — complete E2 device-management workflow
+
+- 设备详情页新增统一配置工作台：只读采集 147 项配置，展示面板设置、
+  Wi‑Fi 连接状态、RSSI、信道和安全模式，并提供完整本地基线与语义差异比较。
+- 页面和 API 对 SNMP community、Wi‑Fi SSID、系统联系人/位置等敏感字段统一
+  脱敏；修复了 Wi‑Fi SSID 的敏感 OID 使用相对形式但快照检查绝对形式，导致
+  SSID 未被标记的问题。
+- 147 项表格增加“可回滚实验/只读”写权限分类。只有 item 2
+  `Auto error clear` 和 item 50 `Quiet mode` 可生成 `OFF -> ON -> OFF`
+  计划，计划必须重新读取全表、无漂移、令牌匹配且用户在页面单独勾选授权。
+- 新增 `config_web.py` 和 `/api/config`、`/api/config/baseline`、
+  `/api/config/compare`、`/api/config/plan`、`/api/config/apply`；SNMP
+  配置读取/恢复闭环接入 Web 与 GTK 共用的服务器实例。
+- MA2000w 真机只读采集 96/147，Wi‑Fi 状态正确返回、SSID 显示为隐藏；临时
+  `0600` 基线保存成功，item 2 和 item 50 的回滚计划均 `allowed=true`、
+  无 blockers，未发送任何 SET。
+- MA2000w 真机完成预设驱动灰度 HCPDF 扫描：设备返回 RAW，自动落盘 775,467
+  字节，HTTP 下载与落盘文件逐字节一致，SHA-256
+  `f96a559b9f8c1e0d7560c52d5e4f7ab50c178d126721965a40293feb4c27f1b1`。
+- 版本升级为 `0.2.0`；构建并安装 `0.2.0-1` Debian 包，SHA-256
+  `30430a0b6fdaa6e0f12474afdaabbe8cafeaec9a9c428f698e8809a55ded085f`。
+
 ### Fixed — scan completion contrast and download failure
 
 - 修复深色主题下扫描完成提示继承白色文字、同时使用浅色内联背景造成不可读的

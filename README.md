@@ -166,7 +166,7 @@ python3 -m pip install --user .
 
 ```bash
 python3 tools/build_deb.py
-sudo apt install ./dist/kyocera-monitor_0.1.1-1_all.deb
+sudo apt install ./dist/kyocera-monitor_0.2.0-1_all.deb
 ```
 
 构建过程只使用本地 Python 和 `dpkg-deb`，不联网。包的运行依赖声明为
@@ -347,6 +347,11 @@ options、Communication、SNMP trap、Wi‑Fi 状态、音量与 FAX notificatio
 本地预设，并指定一个绝对目录在扫描完成后自动保存。总览页可导出全部已知
 设备的计数 CSV，并可显式开启浏览器状态通知；通知只观察页面已经读取的状态，
 不是设备主动推送。
+详情页的统一配置区可只读采集 147 项配置，展示面板与 Wi‑Fi 状态，保存
+`0600` 私有基线并比较差异；SNMP community、Wi‑Fi SSID 等敏感值在页面中
+隐藏。只有 `Auto error clear` 和 `Quiet mode` 会显示可回滚实验入口，生成
+完整写入/回读/恢复计划并需要单独勾选授权后才能执行；其他对象固定标记为
+只读。
 服务没有认证，默认只绑定回环地址；使用 `--web-bind 0.0.0.0` 暴露到局域网时
 需要自行增加访问控制。
 
@@ -368,7 +373,7 @@ python3 -m unittest discover -s tests -v
 python3 tools/check_publication.py
 ```
 
-当前 253 个测试覆盖 PJL 解析/帧格式、分段补发与合并、KGETOBJ 结构化字段、
+当前 260 个测试覆盖 PJL 解析/帧格式、分段补发与合并、KGETOBJ 结构化字段、
 147 项配置对象表与 CLI 配置导出、`KMUTLCFG` UI 控件字符串提取、
 147 项对象→模型偏移映射与首批控件→OID 对照、
 配置 SNMP 后备读取、
@@ -379,7 +384,7 @@ sysfs 发现、PTY 假设备往返、SNMP/WSD 发现与结果合并，以及 Web
 和 GUI 依赖缺失时的回退、KM-WSDL 扫描多页/ADF 状态机、灰度 RAW 解码、
 PNG/PDF/JPEG/TIFF/高压缩 PDF/XPS 导出、扫描后台任务与下载、设备忙保护、
 `file_size` 不作为传输长度、截断 chunked 响应处理、扫描预设/保存目录、
-计数 CSV、Debian 包内容和公开树合规检查。
+计数 CSV、配置工作台/敏感值脱敏/写入令牌、Debian 包内容和公开树合规检查。
 
 ## 研究资料
 

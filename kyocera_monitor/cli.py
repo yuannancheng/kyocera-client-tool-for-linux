@@ -34,6 +34,7 @@ from .config_write_executor import (
     ConfigWriteExecutionError,
     execute_authorized_config_experiment,
 )
+from .config_web import ConfigWorkbench
 from .discovery import discover
 from .parser import PrinterSnapshot, parse_response
 from .pjl import (
@@ -1071,6 +1072,30 @@ def main(argv: list[str] | None = None) -> int:
             return snapshot
 
         registry = DeviceRegistry(collect_host, default_key)
+        config_workbench = None
+        if not (args.device or args.usb):
+            def read_web_configuration(key: str):
+                return collect_config_snmp(
+                    key,
+                    community=args.snmp_community,
+                    version=args.config_snmp_version,
+                    port=args.snmp_port,
+                    timeout=args.snmp_timeout,
+                    retries=args.snmp_retries,
+                )
+
+            config_workbench = ConfigWorkbench(
+                read_web_configuration,
+                client_factory=lambda key: SnmpClient(
+                    key,
+                    community=args.snmp_community,
+                    version="2c",
+                    port=args.snmp_port,
+                    timeout=args.snmp_timeout,
+                    retries=args.snmp_retries,
+                ),
+                transport="snmp",
+            )
         discover_fn = (
             None if (args.device or args.usb) else run_discovery
         )
@@ -1078,7 +1103,11 @@ def main(argv: list[str] | None = None) -> int:
             from .gui import GuiUnavailable, run_gui
 
             try:
-                run_gui(registry, discover_fn=discover_fn)
+                run_gui(
+                    registry,
+                    discover_fn=discover_fn,
+                    config_workbench=config_workbench,
+                )
             except GuiUnavailable as exc:
                 print(f"error: {exc}", file=sys.stderr)
                 return 2
@@ -1102,6 +1131,7 @@ def main(argv: list[str] | None = None) -> int:
                 port=args.web_port,
                 discover_fn=discover_fn,
                 on_listen=announce,
+                config_workbench=config_workbench,
             )
         except OSError as exc:
             print(f"error: {exc}", file=sys.stderr)

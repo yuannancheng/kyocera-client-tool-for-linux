@@ -44,13 +44,13 @@
 | ID | 官方用户功能 | 证据 | Linux 当前状态 | 优先级 | 完成标准 |
 | --- | --- | --- | --- | --- | --- |
 | F01 | 发现并选择打印机 | `KMSTMVM` 枚举 Windows 打印队列；项目另有 SNMP/WSD | `REPLICATED` | 已完成 | 网络发现、手动添加与多设备选择可用 |
-| F02 | 实时设备状态 | 型号、固件、网络、耗材、纸盒、告警、面板和计数 OID | `PARTIAL` | P1 | 所有适用状态有稳定字段，并能在 GUI 刷新 |
+| F02 | 实时设备状态 | 型号、固件、网络、耗材、纸盒、告警、面板和计数 OID | `REPLICATED` | P1 | 所有适用状态有稳定字段，并能在 GUI 刷新 |
 | F03 | 作业/日志状态 | `USTATUS JOB`、`JobSnmpOid.xml` | `PARTIAL` | P2 | 作业树非空的机型可列出作业和日志；MA2000w 保持明确不可用 |
-| F04 | 状态通知/托盘提示 | `KMSTMNW` 系统托盘、告警和打印机状态回调 | `PARTIAL` | P1 | 有可关闭的本地通知策略，不依赖 Windows 托盘 |
+| F04 | 状态通知/托盘提示 | `KMSTMNW` 系统托盘、告警和打印机状态回调 | `REPLICATED` | P1 | 有可关闭的本地通知策略，不依赖 Windows 托盘 |
 | F05 | 设备配置读取 | 147 项对象表、SNMP/USB 两条路径 | `REPLICATED` | 已完成 | 全量读取、基线、差异和脱敏保存可用 |
-| F06 | 设备配置写入 | 字段差异、SET/KSETOBJ、回读/恢复 | `PARTIAL` | P1 | 安全字段有 GUI，危险字段分级并明确确认 |
+| F06 | 设备配置写入 | 字段差异、SET/KSETOBJ、回读/恢复 | `REPLICATED` | P1 | 安全字段有 GUI，危险字段分级并明确确认 |
 | F07 | 网络/SNMP/trap 配置 | Communication、trap 页面和对象 | `PARTIAL` | P2 | 只读完整；写入具备断线恢复和逐字段回滚 |
-| F08 | 面板/Wi-Fi 状态 | Panel options、Wi-Fi 状态页 OID | `PARTIAL` | P1 | 状态和可安全修改项进入统一设置页 |
+| F08 | 面板/Wi-Fi 状态 | Panel options、Wi-Fi 状态页 OID | `REPLICATED` | P1 | 状态和可安全修改项进入统一设置页 |
 | F09 | Wi-Fi AP 扫描/连接/WPS | `WifiSetupTool*`、AP/设置/WPS OID | `STATIC_ONLY` | P2 | 支持扫描 AP、连接和恢复，失败不丢失旧配置 |
 | F10 | 设备重启/恢复出厂 | reset/restore OID 和官方菜单入口 | `STATIC_ONLY` | P3 | 有独立危险操作确认、断线恢复和重新发现流程 |
 | F11 | 维护菜单 | `KMUTLMNT`、KPSL、39 条 request 定义 | `STATIC_ONLY` | P3 | 先实现只读诊断；破坏性请求逐项真机验证 |
@@ -58,13 +58,13 @@
 | F13 | 扫描图像采集 | TWAIN/KM-WSDL、会话、取图、RAW 解码 | `REPLICATED` | 已完成 | Web 主程序和 CLI 完成彩色/灰度扫描并输出可用文件 |
 | F14 | 设备格式与本地导出 | 官方格式枚举、`file_type`、RAW 分带 | `REPLICATED` | 已完成 | 设备请求与本地 PNG/PDF/JPEG/TIFF/高压缩 PDF/XPS/BMP/RAW 分离 |
 | F15 | 扫描参数界面 | 颜色、分辨率、尺寸、原稿类型、单双面、ADF、连续扫描 | `PARTIAL` | P0 | Web/GUI 参数完整，默认值来自设备，能力不足时禁用 |
-| F16 | Scan to Folder | `KMSCNFOL`、地址簿/文件名/保存路径字段 | `PARTIAL` | P1 | 扫描后按预设命名保存到用户选择目录 |
+| F16 | Scan to Folder | `KMSCNFOL`、地址簿/文件名/保存路径字段 | `REPLICATED` | P1 | 扫描后按预设命名保存到用户选择目录 |
 | F17 | Scan to PDF | `KMSCNPDF`、HCPDF、PDF 输出字段 | `REPLICATED` | 已完成 | RAW 解码后生成 PDF/高压缩 PDF，并保留原始 RAW 选项 |
 | F18 | Scan to Email | `KMSCNEML`、本机邮件集成 | `NOT_STARTED` | P2 | 生成附件并调用用户选择的邮件客户端；无凭据内置 |
-| F19 | Quick Scan 预设 | `KMUTLPRE`、`1001.1.*`、`QUICKSCN.ini` | `PARTIAL` | P1 | 可读取、编辑、保存扫描预设并用于新扫描 |
+| F19 | Quick Scan 预设 | `KMUTLPRE`、`1001.1.*`、`QUICKSCN.ini` | `REPLICATED` | P1 | 可读取、编辑、保存扫描预设并用于新扫描 |
 | F20 | Push Scan | `OnRecvPushScan`、`KMSCNPUS`、结果 OID | `STATIC_ONLY` | P2 | Linux 监听设备请求，执行指定预设并回写结果 |
 | F21 | Print Box 远程操作 | `1001.3.*`、结果/PIN/地址语义 | `STATIC_ONLY` | P2 | 支持读取和已确认的操作，不暴露未知 PIN 行为 |
-| F22 | Counter Monitor | `CounterMonitor.exe`、打印/扫描计数和导出 | `PARTIAL` | P1 | 多设备计数、CSV/表格导出和失败重试可用 |
+| F22 | Counter Monitor | `CounterMonitor.exe`、打印/扫描计数和导出 | `REPLICATED` | P1 | 多设备计数、CSV/表格导出和失败重试可用 |
 | F23 | 计数器计划发送 | `CounterFileSending`、Quartz、server/folder settings | `STATIC_ONLY` | P3 | 明确本地文件或服务器协议后再实现；先不做后台上传 |
 | F24 | FAX 地址簿 | `KMADRBK.exe`、个人/组/限制号码接口 | `BLOCKED` | P3 | 在带传真选件的设备上验证读取、写入和导入 |
 | F25 | FAX 偏好/远程传真 | `ShowFaxPreferences`、远程传真组件、45.* OID | `BLOCKED` | P3 | 硬件可用后复刻；MA2000w 不提供 |
@@ -95,10 +95,10 @@ PNG/PDF，不运行仓库内独立脚本。该阶段完成前不扩展维护、�
 
 ### 阶段 E2：核心设备管理（P1）
 
-状态：`IN_PROGRESS`。已完成第一组用户闭环：浏览器可关闭状态通知、多设备
-计数 CSV、最多 30 个本地扫描预设，以及预设输出到用户绝对目录。所有新增
-扫描预设只复用已确认的官方 token；尚未完成统一安全配置界面、Wi‑Fi/面板
-设置页和新增流程真机人工验收。
+状态：`DONE`（2026-11-01）。状态通知、多设备计数 CSV、扫描预设、目录保存、
+统一配置基线与差异、面板/Wi‑Fi 状态和安全回滚实验入口均已进入同一设备页。
+MA2000w 真机完成预设驱动灰度 HCPDF 自动落盘，HTTP 下载与落盘字节一致；
+147 项只读配置、私有基线和 item 2/50 回滚计划真机验证通过。
 
 交付：
 
