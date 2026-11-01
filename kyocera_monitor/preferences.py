@@ -14,7 +14,12 @@ from .scan import ScanOptions
 
 SETTINGS_VERSION = 1
 MAX_PRESETS = 30
+MAX_SAVED_PRINTERS = 64
 _PRESET_ID_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,63}$")
+_HOSTNAME_RE = re.compile(
+    r"^(?=.{1,253}$)[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?"
+    r"(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*$"
+)
 _PRESET_FIELDS = {
     "color",
     "resolution",
@@ -43,7 +48,49 @@ def default_settings() -> dict[str, object]:
         "version": SETTINGS_VERSION,
         "scan_directory": default_scan_directory(),
         "presets": [],
+        "saved_printers": [],
     }
+
+
+def normalize_host(value: object) -> str:
+    """Return a safe printer host key or raise ``SettingsError``.
+
+    Only IPv4 addresses and DNS hostnames are accepted. Saved printers never
+    contain ports, URLs, paths, or USB device paths.
+    """
+
+    if not isinstance(value, str):
+        raise SettingsError("saved printer host must be a string")
+    host = value.strip()
+    if not host:
+        raise SettingsError("saved printer host is empty")
+    if len(host) > 253 or not _HOSTNAME_RE.fullmatch(host):
+        raise SettingsError(f"invalid saved printer host: {value!r}")
+    labels = host.split(".")
+    if len(labels) == 4 and all(label.isdigit() for label in labels):
+        if any(int(label) > 255 for label in labels):
+            raise SettingsError(f"invalid saved printer IPv4: {value!r}")
+        return ".".join(str(int(label)) for label in labels)
+    return host.lower()
+
+
+def normalize_saved_printers(value: object) -> list[str]:
+    if value is None:
+        return []
+    if not isinstance(value, list):
+        raise SettingsError("saved_printers must be an array")
+    if len(value) > MAX_SAVED_PRINTERS:
+        raise SettingsError(
+            f"at most {MAX_SAVED_PRINTERS} saved printers are supported"
+        )
+    printers: list[str] = []
+    seen: set[str] = set()
+    for item in value:
+        host = normalize_host(item)
+        if host not in seen:
+            seen.add(host)
+            printers.append(host)
+    return printers
 
 
 def _required_text(
@@ -129,7 +176,12 @@ def normalize_preset(value: object, index: int) -> dict[str, object]:
 def normalize_settings(value: object) -> dict[str, object]:
     if not isinstance(value, dict):
         raise SettingsError("settings must be a JSON object")
-    unknown = set(value) - {"version", "scan_directory", "presets"}
+    unknown = set(value) - {
+        "version",
+        "scan_directory",
+        "presets",
+        "saved_printers",
+    }
     if unknown:
         raise SettingsError(
             "settings has unsupported fields: " + ", ".join(sorted(unknown))
@@ -155,6 +207,9 @@ def normalize_settings(value: object) -> dict[str, object]:
             value.get("scan_directory", default_scan_directory())
         ),
         "presets": normalized_presets,
+        "saved_printers": normalize_saved_printers(
+            value.get("saved_printers", [])
+        ),
     }
 
 
@@ -173,43 +228,59 @@ class SettingsStore:
 
     def load(self) -> dict[str, object]:
         with self._lock:
-            if not self.path.exists():
-                return normalize_settings(self._defaults())
-            try:
-                payload = json.loads(self.path.read_text(encoding="utf-8"))
-            except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
-                raise SettingsError(
-                    f"cannot read settings {self.path}: {type(exc).__name__}: {exc}"
-                ) from exc
-            return normalize_settings(payload)
+            return self._load_unlocked()
 
     def save(self, value: object) -> dict[str, object]:
         settings = normalize_settings(value)
+        with self._lock:
+            self._save_unlocked(settings)
+        return settings
+
+    def update_saved_printers(self, hosts: object) -> dict[str, object]:
+        """Atomically replace the saved printer list in the current settings."""
+
+        normalized = normalize_saved_printers(hosts)
+        with self._lock:
+            settings = self._load_unlocked()
+            settings["saved_printers"] = normalized
+            self._save_unlocked(settings)
+        return settings
+
+    def _load_unlocked(self) -> dict[str, object]:
+        if not self.path.exists():
+            return normalize_settings(self._defaults())
+        try:
+            payload = json.loads(self.path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise SettingsError(
+                f"cannot read settings {self.path}: {type(exc).__name__}: {exc}"
+            ) from exc
+        return normalize_settings(payload)
+
+    def _save_unlocked(self, settings: dict[str, object]) -> None:
         encoded = (
             json.dumps(settings, ensure_ascii=False, indent=2, sort_keys=True)
             + "\n"
         ).encode("utf-8")
-        with self._lock:
-            self.path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-            descriptor, temporary_name = tempfile.mkstemp(
-                prefix=f".{self.path.name}.",
-                dir=self.path.parent,
-            )
+        self.path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        descriptor, temporary_name = tempfile.mkstemp(
+            prefix=f".{self.path.name}.",
+            dir=self.path.parent,
+        )
+        try:
+            os.fchmod(descriptor, 0o600)
+            with os.fdopen(descriptor, "wb") as stream:
+                stream.write(encoded)
+                stream.flush()
+                os.fsync(stream.fileno())
+            os.replace(temporary_name, self.path)
+            os.chmod(self.path, 0o600)
+        except Exception:
             try:
-                os.fchmod(descriptor, 0o600)
-                with os.fdopen(descriptor, "wb") as stream:
-                    stream.write(encoded)
-                    stream.flush()
-                    os.fsync(stream.fileno())
-                os.replace(temporary_name, self.path)
-                os.chmod(self.path, 0o600)
-            except Exception:
-                try:
-                    os.unlink(temporary_name)
-                except FileNotFoundError:
-                    pass
-                raise
-        return settings
+                os.unlink(temporary_name)
+            except FileNotFoundError:
+                pass
+            raise
 
 
 def preset_payload(settings: dict[str, object], preset_id: object) -> dict[str, object] | None:

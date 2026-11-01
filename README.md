@@ -334,12 +334,14 @@ options、Communication、SNMP trap、Wi‑Fi 状态、音量与 FAX notificatio
 `/` 是设备总览页，
 `/device?host=<地址>` 是单设备详情页；`/api/devices` 返回所有已知设备的快照，
 `POST /api/devices`（JSON `{"host": "192.168.0.220"}`）把手动输入的主机加入
-允许列表，`/api/status?host=<地址>` 返回单个设备，`/healthz` 用于存活检查。
+已保存设备并写入
+`$XDG_CONFIG_HOME/kyocera-monitor/settings.json`；重启 Web/GUI 后自动恢复，
+`/api/status?host=<地址>` 返回单个设备，`/healthz` 用于存活检查。
 `POST /api/scans` 创建后台扫描任务，任务 ID 可通过 `/api/scans/<id>` 查询
 阶段，成功后的文件由 `/api/scans/<id>/files/<序号>` 下载。
 总览最多用 4 个线程并行取快照，单设备缓存 1 秒，页面每 10–15 秒刷新。
-总览页上的“发现打印机”会调用 `/api/discover`，发现结果加入允许列表后
-自动出现在总览中。
+总览页上的“发现打印机”会调用 `/api/discover`，发现结果自动加入已保存设备、
+出现在总览中，并在下次启动时恢复；手动输入的主机使用同一持久化列表。
 详情页展示 Lifetime/Scan/Drum 计数、睡眠模式、自动错误清除和表单超时；
 其中 Lifetime counter 已由 PJL/SNMP 双向核对为页计数。扫描区提供颜色、
 分辨率、原稿类型、页数和输出格式，并显示设备请求格式、设备返回格式和本地
@@ -373,14 +375,15 @@ python3 -m unittest discover -s tests -v
 python3 tools/check_publication.py
 ```
 
-当前 260 个测试覆盖 PJL 解析/帧格式、分段补发与合并、KGETOBJ 结构化字段、
+当前 266 个测试覆盖 PJL 解析/帧格式、分段补发与合并、KGETOBJ 结构化字段、
 147 项配置对象表与 CLI 配置导出、`KMUTLCFG` UI 控件字符串提取、
 147 项对象→模型偏移映射与首批控件→OID 对照、
 配置 SNMP 后备读取、
 桌面菜单安装/卸载、
 SNMP 编码与 walk/行读取边界、SNMP 到 `PrinterSnapshot` 的字段映射、USB
 sysfs 发现、PTY 假设备往返、SNMP/WSD 发现与结果合并，以及 Web 快照缓存、
-设备允许列表与手动添加、多设备并发读取、JSON、页面自包含性、无默认设备启动
+设备持久化列表与手动添加、重启恢复、多设备并发读取、JSON、页面自包含性、
+无默认设备启动
 和 GUI 依赖缺失时的回退、KM-WSDL 扫描多页/ADF 状态机、灰度 RAW 解码、
 PNG/PDF/JPEG/TIFF/高压缩 PDF/XPS 导出、扫描后台任务与下载、设备忙保护、
 `file_size` 不作为传输长度、截断 chunked 响应处理、扫描预设/保存目录、

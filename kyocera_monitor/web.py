@@ -27,6 +27,7 @@ from .preferences import (
     SettingsError,
     SettingsStore,
     merge_scan_payload,
+    normalize_host,
     preset_payload,
 )
 from .reporting import counters_csv
@@ -40,36 +41,10 @@ from .scan import (
 
 Collector = Callable[[], PrinterSnapshot]
 
-_HOSTNAME_RE = re.compile(
-    r"^(?=.{1,253}$)[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?"
-    r"(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*$"
-)
 _SCAN_JOB_PATH_RE = re.compile(r"^/api/scans/([0-9a-f]{32})$")
 _SCAN_FILE_PATH_RE = re.compile(
     r"^/api/scans/([0-9a-f]{32})/files/([0-9]+)$"
 )
-
-
-def normalize_host(value: object) -> str:
-    """Return a safe printer host key or raise ``ValueError``.
-
-    Only IPv4 addresses and DNS hostnames are accepted.  The dashboard never
-    accepts a port, URL, path, or USB device path through the HTTP API.
-    """
-
-    if not isinstance(value, str):
-        raise ValueError("host must be a string")
-    host = value.strip()
-    if not host:
-        raise ValueError("host is empty")
-    if len(host) > 253 or not _HOSTNAME_RE.fullmatch(host):
-        raise ValueError(f"invalid host: {value!r}")
-    labels = host.split(".")
-    if len(labels) == 4 and all(label.isdigit() for label in labels):
-        if any(int(label) > 255 for label in labels):
-            raise ValueError(f"invalid IPv4 address: {value!r}")
-        return ".".join(str(int(label)) for label in labels)
-    return host.lower()
 
 
 @dataclass
@@ -288,7 +263,7 @@ OVERVIEW_HTML = """<!doctype html>
   header { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
   h1 { font-size: 1.5rem; margin: 0; }
   .pill { padding: 2px 10px; border-radius: 999px; font-size: .85rem;
-          background: #d8dee6; }
+          background: #d8dee6; color: #1b1f24; }
   .pill.ok { background: #cdeccd; color: #145014; }
   .pill.warn { background: #ffd9d9; color: #6b1111; }
   .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
@@ -320,6 +295,9 @@ OVERVIEW_HTML = """<!doctype html>
     body { background: #14181c; color: #e7ebef; }
     a.card { background: #1c2228; border-color: #2b333b; }
     .addr, .label, .muted { color: #9aa4ae; }
+    .pill { background: #303842; color: #e7ebef; }
+    .pill.ok { background: #1d3f22; color: #d3f2d8; }
+    .pill.warn { background: #4a2326; color: #f6c8c8; }
     button, a.button, form.add input { background: #1c2228; color: inherit;
                                         border-color: #3a444e; }
   }
@@ -465,19 +443,23 @@ async function load() {
 
 async function discover() {
   const button = byId("discover");
+  const error = byId("error");
   button.disabled = true;
   button.textContent = "正在搜索…";
+  error.style.display = "none";
   try {
     const response = await fetch("/api/discover", { cache: "no-store" });
     const data = await response.json();
     if (data.error) {
-      const error = byId("error");
       error.textContent = data.error;
       error.style.display = "block";
+      return;
     }
     await load();
+    byId("meta").textContent = data.warning
+      ? data.warning
+      : `发现 ${data.printers?.length || 0} 台打印机，结果已保存`;
   } catch (err) {
-    const error = byId("error");
     error.textContent = String(err);
     error.style.display = "block";
   } finally {
@@ -503,6 +485,7 @@ async function addDevice(event) {
     input.value = "";
     error.style.display = "none";
     await load();
+    byId("meta").textContent = `已添加并保存打印机 ${host}`;
   } catch (err) {
     error.textContent = String(err);
     error.style.display = "block";
@@ -542,7 +525,7 @@ DEVICE_HTML = """<!doctype html>
   header { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
   h1 { font-size: 1.5rem; margin: 0; }
   .pill { padding: 2px 10px; border-radius: 999px; font-size: .85rem;
-          background: #d8dee6; }
+          background: #d8dee6; color: #1b1f24; }
   .pill.ok { background: #cdeccd; color: #145014; }
   .pill.warn { background: #ffd9d9; color: #6b1111; }
   .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
@@ -609,6 +592,9 @@ DEVICE_HTML = """<!doctype html>
   @media (prefers-color-scheme: dark) {
     body { background: #14181c; color: #e7ebef; }
     .card { background: #1c2228; border-color: #2b333b; }
+    .pill { background: #303842; color: #e7ebef; }
+    .pill.ok { background: #1d3f22; color: #d3f2d8; }
+    .pill.warn { background: #4a2326; color: #f6c8c8; }
     .bar { background: #2b333b; }
     th, td { border-color: #2b333b; }
     button, form.scan select, .settings input { background: #1c2228; color: inherit;
@@ -1467,8 +1453,14 @@ async function discover() {
     box.replaceChildren();
     if (data.error) { box.textContent = data.error; return; }
     if (!data.printers || data.printers.length === 0) {
-      box.textContent = "没有发现打印机";
+      box.textContent = data.warning || "没有发现打印机";
       return;
+    }
+    if (data.warning) {
+      const warning = document.createElement("div");
+      warning.className = "warning-box";
+      warning.textContent = data.warning;
+      box.append(warning);
     }
     for (const printer of data.printers) {
       const row = document.createElement("div");
@@ -1480,6 +1472,10 @@ async function discover() {
       row.append(link);
       box.append(row);
     }
+    const saved = document.createElement("div");
+    saved.className = "muted";
+    saved.textContent = "发现结果已保存，下次启动无需重新搜索";
+    box.append(saved);
   } catch (err) {
     box.textContent = String(err);
   }
@@ -1531,6 +1527,16 @@ def make_handler(
 ) -> type[BaseHTTPRequestHandler]:
     manager = scan_manager or ScanJobManager()
     settings = settings_store or SettingsStore()
+    try:
+        for saved_host in settings.load()["saved_printers"]:
+            registry.allow(saved_host)
+    except SettingsError:
+        # Keep the dashboard available; the settings API reports the exact
+        # load failure when the user opens or changes preferences.
+        pass
+
+    def persist_registry_printers() -> None:
+        settings.update_saved_printers(registry.hosts())
 
     class Handler(BaseHTTPRequestHandler):
         server_version = "kyocera-monitor"
@@ -1683,11 +1689,23 @@ def make_handler(
                     self._respond(502, "application/json; charset=utf-8", body)
                     return
                 for printer in printers:
-                    registry.allow(printer.address)
+                    try:
+                        registry.add_host(printer.address)
+                    except ValueError:
+                        continue
+                warning = None
+                try:
+                    persist_registry_printers()
+                except (SettingsError, OSError) as exc:
+                    warning = (
+                        "printers were found but could not be saved: "
+                        f"{type(exc).__name__}: {exc}"
+                    )
                 body = json.dumps(
                     {
                         "printers": [printer.to_dict() for printer in printers],
                         "error": None,
+                        "warning": warning,
                     },
                     ensure_ascii=False,
                 ).encode("utf-8")
@@ -1730,6 +1748,9 @@ def make_handler(
                 return
             if parsed.path == "/api/settings":
                 try:
+                    if "saved_printers" not in payload:
+                        current = settings.load()
+                        payload["saved_printers"] = current["saved_printers"]
                     saved = settings.save(payload)
                 except SettingsError as exc:
                     self._json_error(400, str(exc))
@@ -1749,6 +1770,15 @@ def make_handler(
                 host = registry.add_host(payload.get("host"))
             except ValueError as exc:
                 self._json_error(400, str(exc))
+                return
+            try:
+                persist_registry_printers()
+            except (SettingsError, OSError) as exc:
+                self._json_error(
+                    500,
+                    "device was added for this session but could not be saved: "
+                    f"{type(exc).__name__}: {exc}",
+                )
                 return
             body = json.dumps(
                 {"device": host, "devices": registry.hosts()},

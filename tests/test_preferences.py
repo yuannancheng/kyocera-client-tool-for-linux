@@ -26,6 +26,7 @@ class SettingsTests(unittest.TestCase):
             settings = {
                 "version": 1,
                 "scan_directory": str(Path(tmp) / "scans"),
+                "saved_printers": ["192.168.0.220"],
                 "presets": [
                     {
                         "id": "a4-color",
@@ -42,6 +43,50 @@ class SettingsTests(unittest.TestCase):
             self.assertEqual(store.load(), saved)
             self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o600)
             self.assertEqual(json.loads(path.read_text())["version"], 1)
+            self.assertEqual(
+                json.loads(path.read_text())["saved_printers"],
+                ["192.168.0.220"],
+            )
+
+    def test_saved_printers_are_normalized_and_updated_atomically(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "settings.json"
+            store = SettingsStore(path)
+            store.save(
+                {
+                    "version": 1,
+                    "scan_directory": str(Path(tmp) / "scans"),
+                    "presets": [
+                        {
+                            "id": "quick",
+                            "name": "Quick",
+                            "output_format": "png",
+                            "max_pages": 1,
+                        }
+                    ],
+                    "saved_printers": [],
+                }
+            )
+            store.update_saved_printers(
+                ["192.168.000.220", "Printer.Local", "192.168.0.220"]
+            )
+            loaded = store.load()
+            self.assertEqual(
+                loaded["saved_printers"],
+                ["192.168.0.220", "printer.local"],
+            )
+            self.assertEqual(loaded["presets"][0]["id"], "quick")
+            self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o600)
+
+    def test_legacy_settings_without_saved_printers_load_as_empty(self):
+        settings = normalize_settings(
+            {
+                "version": 1,
+                "scan_directory": "/tmp/scans",
+                "presets": [],
+            }
+        )
+        self.assertEqual(settings["saved_printers"], [])
 
     def test_invalid_settings_fail_closed(self):
         cases = (
@@ -84,6 +129,11 @@ class SettingsTests(unittest.TestCase):
                         "max_pages": 1,
                     }
                 ],
+            },
+            {
+                "scan_directory": "/tmp",
+                "presets": [],
+                "saved_printers": ["http://192.168.0.220"],
             },
         )
         for settings in cases:

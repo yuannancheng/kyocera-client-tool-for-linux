@@ -55,7 +55,8 @@ tools/
    快照，`/api/devices` 用最多 4 个线程并行读取所有已知设备；`/` 是总览页，
    `/device?host=<地址>` 是详情页。缓存默认 1 秒，同一设备的读取仍串行化。
    `POST /api/devices` 接受手动输入的主机并加入允许列表；启动时允许没有默认
-   设备，此时页面先显示空状态，再由用户发现或手动添加。
+   设备，此时页面先显示空状态，再由用户发现或手动添加。手动添加和发现结果
+   都会原子写入用户设置中的 `saved_printers`，服务启动时自动恢复。
 9. 设备详情页提交 `POST /api/scans` 后，`ScanJobManager` 在后台线程执行
    `preflight -> default_configuration -> open_session -> start_scan ->
    retrieve_image -> decode_raw -> export -> close_session`。同一设备已有
@@ -71,7 +72,8 @@ tools/
    依赖，缺失时 CLI 返回退出码 2 并提示改用 `--web`。
 12. `--discover` 并行执行 SNMP 广播和 WS-Discovery；广播只取型号 OID，随后用
    单播 GET 补全序列号/固件。ARP 表和可选的子网 CIDR 作为额外单播候选。
-   Web 页面的 `/api/discover` 复用同一实现，并把发现的主机加入允许列表。
+   Web 页面的 `/api/discover` 复用同一实现，并把发现的主机加入允许列表和
+   持久化设备列表。
 
 USB 设备选择由 `usb.discover_usb_printers()` 完成：扫描 `/dev/usb/lp*`，从
 `/sys/class/usbmisc/lpN/device` 向上读取 `idVendor`/`idProduct`，优先选择
@@ -124,7 +126,8 @@ MA2000w（`0482:0d51`），多个候选时要求显式 `--device`。
 - Web 界面默认绑定 `127.0.0.1`，没有认证；提供扫描，但不提供配置写入。
   `tools/kmscn_probe.py` 是独立的只读 KM-WSDL 协议探针；
   `tools/kmscn_scan.py` 只是包内扫描服务的兼容命令行适配器。
-  多设备总览和手动添加主机已实现，主机允许列表只保存在当前进程内存中。
+  多设备总览和手动添加主机已实现，主机列表与扫描预设、保存目录一起保存在
+  `0600` 原子写入的用户设置中。
 - 原生 GUI 是 Web 仪表盘的 GTK3/WebKit2 外壳，不复制状态解析逻辑；需要
   无界面运行或未安装 WebKit 时使用 `--web`。
 - 设备发现只发送 SNMP GET 和 WS-Discovery Probe；子网扫描必须显式指定

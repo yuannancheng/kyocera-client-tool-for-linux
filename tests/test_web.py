@@ -8,6 +8,7 @@ from pathlib import Path
 from unittest import mock
 
 from kyocera_monitor import cli
+from kyocera_monitor.discovery import DiscoveredPrinter
 from kyocera_monitor.parser import PrinterSnapshot, Tray
 from kyocera_monitor.preferences import SettingsStore
 from kyocera_monitor.scan import ScanArtifact, ScanJobManager, ScanResult
@@ -238,6 +239,17 @@ class PageTests(unittest.TestCase):
             'setScanStatus(message, result.close_error ? "warning" : "success")',
             DEVICE_HTML,
         )
+
+    def test_status_pills_have_explicit_light_and_dark_contrast(self):
+        for page in (OVERVIEW_HTML, DEVICE_HTML):
+            self.assertIn(
+                "background: #d8dee6; color: #1b1f24;",
+                page,
+            )
+            self.assertIn(
+                ".pill { background: #303842; color: #e7ebef; }",
+                page,
+            )
 
     def test_device_page_has_native_download_bridge(self):
         self.assertIn('messageHandlers.kyoceraDownload', DEVICE_HTML)
@@ -554,6 +566,104 @@ class ScanApiTests(unittest.TestCase):
         text = body.decode("utf-8-sig")
         self.assertIn("device,model,serial", text)
         self.assertIn("192.0.2.1,MA2000w,REDACTED", text)
+
+
+class PrinterPersistenceApiTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.settings = SettingsStore(Path(self.tmp.name) / "settings.json")
+
+    @staticmethod
+    def request(handler, method, path, payload=None):
+        body = json.dumps(payload).encode() if payload is not None else None
+        request = handler.__new__(handler)
+        request.path = path
+        request.headers = {
+            "Content-Length": str(len(body or b"")),
+            "Content-Type": "application/json",
+        }
+        request.rfile = io.BytesIO(body or b"")
+        request.wfile = io.BytesIO()
+        request._status = None
+        request._headers = {}
+
+        def send_response(status):
+            request._status = status
+
+        def send_header(name, value):
+            request._headers[name] = value
+
+        request.send_response = send_response
+        request.send_header = send_header
+        request.end_headers = lambda: None
+        request.log_message = lambda *_args: None
+        getattr(request, f"do_{method}")()
+        return request._status, request._headers, request.wfile.getvalue()
+
+    def test_manual_device_is_saved_and_restored_after_restart(self):
+        registry = DeviceRegistry(lambda key: snapshot(), None, min_interval=0)
+        handler = make_handler(registry, settings_store=self.settings)
+        status, _, body = self.request(
+            handler,
+            "POST",
+            "/api/devices",
+            {"host": "192.168.000.220"},
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(
+            json.loads(body)["device"],
+            "192.168.0.220",
+        )
+        self.assertEqual(
+            self.settings.load()["saved_printers"],
+            ["192.168.0.220"],
+        )
+
+        restarted = DeviceRegistry(
+            lambda key: snapshot(), None, min_interval=0
+        )
+        make_handler(restarted, settings_store=self.settings)
+        self.assertEqual(restarted.hosts(), ["192.168.0.220"])
+
+    def test_discovery_saves_all_found_devices(self):
+        printers = [
+            DiscoveredPrinter(address="192.168.0.220", model="MA2000w"),
+            DiscoveredPrinter(address="192.168.0.221", model="MA2000w"),
+        ]
+        registry = DeviceRegistry(lambda key: snapshot(), None, min_interval=0)
+        handler = make_handler(
+            registry,
+            discover_fn=lambda: printers,
+            settings_store=self.settings,
+        )
+        status, _, body = self.request(handler, "GET", "/api/discover")
+        self.assertEqual(status, 200)
+        self.assertIsNone(json.loads(body)["warning"])
+        self.assertEqual(
+            self.settings.load()["saved_printers"],
+            ["192.168.0.220", "192.168.0.221"],
+        )
+
+    def test_preferences_save_without_printer_list_preserves_saved_devices(self):
+        self.settings.update_saved_printers(["192.168.0.220"])
+        registry = DeviceRegistry(lambda key: snapshot(), None, min_interval=0)
+        handler = make_handler(registry, settings_store=self.settings)
+        status, _, _ = self.request(
+            handler,
+            "POST",
+            "/api/settings",
+            {
+                "version": 1,
+                "scan_directory": str(Path(self.tmp.name) / "scans"),
+                "presets": [],
+            },
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(
+            self.settings.load()["saved_printers"],
+            ["192.168.0.220"],
+        )
 
 
 class ConfigApiTests(unittest.TestCase):
