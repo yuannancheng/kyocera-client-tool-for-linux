@@ -160,6 +160,21 @@ python3 -m pip install --user .
 
 已经存在且内容不同的文件默认不会被覆盖；确认要替换时加 `--force`。
 
+## Debian 安装包
+
+仓库可直接构建不包含原厂程序的架构无关 Debian 包：
+
+```bash
+python3 tools/build_deb.py
+sudo apt install ./dist/kyocera-monitor_0.1.0-1_all.deb
+```
+
+构建过程只使用本地 Python 和 `dpkg-deb`，不联网。包的运行依赖声明为
+`python3`、`python3-pil`、`python3-gi`、`gir1.2-gtk-3.0` 和
+`gir1.2-webkit2-4.1`，由 APT 按发行版提供。构建与验证边界见
+[`packaging/README.md`](packaging/README.md)。AppImage 是后续便携目标，需要
+另外封装 Python、GTK 和 WebKitGTK；当前首发产物为 `.deb`。
+
 JSON 输出同时保留原始 `kgetobj`，并在 `kgetobj_known` 中提供已确认的结构化
 字段（Scan count、Drum counter、Drum counter max、Auto error clear 及其
 超时）。`2.10.2.1.4.1.1` 以 `lifetime_counter` 暴露为累计打印页数，单位为
@@ -328,7 +343,10 @@ options、Communication、SNMP trap、Wi‑Fi 状态、音量与 FAX notificatio
 详情页展示 Lifetime/Scan/Drum 计数、睡眠模式、自动错误清除和表单超时；
 其中 Lifetime counter 已由 PJL/SNMP 双向核对为页计数。扫描区提供颜色、
 分辨率、原稿类型、页数和输出格式，并显示设备请求格式、设备返回格式和本地
-最终格式，避免把 RAW 请求误认为 RAW 文件。
+最终格式，避免把 RAW 请求误认为 RAW 文件。用户可把当前扫描参数保存为
+本地预设，并指定一个绝对目录在扫描完成后自动保存。总览页可导出全部已知
+设备的计数 CSV，并可显式开启浏览器状态通知；通知只观察页面已经读取的状态，
+不是设备主动推送。
 服务没有认证，默认只绑定回环地址；使用 `--web-bind 0.0.0.0` 暴露到局域网时
 需要自行增加访问控制。
 
@@ -350,7 +368,7 @@ python3 -m unittest discover -s tests -v
 python3 tools/check_publication.py
 ```
 
-当前 237 个测试覆盖 PJL 解析/帧格式、分段补发与合并、KGETOBJ 结构化字段、
+当前 247 个测试覆盖 PJL 解析/帧格式、分段补发与合并、KGETOBJ 结构化字段、
 147 项配置对象表与 CLI 配置导出、`KMUTLCFG` UI 控件字符串提取、
 147 项对象→模型偏移映射与首批控件→OID 对照、
 配置 SNMP 后备读取、
@@ -360,7 +378,8 @@ sysfs 发现、PTY 假设备往返、SNMP/WSD 发现与结果合并，以及 Web
 设备允许列表与手动添加、多设备并发读取、JSON、页面自包含性、无默认设备启动
 和 GUI 依赖缺失时的回退、KM-WSDL 扫描多页/ADF 状态机、灰度 RAW 解码、
 PNG/PDF/JPEG/TIFF/高压缩 PDF/XPS 导出、扫描后台任务与下载、设备忙保护、
-`file_size` 不作为传输长度、截断 chunked 响应处理，以及公开树合规检查。
+`file_size` 不作为传输长度、截断 chunked 响应处理、扫描预设/保存目录、
+计数 CSV、Debian 包内容和公开树合规检查。
 
 ## 研究资料
 

@@ -2,6 +2,26 @@
 
 ## 2026-11-01
 
+### Added — E2 onboarding workflows and Debian package
+
+- Web/GUI 新增最多 30 个本地扫描预设；预设复用官方扫描 token，可保存、
+  更新、删除并应用到下一次扫描。设置保存在
+  `$XDG_CONFIG_HOME/kyocera-monitor/settings.json`（默认
+  `~/.config/kyocera-monitor/settings.json`），文件权限为 `0600`，写入采用
+  临时文件原子替换。
+- 新增用户选择扫描保存目录；启用后后台任务在设备会话关闭、文件生成后自动
+  写入该目录，并把实际路径显示在任务结果中。默认目录为
+  `~/Pictures/Kyocera Scans`。
+- 总览页新增多设备计数 CSV 导出，包含型号、序列号、状态、页数、扫描计数、
+  鼓计数、读取时间和错误；对设备返回的公式前缀做转义。
+- 总览页新增可关闭的浏览器状态通知。通知基于页面轮询到的状态变化，不声称
+  复刻 Windows 托盘主动回调。
+- 新增 `tools/build_deb.py`，构建架构无关 `.deb`，声明
+  `python3-pil`、GTK3 和 WebKit2 4.1 运行依赖；包内只包含本项目 Python
+  源码、三个入口、桌面文件、图标和许可证，不包含原厂二进制。
+- 新增 Debian 包字段/内容测试、设置持久化、预设合并、自动落盘和计数 CSV
+  测试。
+
 ### Added — integrated scan workflow and official-format local export
 
 - 新增 `kyocera_monitor.scan`，把预检、默认配置、开会话、启动扫描、轮询取图、

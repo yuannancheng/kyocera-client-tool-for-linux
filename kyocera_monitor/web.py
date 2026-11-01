@@ -14,10 +14,18 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 from typing import Callable
 from urllib.parse import parse_qs, quote, urlsplit
 
 from .parser import PrinterSnapshot
+from .preferences import (
+    SettingsError,
+    SettingsStore,
+    merge_scan_payload,
+    preset_payload,
+)
+from .reporting import counters_csv
 from .scan import (
     ScanArtifact,
     ScanBusyError,
@@ -281,6 +289,10 @@ OVERVIEW_HTML = """<!doctype html>
   .muted { color: #6b747d; font-size: .85rem; margin-top: 14px; }
   button { margin-left: auto; padding: 6px 12px; border-radius: 8px;
            border: 1px solid #b9c1c9; background: #fff; cursor: pointer; }
+  a.button { padding: 6px 12px; border-radius: 8px; border: 1px solid #b9c1c9;
+             background: #fff; color: inherit; text-decoration: none; }
+  label.notify { display: inline-flex; align-items: center; gap: 6px;
+                 font-size: .9rem; }
   form.add { display: flex; gap: 8px; margin-top: 14px; flex-wrap: wrap; }
   form.add input { flex: 1 1 220px; min-width: 180px; padding: 8px 10px;
                    border-radius: 8px; border: 1px solid #b9c1c9;
@@ -290,8 +302,8 @@ OVERVIEW_HTML = """<!doctype html>
     body { background: #14181c; color: #e7ebef; }
     a.card { background: #1c2228; border-color: #2b333b; }
     .addr, .label, .muted { color: #9aa4ae; }
-    button, form.add input { background: #1c2228; color: inherit;
-                             border-color: #3a444e; }
+    button, a.button, form.add input { background: #1c2228; color: inherit;
+                                        border-color: #3a444e; }
   }
 </style>
 </head>
@@ -300,6 +312,8 @@ OVERVIEW_HTML = """<!doctype html>
   <header>
     <h1>KYOCERA 打印机</h1>
     <span id="count" class="pill">加载中</span>
+    <a class="button" href="/api/counters.csv">导出计数 CSV</a>
+    <label class="notify"><input id="notify" type="checkbox"> 状态通知</label>
     <button id="discover" type="button">发现打印机</button>
   </header>
   <form id="add" class="add" autocomplete="off">
@@ -315,6 +329,7 @@ OVERVIEW_HTML = """<!doctype html>
 const byId = (id) => document.getElementById(id);
 const statusClass = (normal) => normal === true ? "pill ok"
   : normal === false ? "pill warn" : "pill";
+let previousStates = {};
 
 function line(label, value) {
   const div = document.createElement("div");
@@ -388,7 +403,35 @@ function render(data) {
   for (const device of devices) {
     box.append(card(device));
   }
+  notifyChanges(devices);
   byId("meta").textContent = "更新于 " + new Date().toLocaleTimeString();
+}
+
+function deviceState(device) {
+  if (device.error || !device.snapshot) return "unavailable";
+  if (device.snapshot.normal === true) return "normal";
+  if (device.snapshot.normal === false) return "warning";
+  return "unknown";
+}
+
+function notifyChanges(devices) {
+  const next = {};
+  for (const device of devices) next[device.device] = deviceState(device);
+  if (byId("notify").checked && "Notification" in window &&
+      Notification.permission === "granted") {
+    for (const [device, state] of Object.entries(next)) {
+      const before = previousStates[device];
+      if (before && before !== state &&
+          (state === "warning" || state === "unavailable")) {
+        const name = (devices.find((item) => item.device === device)?.snapshot?.model)
+          || device;
+        new Notification("京瓷打印机状态变化", {
+          body: `${name} (${device}) 状态变为 ${state}`
+        });
+      }
+    }
+  }
+  previousStates = next;
 }
 
 async function load() {
@@ -450,6 +493,15 @@ async function addDevice(event) {
 
 byId("discover").addEventListener("click", discover);
 byId("add").addEventListener("submit", addDevice);
+byId("notify").checked = localStorage.getItem("kyocera-notify") === "1";
+byId("notify").addEventListener("change", async () => {
+  const enabled = byId("notify").checked;
+  localStorage.setItem("kyocera-notify", enabled ? "1" : "0");
+  if (enabled && "Notification" in window &&
+      Notification.permission === "default") {
+    await Notification.requestPermission();
+  }
+});
 load();
 setInterval(load, 15000);
 </script>
@@ -496,11 +548,18 @@ DEVICE_HTML = """<!doctype html>
   button:disabled { cursor: wait; opacity: .65; }
   form.scan { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
               gap: 12px; margin-top: 12px; align-items: end; }
-  form.scan label { display: grid; gap: 6px; color: #5c6670; font-size: .82rem; }
-  form.scan select { padding: 8px 10px; border-radius: 8px;
-                     border: 1px solid #b9c1c9; background: #fff;
-                     color: inherit; font: inherit; }
+  form.scan label, .settings label { display: grid; gap: 6px; color: #5c6670;
+                                      font-size: .82rem; }
+  form.scan select, .settings input { padding: 8px 10px; border-radius: 8px;
+                                      border: 1px solid #b9c1c9; background: #fff;
+                                      color: inherit; font: inherit; }
   form.scan button { margin: 0; min-height: 38px; }
+  .settings { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+              gap: 12px; margin-top: 12px; align-items: end; }
+  .settings .wide { grid-column: span 2; }
+  .inline { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+  .inline label { display: inline-flex; align-items: center; gap: 6px; color: inherit; }
+  .inline button { margin: 0; }
   .progress { margin-top: 12px; padding: 10px 12px; border-radius: 8px;
               background: #eef3f7; display: none; }
   .progress.active { display: block; }
@@ -512,9 +571,9 @@ DEVICE_HTML = """<!doctype html>
     .card { background: #1c2228; border-color: #2b333b; }
     .bar { background: #2b333b; }
     th, td { border-color: #2b333b; }
-    button, form.scan select { background: #1c2228; color: inherit;
-                               border-color: #3a444e; }
-    form.scan label { color: #9aa4ae; }
+    button, form.scan select, .settings input { background: #1c2228; color: inherit;
+                                                border-color: #3a444e; }
+    form.scan label, .settings label { color: #9aa4ae; }
     .progress { background: #202a32; }
     .downloads a { background: #203b50; color: #cce7ff; }
   }
@@ -551,6 +610,29 @@ DEVICE_HTML = """<!doctype html>
   <div class="card" style="margin-top:12px">
     <div class="label">告警</div>
     <div id="alerts" class="value">-</div>
+  </div>
+  <div class="card" style="margin-top:12px">
+    <div class="label">扫描预设与保存目录</div>
+    <div class="settings">
+      <label>预设
+        <select id="preset-select">
+          <option value="">不使用预设</option>
+        </select>
+      </label>
+      <label>预设名称
+        <input id="preset-name" maxlength="80" placeholder="例如：A4 彩扫">
+      </label>
+      <label class="wide">保存目录
+        <input id="scan-directory" maxlength="4096" placeholder="/home/user/Pictures/Kyocera Scans">
+      </label>
+    </div>
+    <div class="inline">
+      <label><input id="save-folder" type="checkbox"> 扫描完成后自动保存到该目录</label>
+      <button id="preset-save" type="button">保存当前设置为预设</button>
+      <button id="preset-delete" type="button">删除所选预设</button>
+      <button id="settings-save" type="button">保存目录设置</button>
+      <span id="settings-status" class="muted"></span>
+    </div>
   </div>
   <div class="card" style="margin-top:12px">
     <div class="label">扫描</div>
@@ -591,7 +673,13 @@ DEVICE_HTML = """<!doctype html>
           <option value="1">1 页</option>
           <option value="2">最多 2 页</option>
           <option value="3">最多 3 页</option>
+          <option value="4">最多 4 页</option>
           <option value="5">最多 5 页</option>
+          <option value="6">最多 6 页</option>
+          <option value="7">最多 7 页</option>
+          <option value="8">最多 8 页</option>
+          <option value="9">最多 9 页</option>
+          <option value="10">最多 10 页</option>
         </select>
       </label>
       <label>输出格式
@@ -629,6 +717,7 @@ DEVICE_HTML = """<!doctype html>
 const byId = (id) => document.getElementById(id);
 const text = (id, value) => { byId(id).textContent = value == null || value === "" ? "-" : String(value); };
 const currentHost = new URLSearchParams(location.search).get("host");
+let userSettings = null;
 
 function trayRows(trays) {
   const body = byId("trays");
@@ -764,6 +853,7 @@ const scanStageLabels = {
   retrieve_image: "取图",
   decode_raw: "解码",
   export: "生成文件",
+  save: "保存文件",
   close_session: "关闭会话",
   complete: "完成",
   unexpected: "内部错误"
@@ -803,6 +893,11 @@ function renderScanResult(job) {
     ` · 设备请求 ${result.requested_device_format || "?"}` +
     ` / 设备返回 ${result.effective_device_format || "?"}` +
     ` / 本地 ${(job.output_format || "?").toUpperCase()}`;
+  const saved = job.saved_paths || [];
+  if (saved.length) {
+    const folder = byId("scan-directory").value || "所选目录";
+    message += ` · 已保存 ${saved.length} 个文件到 ${folder}`;
+  }
   if (result.close_error) message += `；关闭会话警告：${result.close_error}`;
   progress.textContent = message;
   progress.style.display = "block";
@@ -844,6 +939,8 @@ async function startScan(event) {
   showScanStatus("正在创建扫描任务", true);
   const payload = {
     host: currentHost,
+    preset_id: byId("preset-select").value || null,
+    save_to_folder: byId("save-folder").checked,
     color: byId("scan-color").value || null,
     resolution: byId("scan-resolution").value || null,
     original_image: byId("scan-original-image").value || null,
@@ -862,6 +959,120 @@ async function startScan(event) {
   } catch (err) {
     showScanError(String(err));
   }
+}
+
+function setSettingsStatus(message, error = false) {
+  const status = byId("settings-status");
+  status.textContent = message;
+  status.style.color = error ? "#a12222" : "";
+}
+
+function renderPresets(selectedId = "") {
+  const select = byId("preset-select");
+  select.replaceChildren();
+  const none = document.createElement("option");
+  none.value = "";
+  none.textContent = "不使用预设";
+  select.append(none);
+  for (const preset of (userSettings?.presets || [])) {
+    const option = document.createElement("option");
+    option.value = preset.id;
+    option.textContent = preset.name;
+    select.append(option);
+  }
+  select.value = selectedId;
+}
+
+function applyPreset() {
+  const selected = byId("preset-select").value;
+  const preset = (userSettings?.presets || []).find((item) => item.id === selected);
+  if (!preset) return;
+  byId("scan-color").value = preset.color || "";
+  byId("scan-resolution").value = preset.resolution || "";
+  byId("scan-original-image").value = preset.original_image || "";
+  byId("scan-pages").value = String(preset.max_pages || 1);
+  byId("scan-format").value = preset.output_format || "png";
+  byId("preset-name").value = preset.name || "";
+}
+
+async function loadSettings() {
+  try {
+    const response = await fetch("/api/settings", {cache: "no-store"});
+    const payload = await response.json();
+    if (!response.ok) throw new Error(payload.error || String(response.status));
+    userSettings = payload;
+    byId("scan-directory").value = payload.scan_directory || "";
+    renderPresets();
+    setSettingsStatus("");
+  } catch (err) {
+    setSettingsStatus("设置加载失败：" + String(err), true);
+  }
+}
+
+async function persistSettings(message) {
+  try {
+    const payload = {
+      version: 1,
+      scan_directory: byId("scan-directory").value.trim(),
+      presets: userSettings?.presets || []
+    };
+    const response = await fetch("/api/settings", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify(payload)
+    });
+    const saved = await response.json();
+    if (!response.ok) throw new Error(saved.error || String(response.status));
+    userSettings = saved;
+    byId("scan-directory").value = saved.scan_directory || "";
+    setSettingsStatus(message);
+  } catch (err) {
+    setSettingsStatus("保存失败：" + String(err), true);
+  }
+}
+
+async function saveFolderSettings() {
+  await persistSettings("保存目录已更新");
+}
+
+async function savePreset() {
+  const name = byId("preset-name").value.trim();
+  if (!name) {
+    setSettingsStatus("请先输入预设名称", true);
+    return;
+  }
+  if (!userSettings) await loadSettings();
+  if (!userSettings) return;
+  let presetId = byId("preset-select").value;
+  if (!presetId) {
+    presetId = "preset-" + Date.now().toString(36);
+  }
+  const preset = {
+    id: presetId,
+    name,
+    color: byId("scan-color").value || null,
+    resolution: byId("scan-resolution").value || null,
+    original_image: byId("scan-original-image").value || null,
+    max_pages: Number(byId("scan-pages").value),
+    output_format: byId("scan-format").value
+  };
+  const presets = (userSettings.presets || []).filter((item) => item.id !== presetId);
+  presets.push(preset);
+  userSettings = {...userSettings, presets};
+  await persistSettings("预设已保存");
+  renderPresets(presetId);
+}
+
+async function deletePreset() {
+  const presetId = byId("preset-select").value;
+  if (!presetId || !userSettings) return;
+  userSettings = {
+    ...userSettings,
+    presets: (userSettings.presets || []).filter((item) => item.id !== presetId)
+  };
+  await persistSettings("预设已删除");
+  renderPresets();
+  byId("preset-name").value = "";
 }
 
 async function discover() {
@@ -894,7 +1105,12 @@ async function discover() {
 byId("refresh").addEventListener("click", load);
 byId("discover").addEventListener("click", discover);
 byId("scan-form").addEventListener("submit", startScan);
+byId("preset-select").addEventListener("change", applyPreset);
+byId("settings-save").addEventListener("click", saveFolderSettings);
+byId("preset-save").addEventListener("click", savePreset);
+byId("preset-delete").addEventListener("click", deletePreset);
 text("current-host", currentHost ? "当前: " + currentHost : "当前: 默认设备");
+loadSettings();
 load();
 setInterval(load, 10000);
 </script>
@@ -907,8 +1123,10 @@ def make_handler(
     registry: DeviceRegistry,
     discover_fn: Callable[[], list] | None = None,
     scan_manager: ScanJobManager | None = None,
+    settings_store: SettingsStore | None = None,
 ) -> type[BaseHTTPRequestHandler]:
     manager = scan_manager or ScanJobManager()
+    settings = settings_store or SettingsStore()
 
     class Handler(BaseHTTPRequestHandler):
         server_version = "kyocera-monitor"
@@ -953,6 +1171,34 @@ def make_handler(
                 ]
                 body = json.dumps(
                     {"devices": devices}, ensure_ascii=False
+                ).encode("utf-8")
+                self._respond(200, "application/json; charset=utf-8", body)
+            elif path == "/api/counters.csv":
+                readings = registry.read_many()
+                devices = [
+                    reading_payload(reading, key)
+                    for key, reading in readings.items()
+                ]
+                body = counters_csv(devices)
+                self._respond(
+                    200,
+                    "text/csv; charset=utf-8",
+                    body,
+                    headers={
+                        "Content-Disposition": (
+                            "attachment; filename=\"kyocera-counters.csv\""
+                        ),
+                        "X-Content-Type-Options": "nosniff",
+                    },
+                )
+            elif path == "/api/settings":
+                try:
+                    payload = settings.load()
+                except SettingsError as exc:
+                    self._json_error(500, str(exc))
+                    return
+                body = json.dumps(
+                    payload, ensure_ascii=False
                 ).encode("utf-8")
                 self._respond(200, "application/json; charset=utf-8", body)
             elif match := _SCAN_JOB_PATH_RE.fullmatch(path):
@@ -1009,15 +1255,23 @@ def make_handler(
 
         def do_POST(self) -> None:  # noqa: N802
             parsed = urlsplit(self.path)
-            if parsed.path not in {"/api/devices", "/api/scans"}:
+            if parsed.path not in {
+                "/api/devices",
+                "/api/scans",
+                "/api/settings",
+            }:
                 self._respond(404, "text/plain; charset=utf-8", b"not found\n")
                 return
             try:
                 length = int(self.headers.get("Content-Length") or "0")
             except ValueError:
                 length = 0
-            if length <= 0 or length > 4096:
-                self._json_error(400, "request body must be 1-4096 bytes")
+            maximum = 64 * 1024 if parsed.path == "/api/settings" else 4096
+            if length <= 0 or length > maximum:
+                self._json_error(
+                    400,
+                    f"request body must be 1-{maximum} bytes",
+                )
                 return
             try:
                 payload = json.loads(self.rfile.read(length).decode("utf-8"))
@@ -1026,6 +1280,17 @@ def make_handler(
                 return
             if not isinstance(payload, dict):
                 self._json_error(400, "request body must be a JSON object")
+                return
+            if parsed.path == "/api/settings":
+                try:
+                    saved = settings.save(payload)
+                except SettingsError as exc:
+                    self._json_error(400, str(exc))
+                    return
+                body = json.dumps(
+                    saved, ensure_ascii=False
+                ).encode("utf-8")
+                self._respond(200, "application/json; charset=utf-8", body)
                 return
             if parsed.path == "/api/scans":
                 self._start_scan(payload)
@@ -1057,12 +1322,30 @@ def make_handler(
                 self._json_error(404 if requested is not None else 400, message)
                 return
             try:
-                options = ScanOptions.from_payload(payload)
-                job = manager.start(host, options)
+                current_settings = settings.load()
+                selected_preset = preset_payload(
+                    current_settings, payload.get("preset_id")
+                )
+                options = ScanOptions.from_payload(
+                    merge_scan_payload(payload, selected_preset)
+                )
+                save_to_folder = payload.get("save_to_folder", False)
+                if not isinstance(save_to_folder, bool):
+                    raise SettingsError("save_to_folder must be a boolean")
+                output_directory = (
+                    Path(current_settings["scan_directory"])
+                    if save_to_folder
+                    else None
+                )
+                job = manager.start(
+                    host,
+                    options,
+                    output_directory=output_directory,
+                )
             except ScanBusyError as exc:
                 self._json_error(409, str(exc))
                 return
-            except ValueError as exc:
+            except (SettingsError, ValueError) as exc:
                 self._json_error(400, str(exc))
                 return
             body = json.dumps(
@@ -1134,6 +1417,7 @@ def run_server(
     discover_fn: Callable[[], list] | None = None,
     on_listen: Callable[[str], None] | None = None,
     scan_manager: ScanJobManager | None = None,
+    settings_store: SettingsStore | None = None,
 ) -> None:
     server = create_server(
         registry,
@@ -1141,6 +1425,7 @@ def run_server(
         port=port,
         discover_fn=discover_fn,
         scan_manager=scan_manager,
+        settings_store=settings_store,
     )
     if on_listen is not None:
         actual_port = server.server_address[1]
@@ -1161,6 +1446,7 @@ def create_server(
     port: int = 8080,
     discover_fn: Callable[[], list] | None = None,
     scan_manager: ScanJobManager | None = None,
+    settings_store: SettingsStore | None = None,
 ) -> ThreadingHTTPServer:
     """Create (but do not start) the dashboard HTTP server.
 
@@ -1174,5 +1460,6 @@ def create_server(
             registry,
             discover_fn,
             scan_manager=scan_manager,
+            settings_store=settings_store,
         ),
     )

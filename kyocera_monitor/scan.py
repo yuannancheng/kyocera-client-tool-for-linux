@@ -944,6 +944,7 @@ class ScanJob:
     job_id: str
     device: str
     options: ScanOptions
+    output_directory: Path | None
     state: str
     stage: str
     message: str
@@ -951,6 +952,7 @@ class ScanJob:
     updated_at: float
     result: ScanResult | None = None
     error: ScanError | None = None
+    saved_paths: tuple[Path, ...] = ()
 
     def metadata(self) -> dict[str, object]:
         payload: dict[str, object] = {
@@ -964,6 +966,7 @@ class ScanJob:
             "updated_at": self.updated_at,
             "error": None,
             "result": None,
+            "saved_paths": [str(path) for path in self.saved_paths],
         }
         if self.error is not None:
             payload["error"] = self.error.to_dict()
@@ -993,7 +996,13 @@ class ScanJobManager:
         self._jobs: dict[str, ScanJob] = {}
         self._active_devices: set[str] = set()
 
-    def start(self, device: str, options: ScanOptions) -> ScanJob:
+    def start(
+        self,
+        device: str,
+        options: ScanOptions,
+        *,
+        output_directory: Path | None = None,
+    ) -> ScanJob:
         with self._lock:
             self._prune_locked()
             if device in self._active_devices:
@@ -1003,6 +1012,7 @@ class ScanJobManager:
                 job_id=secrets.token_hex(16),
                 device=device,
                 options=options,
+                output_directory=output_directory,
                 state="queued",
                 stage="queued",
                 message="扫描任务已排队",
@@ -1030,6 +1040,20 @@ class ScanJobManager:
 
         try:
             result = self._runner(job.device, job.options, progress=progress)
+            if job.output_directory is not None:
+                progress("save", "正在保存扫描文件")
+                try:
+                    destination = job.output_directory
+                    if len(result.outputs) == 1:
+                        destination = destination / result.outputs[0].filename
+                    saved_paths = write_outputs(result, destination)
+                except Exception as error:
+                    raise ScanError(
+                        "save",
+                        f"{type(error).__name__}: {error}",
+                    ) from error
+                with self._lock:
+                    job.saved_paths = saved_paths
         except ScanError as error:
             with self._lock:
                 job.state = "failed"

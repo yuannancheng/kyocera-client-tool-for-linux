@@ -9,6 +9,7 @@ from unittest import mock
 
 from kyocera_monitor import cli
 from kyocera_monitor.parser import PrinterSnapshot, Tray
+from kyocera_monitor.preferences import SettingsStore
 from kyocera_monitor.scan import ScanArtifact, ScanJobManager, ScanResult
 from kyocera_monitor.web import (
     DEVICE_HTML,
@@ -223,6 +224,19 @@ class PageTests(unittest.TestCase):
         ):
             self.assertIn(f'value="{value}"', DEVICE_HTML)
 
+    def test_device_page_has_presets_folder_and_settings(self):
+        for element_id in (
+            "preset-select",
+            "preset-name",
+            "preset-save",
+            "preset-delete",
+            "scan-directory",
+            "save-folder",
+            "settings-save",
+        ):
+            self.assertIn(f'id="{element_id}"', DEVICE_HTML)
+        self.assertIn("/api/settings", DEVICE_HTML)
+
     def test_pages_are_self_contained(self):
         for page in (OVERVIEW_HTML, DEVICE_HTML):
             self.assertNotIn("http://", page)
@@ -233,6 +247,11 @@ class PageTests(unittest.TestCase):
         self.assertIn('id="host"', OVERVIEW_HTML)
         self.assertIn('method: "POST"', OVERVIEW_HTML)
         self.assertIn("添加设备", OVERVIEW_HTML)
+
+    def test_overview_has_counter_export_and_notifications(self):
+        self.assertIn("/api/counters.csv", OVERVIEW_HTML)
+        self.assertIn('id="notify"', OVERVIEW_HTML)
+        self.assertIn("Notification", OVERVIEW_HTML)
 
 
 class CliTests(unittest.TestCase):
@@ -346,9 +365,16 @@ class ScanApiTests(unittest.TestCase):
         registry = DeviceRegistry(
             lambda key: snapshot(), "192.0.2.1", min_interval=0
         )
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.settings_path = Path(self.tmp.name) / "settings.json"
+        self.scan_directory = Path(self.tmp.name) / "scans"
+        self.settings = SettingsStore(self.settings_path)
         self.manager = ScanJobManager(runner)
         self.handler = make_handler(
-            registry, scan_manager=self.manager
+            registry,
+            scan_manager=self.manager,
+            settings_store=self.settings,
         )
 
     def request(self, method, path, payload=None):
@@ -417,6 +443,77 @@ class ScanApiTests(unittest.TestCase):
         )
         self.assertEqual(status, 400)
         self.assertIn("unsupported local output format", json.loads(body)["error"])
+
+    def test_settings_api_round_trip(self):
+        status, _, body = self.request("GET", "/api/settings")
+        self.assertEqual(status, 200)
+        initial = json.loads(body)
+        initial["scan_directory"] = str(self.scan_directory)
+        initial["presets"] = [
+            {
+                "id": "quick-pdf",
+                "name": "快速 PDF",
+                "color": "GRAYSCALE",
+                "resolution": None,
+                "original_image": None,
+                "max_pages": 1,
+                "output_format": "pdf",
+            }
+        ]
+        status, _, body = self.request("POST", "/api/settings", initial)
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(body)["presets"][0]["id"], "quick-pdf")
+        status, _, body = self.request("GET", "/api/settings")
+        self.assertEqual(json.loads(body), initial)
+
+    def test_scan_preset_and_save_folder_are_applied(self):
+        self.settings.save(
+            {
+                "version": 1,
+                "scan_directory": str(self.scan_directory),
+                "presets": [
+                    {
+                        "id": "gray-pdf",
+                        "name": "灰度 PDF",
+                        "color": "GRAYSCALE",
+                        "resolution": "RESOLUTION_300X300",
+                        "original_image": None,
+                        "max_pages": 2,
+                        "output_format": "pdf",
+                    }
+                ],
+            }
+        )
+        status, _, body = self.request(
+            "POST",
+            "/api/scans",
+            {
+                "host": "192.0.2.1",
+                "preset_id": "gray-pdf",
+                "save_to_folder": True,
+            },
+        )
+        self.assertEqual(status, 202)
+        job_id = json.loads(body)["job_id"]
+        self.manager.wait(job_id)
+        status, _, body = self.request("GET", f"/api/scans/{job_id}")
+        job = json.loads(body)
+        self.assertEqual(status, 200)
+        self.assertEqual(job["state"], "succeeded")
+        self.assertEqual(job["output_format"], "pdf")
+        self.assertEqual(len(job["saved_paths"]), 1)
+        saved = Path(job["saved_paths"][0])
+        self.assertTrue(saved.is_file())
+        self.assertEqual(saved.parent, self.scan_directory)
+        self.assertEqual(saved.read_bytes(), b"\x89PNG\r\n\x1a\nfake")
+
+    def test_counter_csv_is_stable_and_downloadable(self):
+        status, headers, body = self.request("GET", "/api/counters.csv")
+        self.assertEqual(status, 200)
+        self.assertEqual(headers["Content-Type"], "text/csv; charset=utf-8")
+        text = body.decode("utf-8-sig")
+        self.assertIn("device,model,serial", text)
+        self.assertIn("192.0.2.1,MA2000w,REDACTED", text)
 
 
 if __name__ == "__main__":
