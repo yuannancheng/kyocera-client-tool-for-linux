@@ -19,6 +19,7 @@ kyocera_monitor/
   web.py       只读 HTTP 状态页、JSON API 与快照缓存
   gui.py       GTK3/WebKit2 原生窗口，内嵌同一个本地 Web 仪表盘
   cli.py       CLI、JSON、监视模式、退出码
+  config_snapshot.py  配置基线、完整性校验、目标绑定和只读差异
 tools/
   pjl_probe.py          原始 PJL 探测
   snmp_probe.py         调用 kyocera_monitor.snmp 的 SNMP 命令行
@@ -65,6 +66,10 @@ MA2000w（`0482:0d51`），多个候选时要求显式 `--device`。
 
 - 不实现 Windows 打印后台、mailslot、注册表和 GUI；这些是平台适配层。
 - 只发送只读查询；`KSETOBJ`/`DINQUIRE` 等写入能力未实现，避免误改设备配置。
+- 配置基线以 `0600` 权限原子保存，使用规范化 JSON SHA-256 校验；比较前验证
+  传输和目标，避免把一个设备的备份误用于另一个设备。快照可能包含敏感站点
+  配置，因此不进入仓库。写入执行器仍未实现，详见
+  `docs/reverse-engineering/config-write-safety.md`。
 - 不把 KGETOBJ 的数值无标记地解释成未经验证的业务字段；推断字段必须带
   `confidence` 标记，原始键值始终保留。
 - Windows 原工具的网络路径使用 SNMP；Linux 实现优先使用已验证的 PJL 9100

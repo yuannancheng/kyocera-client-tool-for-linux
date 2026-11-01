@@ -9,6 +9,13 @@ import time
 import webbrowser
 
 from .config import collect_config, collect_config_snmp
+from .config_snapshot import (
+    ConfigSnapshotError,
+    build_config_snapshot,
+    compare_config_snapshots,
+    load_config_snapshot,
+    save_config_snapshot,
+)
 from .discovery import discover
 from .parser import PrinterSnapshot, parse_response
 from .pjl import (
@@ -233,6 +240,26 @@ def main(argv: list[str] | None = None) -> int:
         default="2c",
         help="SNMP version for --config --snmp (default: 2c)",
     )
+    parser.add_argument(
+        "--config-save",
+        metavar="PATH",
+        help="save the complete --config read as a private snapshot",
+    )
+    parser.add_argument(
+        "--config-compare",
+        metavar="PATH",
+        help="compare the current --config read with a saved snapshot",
+    )
+    parser.add_argument(
+        "--config-force",
+        action="store_true",
+        help="allow --config-save to replace an existing file",
+    )
+    parser.add_argument(
+        "--config-allow-target-mismatch",
+        action="store_true",
+        help="allow --config-compare to use a snapshot from another target",
+    )
     parser.add_argument("--snmp-community", default="public")
     parser.add_argument("--snmp-version", choices=("1", "2c"), default="1")
     parser.add_argument("--snmp-port", type=int, default=161)
@@ -330,6 +357,14 @@ def main(argv: list[str] | None = None) -> int:
         )
     if args.config and args.snmp and (args.device or args.usb):
         parser.error("--config --snmp requires --host")
+    if (args.config_save or args.config_compare) and not args.config:
+        parser.error("--config-save/--config-compare require --config")
+    if args.config_save and args.config_compare:
+        parser.error("--config-save and --config-compare are mutually exclusive")
+    if args.config_force and not args.config_save:
+        parser.error("--config-force requires --config-save")
+    if args.config_allow_target_mismatch and not args.config_compare:
+        parser.error("--config-allow-target-mismatch requires --config-compare")
     if (args.web or args.gui) and (
         args.watch is not None or args.count or args.raw or args.json
     ):
@@ -368,20 +403,81 @@ def main(argv: list[str] | None = None) -> int:
             print(f"error: {exc}", file=sys.stderr)
             return 2
         read_count = sum(1 for record in records if record.get("status") == 0)
+        target = args.host or args.device
+        saved_path = None
+        comparison = None
+        if args.config_save or args.config_compare:
+            try:
+                snapshot = build_config_snapshot(
+                    records,
+                    transport=transport,
+                    target=target,
+                )
+                if args.config_save:
+                    saved_path = save_config_snapshot(
+                        args.config_save,
+                        snapshot,
+                        overwrite=args.config_force,
+                    )
+                else:
+                    baseline = load_config_snapshot(args.config_compare)
+                    comparison = compare_config_snapshots(
+                        baseline,
+                        snapshot,
+                        allow_target_mismatch=args.config_allow_target_mismatch,
+                    )
+            except ConfigSnapshotError as exc:
+                print(f"error: {exc}", file=sys.stderr)
+                return 2
         if args.json:
+            payload = {
+                "source": "clienttool-1.4.11.2 config objects",
+                "transport": transport,
+                "read": read_count,
+                "total": len(records),
+                "objects": records,
+            }
+            if comparison is not None:
+                payload["baseline"] = {
+                    "created_at": baseline["created_at"],
+                    "target": baseline["target"],
+                    "transport": baseline["transport"],
+                }
+                payload["comparison"] = comparison
             print(
                 json.dumps(
-                    {
-                        "source": "clienttool-1.4.11.2 config objects",
-                        "transport": transport,
-                        "read": read_count,
-                        "total": len(records),
-                        "objects": records,
-                    },
+                    payload,
                     ensure_ascii=False,
                     indent=2,
                 )
             )
+        elif comparison is not None:
+            for change in (
+                comparison["changes"]
+                + comparison["volatile_changes"]
+                + comparison["read_status_changes"]
+            ):
+                before = change["before"]
+                after = change["after"]
+                if change["sensitive"]:
+                    before_value = after_value = "<redacted>"
+                else:
+                    before_value = before.get("display")
+                    if before_value is None:
+                        before_value = before.get("error", "")
+                    after_value = after.get("display")
+                    if after_value is None:
+                        after_value = after.get("error", "")
+                print(
+                    f"{change['item_id']:3d}\t{change['label']}\t"
+                    f"{before_value!r} -> {after_value!r}"
+                )
+            if not (
+                comparison["changed"]
+                or comparison["volatile_changed"]
+                or comparison["read_status_changed"]
+            ):
+                print("no configuration changes")
         else:
             for record in records:
                 label = (
@@ -397,6 +493,25 @@ def main(argv: list[str] | None = None) -> int:
                 status = record.get("status", "-")
                 print(f"{record['item_id']:3d}\t{status}\t{label}\t{value}")
         print(f"read {read_count}/{len(records)}", file=sys.stderr)
+        if saved_path is not None:
+            print(
+                f"saved configuration snapshot to {saved_path} (mode 0600); "
+                "the file may contain communities, SSIDs, or other site data",
+                file=sys.stderr,
+            )
+        if comparison is not None:
+            print(
+                f"configuration comparison: {comparison['changed']} value changes, "
+                f"{comparison['volatile_changed']} volatile observations, "
+                f"{comparison['read_status_changed']} read-status changes, "
+                f"{comparison['unchanged']} unchanged",
+                file=sys.stderr,
+            )
+            return (
+                1
+                if comparison["changed"] or comparison["read_status_changed"]
+                else 0
+            )
         return 0 if read_count else 1
 
     if args.web or args.gui:

@@ -25,3 +25,7 @@ build/
 *.p12
 secrets/
 extracted/
+
+# Device configuration baselines can contain communities, SSIDs and locations.
+kyocera-config-*.json
+*.config-snapshot.json

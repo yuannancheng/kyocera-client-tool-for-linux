@@ -187,6 +187,25 @@ IPv4 转成点分十进制。
 `no such object`。`--config-snmp-version` 可选择 `1` 或 `2c`，默认 `2c`
 以避免 SNMPv1 对单个不存在对象的整包失败。
 
+配置文件读取可以保存为完整性受保护的本地基线：
+
+```bash
+kyocera-monitor --host 192.168.0.220 --config --snmp \
+  --config-save kyocera-config-baseline.json
+
+kyocera-monitor --host 192.168.0.220 --config --snmp \
+  --config-compare kyocera-config-baseline.json
+```
+
+快照以 `0600` 权限原子写入，默认不覆盖已有文件；`--config-force` 可显式替换。
+比较会绑定传输通道和目标地址，只在确认同一目标后报告差异；目标明确变更时可
+使用 `--config-allow-target-mismatch`。快照含设备原始配置，可能包括 SNMP
+community、Wi-Fi SSID、系统联系人或位置，不能提交到公开仓库。比较发现差异时
+退出码为 `1`，一致时为 `0`。Wi-Fi 连接状态、RSSI 和信道作为只读易变观测
+单独列出，不把自然变化计为配置差异；配置值变化和读取状态变化仍返回 `1`。
+当前仍不发送 `KSETOBJ` 或 SNMP SET；写入前置条件见
+`docs/reverse-engineering/config-write-safety.md`。
+
 `tools/clienttool_ui_strings.py` 只提取控件 ID、字符串资源 ID、文本是否存在
 及其长度，不输出本地化标签或组合框选项，生成
 `docs/reverse-engineering/data/clienttool-ui-controls.tsv`。结合模型偏移后，

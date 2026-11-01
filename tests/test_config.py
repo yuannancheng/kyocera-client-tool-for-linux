@@ -1,7 +1,10 @@
 import csv
+import copy
 import io
 import json
 import os
+import stat
+import tempfile
 import threading
 import time
 import tty
@@ -18,6 +21,13 @@ from kyocera_monitor.config import (
     collect_config_snmp,
     decode_value,
     parse_config_response,
+)
+from kyocera_monitor.config_snapshot import (
+    ConfigSnapshotError,
+    build_config_snapshot,
+    compare_config_snapshots,
+    load_config_snapshot,
+    save_config_snapshot,
 )
 from kyocera_monitor.pjl import UEL
 from kyocera_monitor.snmp import VarBind
@@ -313,6 +323,178 @@ class ConfigCliTests(unittest.TestCase):
                 code = cli.main(["--host", "printer", "--config", "--snmp"])
         self.assertEqual(code, 0)
         self.assertIn("kmOffModeTimer", output.getvalue())
+
+
+class ConfigSnapshotTests(unittest.TestCase):
+    def setUp(self):
+        self.records = parse_config_response(
+            kgetobj("1.43.5.1.1.34.1", 0, 2, "1")
+            + kgetobj("1.40.10.1.1.4.1", 0, 64, "4330413830304443")
+        )
+        self.snapshot = build_config_snapshot(
+            self.records,
+            transport="pjl",
+            target="/dev/usb/lp0",
+        )
+
+    def test_snapshot_is_complete_and_integrity_checked(self):
+        self.assertEqual(self.snapshot["total"], 147)
+        self.assertEqual(self.snapshot["read"], 2)
+        self.assertEqual(len(self.snapshot["checksum"]["canonical_json"]), 64)
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "baseline.json"
+            saved = save_config_snapshot(path, self.snapshot)
+            self.assertEqual(saved, path)
+            self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o600)
+            loaded = load_config_snapshot(path)
+            self.assertEqual(loaded, self.snapshot)
+
+    def test_snapshot_rejects_overwrite_and_insecure_permissions(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "baseline.json"
+            save_config_snapshot(path, self.snapshot)
+            with self.assertRaises(ConfigSnapshotError):
+                save_config_snapshot(path, self.snapshot)
+            path.chmod(0o644)
+            with self.assertRaises(ConfigSnapshotError):
+                load_config_snapshot(path)
+            loaded = load_config_snapshot(path, require_private=False)
+            self.assertEqual(loaded, self.snapshot)
+
+    def test_snapshot_detects_tampering(self):
+        tampered = copy.deepcopy(self.snapshot)
+        tampered["objects"][1]["value"] = "0"
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "tampered.json"
+            path.write_text(json.dumps(tampered), encoding="utf-8")
+            path.chmod(0o600)
+            with self.assertRaisesRegex(ConfigSnapshotError, "checksum"):
+                load_config_snapshot(path)
+
+    def test_compare_reports_semantic_changes_and_binds_transport_target(self):
+        changed_records = copy.deepcopy(self.records)
+        changed_records[1]["value"] = 0
+        changed_records[1]["display"] = "OFF"
+        current = build_config_snapshot(
+            changed_records,
+            transport="pjl",
+            target="/dev/usb/lp0",
+        )
+        result = compare_config_snapshots(self.snapshot, current)
+        self.assertEqual(result["changed"], 1)
+        self.assertEqual(result["volatile_changed"], 0)
+        self.assertEqual(result["read_status_changed"], 0)
+        self.assertEqual(result["changes"][0]["item_id"], 2)
+        self.assertEqual(result["changes"][0]["before"]["display"], "ON")
+        self.assertEqual(result["changes"][0]["after"]["display"], "OFF")
+
+        other_transport = build_config_snapshot(
+            changed_records,
+            transport="snmp",
+            target="/dev/usb/lp0",
+        )
+        with self.assertRaisesRegex(ConfigSnapshotError, "transports"):
+            compare_config_snapshots(self.snapshot, other_transport)
+        other_target = build_config_snapshot(
+            changed_records,
+            transport="pjl",
+            target="/dev/usb/lp1",
+        )
+        with self.assertRaisesRegex(ConfigSnapshotError, "target"):
+            compare_config_snapshots(self.snapshot, other_target)
+        mismatched = compare_config_snapshots(
+            self.snapshot,
+            other_target,
+            allow_target_mismatch=True,
+        )
+        self.assertFalse(mismatched["target_matches"])
+
+    def test_compare_separates_value_changes_from_read_failures(self):
+        missing_records = copy.deepcopy(self.records)
+        missing_records[1]["status"] = 2
+        missing_records[1]["value"] = None
+        missing_records[1]["display"] = None
+        missing_records[1]["error"] = "STATUS=2"
+        current = build_config_snapshot(
+            missing_records,
+            transport="pjl",
+            target="/dev/usb/lp0",
+        )
+        result = compare_config_snapshots(self.snapshot, current)
+        self.assertEqual(result["changed"], 0)
+        self.assertEqual(result["volatile_changed"], 0)
+        self.assertEqual(result["read_status_changed"], 1)
+        self.assertEqual(result["read_status_changes"][0]["item_id"], 2)
+        self.assertEqual(result["unchanged"], 146)
+
+    def test_read_only_telemetry_does_not_count_as_a_config_change(self):
+        rssi_records = copy.deepcopy(self.records)
+        rssi_index = next(
+            index
+            for index, record in enumerate(rssi_records)
+            if record["item_id"] == 146
+        )
+        rssi_records[rssi_index]["status"] = 0
+        rssi_records[rssi_index]["value"] = -69
+        rssi_records[rssi_index]["display"] = "-69 dBm"
+        baseline = build_config_snapshot(
+            rssi_records,
+            transport="pjl",
+            target="/dev/usb/lp0",
+        )
+        rssi_records[rssi_index]["value"] = -71
+        rssi_records[rssi_index]["display"] = "-71 dBm"
+        current = build_config_snapshot(
+            rssi_records,
+            transport="pjl",
+            target="/dev/usb/lp0",
+        )
+        result = compare_config_snapshots(baseline, current)
+        self.assertEqual(result["changed"], 0)
+        self.assertEqual(result["volatile_changed"], 1)
+        self.assertEqual(result["read_status_changed"], 0)
+        self.assertEqual(result["volatile_changes"][0]["item_id"], 146)
+
+    def test_config_cli_saves_then_compares_snmp_snapshot(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "baseline.json"
+            output = io.StringIO()
+            with patch.object(cli, "collect_config_snmp", return_value=self.records):
+                with redirect_stdout(output):
+                    code = cli.main(
+                        [
+                            "--host",
+                            "printer",
+                            "--config",
+                            "--snmp",
+                            "--config-save",
+                            str(path),
+                        ]
+                    )
+            self.assertEqual(code, 0)
+            self.assertTrue(path.is_file())
+
+            changed = copy.deepcopy(self.records)
+            changed[1]["value"] = 0
+            changed[1]["display"] = "OFF"
+            output = io.StringIO()
+            with patch.object(cli, "collect_config_snmp", return_value=changed):
+                with redirect_stdout(output):
+                    code = cli.main(
+                        [
+                            "--host",
+                            "printer",
+                            "--config",
+                            "--snmp",
+                            "--config-compare",
+                            str(path),
+                            "--json",
+                        ]
+                    )
+            self.assertEqual(code, 1)
+            payload = json.loads(output.getvalue())
+            self.assertEqual(payload["comparison"]["changed"], 1)
+            self.assertEqual(payload["baseline"]["target"], "printer")
 
 
 if __name__ == "__main__":

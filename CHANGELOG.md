@@ -1,5 +1,28 @@
 # CHANGELOG
 
+## 2026-11-01
+
+### Added — integrity-checked configuration baselines
+
+- 新增 `--config-save PATH`：把一次完整的 147 项只读配置采集保存为规范化
+  JSON 快照，使用 SHA-256 校验和、UTC 时间、传输通道和目标绑定；文件以
+  `0600` 权限原子写入，默认拒绝覆盖。
+- 新增 `--config-compare PATH`：验证快照完整性和文件权限后，按 item id/OID
+  比较当前配置；拒绝跨传输或跨目标比较，差异以退出码 `1` 报告。
+- Wi-Fi 连接状态、RSSI 和信道被标记为只读易变观测，与配置值变化及读取状态
+  变化分开报告；MA2000w 只读实测捕获到 RSSI `-69 -> -71 dBm` 的自然波动。
+- 快照保留解码值与设备传输值，并标记 SNMP community、Wi-Fi SSID、
+  `sysContact`、`sysLocation` 等已知敏感字段；快照不得提交到仓库。
+- 复核已校验的 `KMUTLCFG.exe`：`FUN_00402ec0` 的 USB 写入模板实际为
+  `@PJL KSETOBJ OBJ="%s%s" VALUE =%s`（等号前有空格），与旧文档中的通用
+  示例不同；`KMUTLPRE.exe` 仍需单独核对，不能直接复用。
+- 新增 `docs/reverse-engineering/config-write-safety.md`，记录官方静态证据、
+  快照格式、未来单字段写入/回读/回滚条件以及未知项。
+- 未发送 `KSETOBJ`、SNMP SET、设备重置或其他写命令；配置写入执行器仍未实现。
+- 验证：配置专项 17/17；全量测试 185/185；公开树检查通过。MA2000w 只读
+  基线保存和后续比较均为 96/147；最终比较为 0 个配置变化、0 个易变观测、
+  0 个读取状态变化。
+
 ## 2026-10-31
 
 ### Added — scan option parity, multipage handling, and grayscale RAW

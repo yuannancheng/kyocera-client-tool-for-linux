@@ -1,6 +1,6 @@
 # PROJECT PROGRESS
 
-> 最后更新：2026-10-31。详细轮次记录已归档到
+> 最后更新：2026-11-01。详细轮次记录已归档到
 > [`docs/reverse-engineering/progress-history.md`](docs/reverse-engineering/progress-history.md)；
 > 本文件只保留当前状态、优先级、阻塞和可执行的下一步。
 
@@ -11,8 +11,8 @@
 MA2000w。
 
 当前结论：**MA2000w 网络扫描已在 Linux 端独立打通。** 只读监控、设备发现、
-本地 Web/GUI、配置只读导出和单页扫描均可用；彩色与灰度 RAW、官方扫描参数
-覆盖和多页状态机处理均已实现。2026-10-29 使用 32 位 Wine
+本地 Web/GUI、配置只读导出、配置安全基线和单页扫描均可用；彩色与灰度 RAW、
+官方扫描参数覆盖和多页状态机处理均已实现。2026-10-29 使用 32 位 Wine
 诊断宿主捕获官方 DLL 的真实 SOAP 1.2 请求，随后在不依赖官方 DLL 的 Python
 实现中完成预检、默认配置读取、开会话、启动扫描、XOP 取图、RAW 分带解码、
 BMP 输出和关会话。最大风险已从“协议方法猜测”转为“其他输出格式、其他机型
@@ -25,7 +25,8 @@ BMP 输出和关会话。最大风险已从“协议方法猜测”转为“其�
 当前产品边界：
 
 - 已验证：TCP 9100 PJL、SNMPv1/v2c、设备发现、多设备 Web 总览、原生 GUI、
-  147 项配置对象只读导出（MA2000w 实测 96/147 返回 `STATUS=0`）。
+  147 项配置对象只读导出（MA2000w 实测 96/147 返回 `STATUS=0`），以及
+  带完整性校验和设备绑定的配置基线/差异检查。
 - 静态已验证：网络 TWAIN 使用 `Ns1815TWGN -> KMNETSCN3 -> KMSCNAPI`；
   KM-WSDL 使用 HTTP 9090 或 HTTPS 9091，扫描 action 已还原。
 - 已真机验证：KM-WSDL SOAP 1.2 预检、默认配置、扫描会话、XOP 取图、
@@ -69,7 +70,8 @@ BMP 输出和关会话。最大风险已从“协议方法猜测”转为“其�
 | ADF/双面/多页客户端路径 | `DONE` | 官方 `CONTINUE_SCAN=10010` 证据；多页模拟覆盖两页、ADF/BOOKLET/ON 和关会话 |
 | ADF/双面其他机型真机 | `BLOCKED` | 当前只有 MA2000w，无输稿器；不能据模拟测试宣称硬件兼容 |
 | USB 物理验证 | `BLOCKED` | 物理连接未确认；仅完成离线 PTY 测试 |
-| 配置写入与回滚 | `TODO` | 尚无只读基线、备份、写入、回读和恢复流程 |
+| 配置只读基线与差异 | `DONE` | 147 项私密快照、SHA-256、通道/目标绑定、只读差异测试 |
+| 配置写入与回滚 | `TODO` | 尚无最小写入、回读验证和真实设备回滚样本 |
 
 ## 已验证能力
 
@@ -110,6 +112,10 @@ BMP 输出和关会话。最大风险已从“协议方法猜测”转为“其�
   模拟测试已覆盖两页和 `ADF/BOOKLET/ON` 请求。
 - **OID 语义**：827 个唯一文本 OID，其中 91 个为第三方库常量；736 个设备
   OID 中 735 个已有名称或语义，仅 `1.3.6.1.4.1.1347.42.27.6.0` 未知。
+- **配置安全基线**：`--config-save` 以 `0600` 原子保存完整 147 项快照，
+  规范化 JSON 带 SHA-256；`--config-compare` 校验权限、通道和目标后只比较
+  设备语义值。官方 `KMUTLCFG.exe` USB 模板已复核为 `VALUE =`，且没有发送
+  任何写命令。
 
 ## 当前优先级
 
@@ -118,8 +124,9 @@ BMP 输出和关会话。最大风险已从“协议方法猜测”转为“其�
    对照官方 KMIP 输出。没有相应硬件时不得标记为跨机型兼容已验证。
 2. **P1：USB 硬件验证。** 接入设备后跑 `--list-usb`、`--usb --json`，与 TCP
    结果逐项对照；同时验证断线重连和睡眠唤醒。
-3. **P2：配置写入前置设计。** 先建立只读基线、备份、最小写入、回读和回滚；
-   没有回滚方案前不发送 `KSETOBJ` 或 `snmpset`。
+3. **P2：配置最小写入前置实现。** 基线、私有备份、完整性校验和只读差异已
+   完成；下一步只设计单字段写入计划，仍不得发送 `KSETOBJ` 或 `snmpset`，
+   直到写入前确认、回读和真实设备回滚样本齐备。
 4. **P3：按需补字段语义。** OID 全量清点冻结；只有阻塞扫描或写入时才查新字段。
 
 ## 待验证假设
@@ -137,6 +144,9 @@ BMP 输出和关会话。最大风险已从“协议方法猜测”转为“其�
 - NetViewer `.NET` 的 `ScanOperation` 是否存在反射或动态加载调用；当前静态引用
   只指向 `Core.CoreServices.dll` 自身。
 - 其他型号是否同样接受空 `open_session` 和默认配置直传。
+- `KMUTLCFG.exe` 与 `KMUTLPRE.exe` 的 `KSETOBJ` 空格、引号和类型编码是否
+  由设备端等价接受。
+- 各配置字段的真实成功响应、失败响应、延迟和重启副作用。
 
 ## 当前阻塞
 
@@ -188,7 +198,42 @@ BMP 输出和关会话。最大风险已从“协议方法猜测”转为“其�
 - 干净归档和 Git bundle 位于 `/tmp/kyocera-client-tool-for-linux-20261018.tar.gz`
   和 `/tmp/kyocera-client-tool-for-linux-20261018.bundle`。
 
-## 最近一次工作交接（第三十三轮）
+## 最近一次工作交接（第三十四轮）
+
+日期：2026-11-01。范围：配置只读基线、差异检查和写入前置证据；没有执行
+SNMP SET、`KSETOBJ`、重启或配置写入。
+
+完成与证据：
+
+- 官方 `KMUTLCFG.exe` 哈希仍为
+  `63e202a050fe44611377deb4c5d01246da45fd51cda22f308ff990867730c9ea`。
+- 复核 `FUN_00402ec0`：USB 写入只收集变化对象，命令模板
+  `0x00499ce4` 为 `@PJL KSETOBJ OBJ="%s%s" VALUE =%s\r\n`；绝对和相对
+  OID 前缀分别为 `#` 与 `1.`。响应解析模板同样使用 `VALUE =%s`。
+- 新增 `config_snapshot.py`：147 项完整快照、固定 schema、UTC 时间、
+  传输/目标绑定、规范化 JSON SHA-256、重复键检测、组/其他用户可读拒绝、
+  `0600` 原子写入和默认不覆盖。
+- CLI 新增 `--config-save`、`--config-compare`、`--config-force` 和
+  `--config-allow-target-mismatch`；差异比较按 item id/OID 对齐，只比较
+  `status`、`value_kind`、`value`，有差异返回退出码 `1`。
+- 快照保留 raw wire value，并标记 community、SSID、sysContact、sysLocation
+  等敏感字段；文档明确快照不得进入公开仓库。
+- Wi-Fi 连接状态、RSSI、信道被分类为只读易变观测。只读实测捕获 RSSI
+  `-69 dBm -> -71 dBm` 的自然变化，因此不把此类波动计为配置差异；读取状态
+  变化仍单独报告并 fail closed。
+- 新增配置写入安全文档，明确未来单字段写入必须具备基线稳定、显式确认、
+  set 后同 OID 回读、失败停止和回滚；设备重置不自动发送。
+- 验证：配置专项 17/17；全量测试 185/185；公开树检查通过。MA2000w 只读
+  基线保存和后续比较均为 96/147；最终比较为 0 个配置变化、0 个易变观测、
+  0 个读取状态变化。未发送任何写命令。
+
+遗留问题：
+
+- 尚未实现任何写入执行器，也没有成功/失败 `KSETOBJ` 或 SNMP SET 真机样本。
+- 每个字段需要重启的条件、超时、断网风险和中断恢复仍未知。
+- `KMUTLPRE.exe` 写入格式与 `KMUTLCFG.exe` 的空格/类型差异尚未比较。
+
+## 上一轮工作交接（第三十三轮）
 
 日期：2026-10-31。范围：补齐扫描参数、多页状态机与灰度 RAW；没有执行
 SNMP SET、`KSETOBJ`、重启或配置写入。
@@ -227,14 +272,15 @@ Wine 捕获环境、`CONTINUE_SCAN` 返回码实验和端口绕法已写入
 
 优先执行：在具备 ADF/双面的其他机型上验证
 `ADF + DUPLEX/BOOKLET + 多页` 和响应 `file_type`；逐项对照官方 KMIP
-输出。没有此类硬件时，转做 USB 物理验证或配置写入基线/回滚设计，不继续
-猜协议。
+输出。没有此类硬件时，先用已完成的配置基线和差异检查选取一个非网络字段，
+设计最小写入确认/回读/回滚流程；没有真实回滚样本前仍不发送写命令。
 
 ## 相关文档
 
 - `docs/reverse-engineering/progress-history.md`：压缩前的完整进度与轮次记录
 - `docs/reverse-engineering/program-structure.md`
 - `docs/reverse-engineering/clienttool-protocol.md`
+- `docs/reverse-engineering/config-write-safety.md`
 - `docs/reverse-engineering/protocol-notes.md`
 - `docs/reverse-engineering/scan-workflow.md`
 - `docs/reverse-engineering/tooling.md`
