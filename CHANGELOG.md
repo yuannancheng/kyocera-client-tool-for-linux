@@ -2,6 +2,32 @@
 
 ## 2026-11-01
 
+### Added — integrated scan workflow and official-format local export
+
+- 新增 `kyocera_monitor.scan`，把预检、默认配置、开会话、启动扫描、轮询取图、
+  RAW 解码、导出和关会话从独立脚本移入包内；`tools/kmscn_scan.py` 改为兼容
+  适配器。
+- Web/GUI 设备详情页提供颜色、分辨率、原稿类型、页数和输出格式；扫描在后台
+  线程执行，页面轮询预检、取图、解码、导出和关会话阶段，并从同源 URL 下载。
+  同一设备已有活动扫描时返回忙状态。
+- 设备 RAW 与用户文件格式已解耦。新增 PNG、PDF、JPEG、多页 TIFF、高压缩
+  PDF、XPS 本地导出，保留 BMP 和 RAW；PNG/PDF/BMP/RAW 使用标准库，
+  JPEG/TIFF 与内嵌 JPEG 的 PDF/XPS 使用 Pillow。
+- 修正真机发现：MA2000w `retrieve_imageResponse/file_size` 曾返回 `958464`，
+  而实际图像远大于该值。重新分析同一哈希 `KMSCNAPI.dll` 后确认官方
+  `SoapScanModuleImpl::RetrieveImage` 使用 `image_data` 二进制对象内部长度，
+  XML `file_size` 只被反序列化和清零；Linux 客户端不再把它当传输总长。
+- MA2000w 真机完成集成彩色扫描：PNG 18,901,007 字节
+  （SHA-256 `ab5716a4be1f87918ffc4f7f40b3d25f952c9f14518aa9aaa5f2aeb52a6d1d50`），
+  PDF 18,878,382 字节并经 Poppler 解析/渲染，JPEG 2,319,913 字节并可正常查看。
+  三者均为 2496×3520，设备返回 RAW，`close_session=SUCCESS`。
+- 单进程 Web API 已完成一次真机灰度扫描任务和 JPEG 下载；下载响应的长度、
+  SHA-256、MIME 和文件名与任务结果一致。
+- 新增扫描导出、工作流、忙保护、`file_size` 非传输长度、Web 任务/下载和兼容
+  CLI 测试。
+- TIFF、高压缩 PDF、XPS 最小样本分别通过 ImageMagick 多页读取、
+  Poppler `pdfinfo` 和 ZIP 完整性检查；尚未在 Windows XPS 查看器验证。
+
 ### Added — official feature parity plan
 
 - 从已校验的 ClientTool 1.4.11.2 模块、保存的反编译调用链和真机证据整理

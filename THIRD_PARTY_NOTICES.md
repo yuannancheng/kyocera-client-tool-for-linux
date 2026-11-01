@@ -2,11 +2,19 @@
 
 This repository does not vendor third-party source code or binary packages.
 
-The core command-line implementation uses only the Python standard library.
-The optional native GUI uses the system-provided GTK 3 and WebKit2GTK
-libraries. Those libraries are not bundled with this repository; their
-licenses and notices are supplied by the operating-system packages that
-provide them.
+The status, discovery, monitoring, PNG, PDF, BMP, and RAW paths use only the
+Python standard library. JPEG, TIFF, high-compression PDF, and XPS local scan
+export use Pillow. The optional native GUI uses the system-provided GTK 3 and
+WebKit2GTK libraries. These dependencies are not bundled with this repository;
+their licenses and notices are supplied by the packages that provide them.
+
+## Pillow
+
+- Project: Pillow
+- Source: https://python-pillow.org/
+- License: HPND
+- Use: RGB JPEG/TIFF encoding and JPEG streams for high-compression PDF/XPS
+- Packaging: declared as an install dependency in `pyproject.toml`
 
 Some research tools may be run locally against a user-supplied vendor
 installation or use optional Python packages installed by the user. Those

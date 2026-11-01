@@ -1,16 +1,21 @@
 import io
+import json
 import os
+import tempfile
 import unittest
 from contextlib import redirect_stderr
+from pathlib import Path
 from unittest import mock
 
 from kyocera_monitor import cli
 from kyocera_monitor.parser import PrinterSnapshot, Tray
+from kyocera_monitor.scan import ScanArtifact, ScanJobManager, ScanResult
 from kyocera_monitor.web import (
     DEVICE_HTML,
     OVERVIEW_HTML,
     DeviceRegistry,
     SnapshotCache,
+    make_handler,
     normalize_host,
     reading_payload,
 )
@@ -195,6 +200,29 @@ class PageTests(unittest.TestCase):
             self.assertIn(f'id="{element_id}"', DEVICE_HTML)
         self.assertIn("kgetobj_known", DEVICE_HTML)
 
+    def test_device_page_has_integrated_scan_workflow(self):
+        for element_id in (
+            "scan-form",
+            "scan-color",
+            "scan-resolution",
+            "scan-original-image",
+            "scan-pages",
+            "scan-format",
+            "scan-progress",
+            "scan-downloads",
+        ):
+            self.assertIn(f'id="{element_id}"', DEVICE_HTML)
+        self.assertIn("/api/scans", DEVICE_HTML)
+        self.assertIn('value="png"', DEVICE_HTML)
+        self.assertIn('value="pdf"', DEVICE_HTML)
+        for value in (
+            "jpeg",
+            "tiff",
+            "high_compression_pdf",
+            "xps",
+        ):
+            self.assertIn(f'value="{value}"', DEVICE_HTML)
+
     def test_pages_are_self_contained(self):
         for page in (OVERVIEW_HTML, DEVICE_HTML):
             self.assertNotIn("http://", page)
@@ -246,6 +274,149 @@ class CliTests(unittest.TestCase):
         ):
             with self.assertRaises(GuiUnavailable):
                 _load_gtk()
+
+    def test_scan_cli_dispatches_integrated_service(self):
+        artifact = ScanArtifact(
+            filename="scan.png",
+            media_type="image/png",
+            kind="png",
+            width=2,
+            height=1,
+            data=b"png",
+        )
+        result = ScanResult(
+            device="192.0.2.1",
+            endpoint="http://192.0.2.1:9090/scan",
+            operation_id="17",
+            pages=1,
+            requested_device_format="RAW",
+            effective_device_format="RAW",
+            outputs=(artifact,),
+            close_result="SUCCESS",
+            close_error=None,
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            output = Path(tmp) / "scan.png"
+            with mock.patch.object(
+                cli, "scan_device", return_value=result
+            ) as run, redirect_stderr(io.StringIO()):
+                exit_code = cli.main(
+                    [
+                        "--host",
+                        "192.0.2.1",
+                        "--scan",
+                        "--scan-output",
+                        str(output),
+                        "--scan-color",
+                        "GRAYSCALE",
+                    ]
+                )
+            options = run.call_args.args[1]
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(options.color, "GRAYSCALE")
+            self.assertEqual(output.read_bytes(), b"png")
+
+
+class ScanApiTests(unittest.TestCase):
+    def setUp(self):
+        artifact = ScanArtifact(
+            filename="scan.png",
+            media_type="image/png",
+            kind="png",
+            width=2,
+            height=1,
+            data=b"\x89PNG\r\n\x1a\nfake",
+        )
+
+        def runner(device, options, progress):
+            progress("preflight", "checking")
+            progress("complete", "done")
+            return ScanResult(
+                device=device,
+                endpoint=f"http://{device}:9090/scan",
+                operation_id="17",
+                pages=1,
+                requested_device_format="RAW",
+                effective_device_format="RAW",
+                outputs=(artifact,),
+                close_result="SUCCESS",
+                close_error=None,
+            )
+
+        registry = DeviceRegistry(
+            lambda key: snapshot(), "192.0.2.1", min_interval=0
+        )
+        self.manager = ScanJobManager(runner)
+        self.handler = make_handler(
+            registry, scan_manager=self.manager
+        )
+
+    def request(self, method, path, payload=None):
+        body = json.dumps(payload).encode() if payload is not None else None
+        request = self.handler.__new__(self.handler)
+        request.path = path
+        request.headers = {
+            "Content-Length": str(len(body or b"")),
+            "Content-Type": "application/json",
+        }
+        request.rfile = io.BytesIO(body or b"")
+        request.wfile = io.BytesIO()
+        request._status = None
+        request._headers = {}
+
+        def send_response(status):
+            request._status = status
+
+        def send_header(name, value):
+            request._headers[name] = value
+
+        request.send_response = send_response
+        request.send_header = send_header
+        request.end_headers = lambda: None
+        request.log_message = lambda *_args: None
+        getattr(request, f"do_{method}")()
+        return request._status, request._headers, request.wfile.getvalue()
+
+    def test_scan_job_can_be_polled_and_downloaded(self):
+        status, _, body = self.request(
+            "POST",
+            "/api/scans",
+            {
+                "host": "192.0.2.1",
+                "color": "GRAYSCALE",
+                "output_format": "png",
+            },
+        )
+        self.assertEqual(status, 202)
+        job = json.loads(body)
+        job_id = job["job_id"]
+        self.manager.wait(job_id)
+        status, _, body = self.request("GET", f"/api/scans/{job_id}")
+        self.assertEqual(status, 200)
+        job = json.loads(body)
+        self.assertEqual(job["state"], "succeeded")
+        self.assertEqual(job["result"]["pages"], 1)
+        self.assertEqual(
+            job["result"]["outputs"][0]["download_url"],
+            f"/api/scans/{job_id}/files/0",
+        )
+
+        status, headers, data = self.request(
+            "GET", f"/api/scans/{job_id}/files/0"
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(headers["Content-Type"], "image/png")
+        self.assertIn("attachment;", headers["Content-Disposition"])
+        self.assertTrue(data.startswith(b"\x89PNG"))
+
+    def test_invalid_scan_options_return_json_400(self):
+        status, _, body = self.request(
+            "POST",
+            "/api/scans",
+            {"host": "192.0.2.1", "output_format": "webp"},
+        )
+        self.assertEqual(status, 400)
+        self.assertIn("unsupported local output format", json.loads(body)["error"])
 
 
 if __name__ == "__main__":

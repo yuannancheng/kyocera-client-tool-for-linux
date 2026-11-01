@@ -9,7 +9,7 @@ description = "Linux client tool for Kyocera printers"
 readme = "README.md"
 license = { file = "LICENSE" }
 requires-python = ">=3.10"
-dependencies = []
+dependencies = ["Pillow>=10.0"]
 authors = [{ name = "screw-up" }]
 
 [project.urls]

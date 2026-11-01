@@ -712,7 +712,7 @@ MA2000w 真机请求 `GRAYSCALE + RAW` 后得到：
 token 集合，不是单台设备已经协商成功的格式集合。请求值也不能替代响应中的
 `file_type`。
 
-客户端侧另有一个产品缺口：目前只实现 RAW 分带解码到 BMP；如果设备返回
+截至上述格式协商测试时，客户端侧只实现了 RAW 分带解码到 BMP；如果设备返回
 JPEG/TIFF/PDF，程序会保存原始响应体，但没有统一的可视化/导出策略。
 `--format` 只控制发给设备的 `image_file_format`，不应被用户理解为最终文件
 格式。
@@ -725,3 +725,77 @@ JPEG/TIFF/PDF，程序会保存原始响应体，但没有统一的可视化/导
 - 对设备原生 JPEG/TIFF/PDF 做 MIME/魔数校验后直接保存；
 - Web/GUI 以 PNG/PDF 为默认产物，“原始 RAW”降为高级选项；
 - 在 UI 中显示“请求格式、设备返回格式、最终保存格式”三者，避免再次混淆。
+
+#### 9.9.7 `retrieve_imageResponse/file_size` 静态证据（2026-11-01）
+
+真机响应曾出现 `file_size=958464`，同时 multipart 响应实际约 28.3 MB。
+为确认这不是客户端应校验的完整图像长度，重新分析了哈希匹配的
+`KMSCNAPI.dll`
+（SHA-256 `d3e276ebe284351e46549fc1c5145c4241fa41e70f4aca306a5abc94b20f2d7a`）。
+
+已验证的静态控制流：
+
+1. `kmscn:retrieve_imageResponse` 的 RTTI/vftable 位于 `0x101572d0`。
+2. `FUN_1003c520` 把 XML `kmscn:file_type` 写入响应结构 `+0x20`，把
+   `kmscn:file_size` 写入 `+0x24`，并把 `kmscn:image_data` 写入 `+0x28`。
+3. `KMSCNRetrieveImage` thunk `0x100032f0` 调用
+   `SoapScanModuleImpl` vftable 的 `+0x1c` 槽位；该槽位是
+   `FUN_1007a450`。
+4. `FUN_1007a450` 初始化响应结构后，从 `image_data` 二进制对象取得指针
+   `*(response+0x28+4)` 和长度 `*(response+0x28+8)`，再据此分配、复制和
+   返回图像；响应结构 `+0x24` 处的 `file_size` 只被清零，没有参与图片
+   指针或长度计算。
+5. `KMNETSCN3` 的 `FUN_10005ba0` 通过导入函数
+   `KMSCNRetrieveImage` 取得图像指针和实际长度；调用方
+   `FUN_100032d0` 用该实际长度检查页尾 `82 82` 并交给
+   `CScanData::PrepareImageData`，没有使用 XML `file_size`。
+
+结论：
+
+- **已验证**：官方 `retrieve_image` 数据路径不使用
+  `retrieve_imageResponse/file_size` 作为传输总长或缓冲区边界。
+- **未知**：该字段在 MA2000w 上为何等于 `958464`，以及它是否表示某一分带、
+  容量或其他设备侧量；现有证据不足以命名其业务含义。
+- **实现要求**：不得用该字段校验图像数据长度。传输边界由 HTTP 响应上限和
+  实际 `image_data` 长度控制；设备报告值仅保留为诊断元数据。
+
+复现命令使用同一哈希 DLL，并重新生成调用者关系：
+
+```bash
+mkdir -p /tmp/kyocera-kmscnapi-reanalysis-project
+env XDG_CONFIG_HOME=/tmp/kyocera-ghidra-config \
+  JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64 \
+  .tools/ghidra_12.1.4_PUBLIC/support/analyzeHeadless \
+  /tmp/kyocera-kmscnapi-reanalysis-project KMSCNAPI \
+  -import analysis/local-only/twain-2.1.4412/Scanner/TWAIN/KMSCNAPI.dll \
+  -scriptPath tools/ghidra_scripts \
+  -postScript DecompileProgram.java /tmp/kyocera-kmscnapi-reanalysis \
+  -deleteProject
+```
+
+#### 9.9.8 集成扫描与本地导出格式（2026-11-01）
+
+扫描编排已移入 `kyocera_monitor.scan`。Web/GUI 单进程选择设备后提交扫描任务，
+轮询预检、配置、会话、取图、解码、导出和关会话阶段，并从同源 URL 下载结果。
+设备线协议仍固定请求经过验证的 RAW 路径；RAW 解码后按以下映射生成本地文件：
+
+| 本地格式 | 实现 | 真机状态 |
+| --- | --- | --- |
+| PNG | 标准库无损 RGB、逐行 zlib | MA2000w 彩色 2496×3520 已通过 |
+| PDF | 标准库无损 Flate RGB、multipage PDF 1.4 | MA2000w 彩色 2496×3520 已由 Poppler 解析/渲染 |
+| JPEG | Pillow RGB baseline JPEG | MA2000w 彩色 2496×3520 已通过并人工查看 |
+| TIFF | Pillow deflate multipage TIFF | 编码/可读性测试通过；MA2000w 未单独真机留档 |
+| 高压缩 PDF | PDF 图像流使用 JPEG `DCTDecode` | 编码结构测试通过；MA2000w 未单独真机留档 |
+| XPS | Open Packaging Conventions ZIP、FixedPage、JPEG 资源 | 包结构测试通过；未由 Windows XPS 查看器验证 |
+| BMP | 已有 24 位 BMP 编码器 | MA2000w 历史真机样本已验证 |
+| RAW | 保存设备实际返回流 | MA2000w 历史真机样本已验证 |
+
+边界：
+
+- 上述六种 token 来自官方 `image_file_format` 枚举；MA2000w 当前仍返回 RAW，
+  因此 JPEG/TIFF/高压缩 PDF/XPS 是从 RAW 解码后的本地导出，不是设备原生
+  JPEG/TIFF/XPS 响应。
+- JPEG 默认质量 90；高压缩 PDF/XPS 内嵌 JPEG 默认质量 65。这些是本项目
+  导出策略，未验证为官方文件逐字节等价。
+- 设备原生返回非 RAW 时，当前安全行为是报告不支持直接解码，而不是把未知
+  MIME/魔数当作 RAW。后续可按实际设备响应补充原生格式直通校验。

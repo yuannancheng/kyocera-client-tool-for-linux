@@ -1,37 +1,45 @@
 #!/usr/bin/env python3
-"""Run KM-WSDL scans using the device's reported default configuration."""
+"""Compatibility CLI for the integrated :mod:`kyocera_monitor.scan` service."""
 
 from __future__ import annotations
 
 import argparse
-import base64
-import binascii
-import hashlib
 import json
 import sys
-import time
-from dataclasses import asdict
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from kyocera_monitor import kmscn, kmscn_raw
+from kyocera_monitor import kmscn
+from kyocera_monitor.scan import (
+    LOCAL_OUTPUT_FORMATS,
+    ScanError,
+    ScanOptions,
+    scan_device,
+    write_outputs,
+)
 
 
-def decode_image_data(value: str | None) -> bytes:
-    if value is None:
-        return b""
-    compact = "".join(value.split())
-    try:
-        return base64.b64decode(compact, validate=True)
-    except (binascii.Error, ValueError):
-        return value.encode("utf-8")
-
-
-def response_payload(response: kmscn.ScanResponse) -> dict[str, object]:
-    payload = asdict(response)
-    payload.pop("body", None)
-    return payload
+def _local_format(
+    decoded_output: Path | None,
+    no_decode: bool,
+    explicit: str | None,
+) -> str:
+    if explicit is not None:
+        return explicit
+    if no_decode:
+        return "raw"
+    if decoded_output is None:
+        return "bmp"
+    suffix = decoded_output.suffix.lower()
+    if suffix in {".png", ".pdf", ".jpg", ".jpeg", ".tif", ".tiff", ".xps", ".bmp"}:
+        return {
+            ".jpg": "jpeg",
+            ".jpeg": "jpeg",
+            ".tif": "tiff",
+            ".tiff": "tiff",
+        }.get(suffix, suffix[1:])
+    return "bmp"
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -45,323 +53,104 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--decoded-output",
         type=Path,
-        help="BMP output path (default: output path with .bmp suffix)",
+        help=(
+            "PNG, PDF, or BMP output (default: --output with .bmp suffix); "
+            "this wrapper emits the selected local format instead of both RAW and BMP"
+        ),
     )
+    parser.add_argument("--no-decode", action="store_true")
     parser.add_argument(
-        "--no-decode",
-        action="store_true",
-        help="keep only the vendor RAW stream",
+        "--local-format",
+        choices=LOCAL_OUTPUT_FORMATS,
+        help="user-facing output format; overrides the --decoded-output suffix",
     )
     parser.add_argument("--max-pages", type=int, default=1)
     parser.add_argument("--max-polls", type=int, default=60)
     parser.add_argument("--poll-interval", type=float, default=1.0)
     parser.add_argument(
-        "--max-response-bytes",
-        type=int,
-        default=64 * 1024 * 1024,
-        help="maximum bytes accepted for one retrieve_image response",
+        "--max-response-bytes", type=int, default=64 * 1024 * 1024
     )
     parser.add_argument(
         "--format",
         choices=kmscn.IMAGE_FILE_FORMATS,
-        help="override the device default image_file_format",
+        default="RAW",
+        help="device-requested image_file_format (RAW is required for local decoding)",
+    )
+    parser.add_argument("--resolution", choices=kmscn.SCAN_RESOLUTIONS)
+    parser.add_argument("--color", choices=kmscn.COLOR_SELECTIONS)
+    parser.add_argument("--duplex", choices=kmscn.DUPLEX_MODES)
+    parser.add_argument(
+        "--original-placement", choices=kmscn.ORIGINAL_PLACEMENTS
     )
     parser.add_argument(
-        "--resolution",
-        choices=kmscn.SCAN_RESOLUTIONS,
-        help="override scan_resolution using an official KM-WSDL enum",
+        "--continuous-scan", choices=kmscn.CONTINUOUS_SCAN_MODES
     )
-    parser.add_argument(
-        "--color",
-        choices=kmscn.COLOR_SELECTIONS,
-        help="override color_selection using an official KM-WSDL enum",
-    )
-    parser.add_argument(
-        "--duplex",
-        choices=kmscn.DUPLEX_MODES,
-        help="override duplex_mode using an official KM-WSDL enum",
-    )
-    parser.add_argument(
-        "--original-placement",
-        choices=kmscn.ORIGINAL_PLACEMENTS,
-        help="override original_placement using an official KM-WSDL enum",
-    )
-    parser.add_argument(
-        "--continuous-scan",
-        choices=kmscn.CONTINUOUS_SCAN_MODES,
-        help="override continuous_scan_mode using an official KM-WSDL enum",
-    )
-    parser.add_argument(
-        "--original-image",
-        choices=kmscn.ORIGINAL_IMAGES,
-        help="override original_image using an official KM-WSDL enum",
-    )
-    parser.add_argument(
-        "--operation-id",
-        help="reuse an already-open operation instead of opening a new session",
-    )
-    parser.add_argument(
-        "--retrieve-only",
-        action="store_true",
-        help="retrieve an already-started operation; requires --operation-id",
-    )
+    parser.add_argument("--original-image", choices=kmscn.ORIGINAL_IMAGES)
+    parser.add_argument("--operation-id")
+    parser.add_argument("--retrieve-only", action="store_true")
     parser.add_argument("--json", action="store_true")
-    parser.add_argument("--raw", action="store_true")
     args = parser.parse_args(argv)
-    if args.max_pages < 1:
-        parser.error("--max-pages must be positive")
-    if args.max_polls < 1:
-        parser.error("--max-polls must be positive")
-    if args.max_response_bytes < 1:
-        parser.error("--max-response-bytes must be positive")
-    if args.retrieve_only and args.operation_id is None:
-        parser.error("--retrieve-only requires --operation-id")
 
+    output_format = _local_format(
+        args.decoded_output,
+        args.no_decode,
+        args.local_format,
+    )
+    if output_format == "raw":
+        destination = args.output
+    else:
+        extension = {
+            "jpeg": ".jpg",
+            "tiff": ".tiff",
+            "high_compression_pdf": ".pdf",
+            "xps": ".xps",
+        }.get(output_format, f".{output_format}")
+        destination = args.decoded_output or args.output.with_suffix(
+            extension
+        )
     try:
-        _, endpoint = kmscn.build_endpoint(args.target, args.https, args.port)
-        preflight = kmscn.preflight(
-            endpoint,
+        options = ScanOptions(
+            color=args.color,
+            resolution=args.resolution,
+            original_image=args.original_image,
+            duplex_mode=args.duplex,
+            original_placement=args.original_placement,
+            continuous_scan_mode=args.continuous_scan,
+            output_format=output_format,
+            max_pages=args.max_pages,
+            max_polls=args.max_polls,
+            poll_interval=args.poll_interval,
             timeout=args.timeout,
             insecure=args.insecure,
-            include_raw=args.raw,
+            max_response_bytes=args.max_response_bytes,
+            https=args.https,
+            port=args.port,
+            device_file_format=args.format,
+            operation_id=args.operation_id,
+            retrieve_only=args.retrieve_only,
         )
-        if not preflight.ok:
-            payload = {"ok": False, "stage": "preflight", "preflight": asdict(preflight)}
-            print(json.dumps(payload, ensure_ascii=False, indent=2) if args.json else payload)
-            return 1
-
-        defaults = kmscn.probe_default_configuration(
-            endpoint,
-            timeout=args.timeout,
-            insecure=args.insecure,
-            include_raw=args.raw,
-        )
-        if not defaults.ok or defaults.configuration is None:
-            payload = {"ok": False, "stage": "default_configuration"}
-            print(json.dumps(payload, ensure_ascii=False, indent=2) if args.json else payload)
-            return 1
-        configuration = defaults.configuration
-        requested_overrides = {
-            name: value
-            for name, value in (
-                ("image_file_format", args.format),
-                ("scan_resolution", args.resolution),
-                ("color_selection", args.color),
-                ("duplex_mode", args.duplex),
-                ("original_placement", args.original_placement),
-                ("continuous_scan_mode", args.continuous_scan),
-                ("original_image", args.original_image),
-            )
-            if value is not None
-        }
-        for name, value in requested_overrides.items():
-            configuration = kmscn.set_configuration_value(
-                configuration,
-                name,
-                value,
-            )
-        effective_format = kmscn.configuration_value(
-            configuration,
-            "image_file_format",
-        )
-
-        if args.operation_id is not None:
-            operation_id = args.operation_id
+        result = scan_device(args.target, options)
+        paths = write_outputs(result, destination)
+    except ScanError as error:
+        payload = {"ok": False, **error.to_dict()}
+        if args.json:
+            print(json.dumps(payload, ensure_ascii=False, indent=2))
         else:
-            opened = kmscn.open_session(
-                endpoint,
-                timeout=args.timeout,
-                insecure=args.insecure,
-                include_raw=args.raw,
+            print(
+                f"KM-WSDL scan failed at {error.stage}: {error.message}",
+                file=sys.stderr,
             )
-            if not opened.ok or opened.operation_id is None:
-                payload = {
-                    "ok": False,
-                    "stage": "open_session",
-                    "response": response_payload(opened),
-                }
-                print(
-                    json.dumps(payload, ensure_ascii=False, indent=2)
-                    if args.json
-                    else payload
-                )
-                return 1
-            operation_id = opened.operation_id
-        output_files: list[dict[str, object]] = []
-        decoded_outputs: list[dict[str, object]] = []
-        started = None
-        completed = False
-        try:
-            if not args.retrieve_only:
-                started = kmscn.start_scan(
-                    endpoint,
-                    operation_id,
-                    configuration,
-                    timeout=args.timeout,
-                    insecure=args.insecure,
-                    include_raw=args.raw,
-                    max_response_bytes=args.max_response_bytes,
-                )
-                if not started.ok:
-                    payload = {
-                        "ok": False,
-                        "stage": "start_scan",
-                        "response": response_payload(started),
-                    }
-                    print(
-                        json.dumps(payload, ensure_ascii=False, indent=2)
-                        if args.json
-                        else payload
-                    )
-                    return 1
-
-            pages_saved = 0
-            for poll in range(1, args.max_polls + 1):
-                retrieved = kmscn.retrieve_image(
-                    endpoint,
-                    operation_id,
-                    timeout=args.timeout,
-                    insecure=args.insecure,
-                    include_raw=args.raw,
-                )
-                if not retrieved.ok:
-                    payload = {
-                        "ok": False,
-                        "stage": "retrieve_image",
-                        "page": pages_saved + 1,
-                        "poll": poll,
-                        "response": response_payload(retrieved),
-                    }
-                    print(
-                        json.dumps(payload, ensure_ascii=False, indent=2)
-                        if args.json
-                        else payload
-                    )
-                    return 1
-                if retrieved.result == "ALL_GET_COMPLETE":
-                    completed = True
-                    break
-                if retrieved.result in {"IMAGE_CREATING_NOW", "CONTINUE_SCAN"}:
-                    time.sleep(args.poll_interval)
-                    continue
-                data = decode_image_data(retrieved.image_data)
-                if not data and retrieved.body is not None:
-                    data = retrieved.body
-                if not data:
-                    payload = {
-                        "ok": False,
-                        "stage": "retrieve_image",
-                        "page": pages_saved + 1,
-                        "poll": poll,
-                        "error": "image did not become available",
-                    }
-                    print(
-                        json.dumps(payload, ensure_ascii=False, indent=2)
-                        if args.json
-                        else payload
-                    )
-                    return 1
-                if pages_saved >= args.max_pages:
-                    time.sleep(args.poll_interval)
-                    continue
-                pages_saved += 1
-                output = args.output
-                if args.max_pages > 1:
-                    output = output.with_name(
-                        f"{output.stem}-{pages_saved}{output.suffix}"
-                    )
-                output.write_bytes(data)
-                received_format = retrieved.file_type
-                output_files.append(
-                    {
-                        "path": str(output),
-                        "bytes": len(data),
-                        "sha256": hashlib.sha256(data).hexdigest(),
-                        "file_type": received_format,
-                    }
-                )
-                if (
-                    not args.no_decode
-                    and (received_format or effective_format or "").upper()
-                    == "RAW"
-                ):
-                    try:
-                        decoded = kmscn_raw.decode_raw(data)
-                        decoded_path = (
-                            args.decoded_output
-                            if args.decoded_output is not None
-                            else output.with_suffix(".bmp")
-                        )
-                        if args.max_pages > 1 and args.decoded_output is not None:
-                            decoded_path = decoded_path.with_name(
-                                f"{decoded_path.stem}-{pages_saved}"
-                                f"{decoded_path.suffix}"
-                            )
-                        bmp = kmscn_raw.encode_bmp(decoded)
-                        decoded_path.write_bytes(bmp)
-                        decoded_outputs.append(
-                            {
-                                "path": str(decoded_path),
-                                "width": decoded.width,
-                                "height": decoded.height,
-                                "bytes": len(bmp),
-                                "sha256": hashlib.sha256(bmp).hexdigest(),
-                            }
-                        )
-                    except ValueError as error:
-                        payload = {
-                            "ok": False,
-                            "stage": "decode_raw",
-                            "page": pages_saved,
-                            "error": str(error),
-                            "raw_output": str(output),
-                        }
-                        print(
-                            json.dumps(payload, ensure_ascii=False, indent=2)
-                            if args.json
-                            else payload
-                        )
-                        return 1
-                time.sleep(args.poll_interval)
-            else:
-                payload = {
-                    "ok": False,
-                    "stage": "retrieve_image",
-                    "error": "scan did not report ALL_GET_COMPLETE",
-                    "polls": args.max_polls,
-                    "outputs": output_files,
-                }
-                print(
-                    json.dumps(payload, ensure_ascii=False, indent=2)
-                    if args.json
-                    else payload
-                )
-                return 1
-        finally:
-            closed = kmscn.close_session(
-                endpoint,
-                operation_id,
-                timeout=args.timeout,
-                insecure=args.insecure,
-                include_raw=args.raw,
-            )
-
-        payload = {
-            "ok": completed,
-            "endpoint": endpoint,
-            "operation_id": operation_id,
-            "configuration_overrides": requested_overrides,
-            "effective_format": effective_format,
-            "outputs": output_files,
-            "decoded_outputs": decoded_outputs,
-            "completed": completed,
-            "close_result": closed.result,
-        }
-        print(json.dumps(payload, ensure_ascii=False, indent=2))
-        return 0 if completed else 1
+        return 1
     except (OSError, ValueError) as error:
         print(f"KM-WSDL scan failed: {error}", file=sys.stderr)
         return 2
+
+    payload = result.metadata()
+    payload["ok"] = True
+    for output, path in zip(payload["outputs"], paths):
+        output["path"] = str(path)
+    print(json.dumps(payload, ensure_ascii=False, indent=2))
+    return 0
 
 
 if __name__ == "__main__":

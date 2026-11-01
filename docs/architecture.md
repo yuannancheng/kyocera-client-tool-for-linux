@@ -16,8 +16,9 @@ kyocera_monitor/
   discovery.py SNMP 广播/单播与 WS-Discovery 的只读设备发现
   snmp.py      SNMP v1/v2c BER 编解码、GET/GETNEXT walk 与受限 Integer SET
   snmp_status.py  SNMP OID 到 PrinterSnapshot 的只读映射
-  web.py       只读 HTTP 状态页、JSON API 与快照缓存
+  web.py       HTTP 状态/扫描 API、页面与快照缓存
   gui.py       GTK3/WebKit2 原生窗口，内嵌同一个本地 Web 仪表盘
+  scan.py      KM-WSDL 扫描编排、后台任务、RAW 解码与本地格式导出
   cli.py       CLI、JSON、监视模式、退出码
   config_snapshot.py  配置基线、完整性校验、目标绑定和只读差异
   config_write_candidates.py 下一个写入候选的只读资格审查
@@ -55,10 +56,20 @@ tools/
    `/device?host=<地址>` 是详情页。缓存默认 1 秒，同一设备的读取仍串行化。
    `POST /api/devices` 接受手动输入的主机并加入允许列表；启动时允许没有默认
    设备，此时页面先显示空状态，再由用户发现或手动添加。
-9. `--gui` 在 `127.0.0.1` 的随机端口启动同一个 `create_server()`，由
+9. 设备详情页提交 `POST /api/scans` 后，`ScanJobManager` 在后台线程执行
+   `preflight -> default_configuration -> open_session -> start_scan ->
+   retrieve_image -> decode_raw -> export -> close_session`。同一设备已有
+   扫描时返回忙状态。`GET /api/scans/<id>` 返回阶段和结果元数据，
+   `GET /api/scans/<id>/files/<n>` 下载结果。任务只接受页面暴露的官方扫描
+   token，并固定请求经过真机验证的 RAW 设备格式。
+10. `kyocera_monitor.scan` 把设备请求格式和本地导出格式分开：RAW 经已还原的
+   分带解码器转为 RGB，再输出 PNG/PDF/JPEG/TIFF/高压缩 PDF/XPS/BMP；
+   RAW 保留为高级选项。PNG/PDF/BMP/RAW 使用标准库，JPEG/TIFF 及 JPEG
+   内嵌 PDF/XPS 通过 Pillow 编码。Web 与 CLI 共用同一服务层。
+11. `--gui` 在 `127.0.0.1` 的随机端口启动同一个 `create_server()`，由
    GTK3/WebKit2 窗口加载总览页；关闭窗口时停止本地服务。GTK/WebKit 是可选
    依赖，缺失时 CLI 返回退出码 2 并提示改用 `--web`。
-10. `--discover` 并行执行 SNMP 广播和 WS-Discovery；广播只取型号 OID，随后用
+12. `--discover` 并行执行 SNMP 广播和 WS-Discovery；广播只取型号 OID，随后用
    单播 GET 补全序列号/固件。ARP 表和可选的子网 CIDR 作为额外单播候选。
    Web 页面的 `/api/discover` 复用同一实现，并把发现的主机加入允许列表。
 
@@ -101,16 +112,18 @@ MA2000w（`0482:0d51`），多个候选时要求显式 `--device`。
   不同，不作为权威值。
 - WSD 只发现打印服务，未发现扫描服务。网络 TWAIN 驱动使用 KM-WSDL
   （HTTP 9090/HTTPS 9091）；Linux 端已独立实现 SOAP 1.2 预检、扫描会话、
-  XOP 多页取图、彩色/灰度 RAW 分带解调和 BMP 输出。ADF/双面参数只使用
-  官方枚举；MA2000w 无输稿器，跨机型硬件路径仍待验证。正式路径不加载
-  官方 DLL。
+  XOP 多页取图、彩色/灰度 RAW 分带解调以及 PNG/PDF/JPEG/TIFF/高压缩
+  PDF/XPS/BMP/RAW 本地导出。ADF/双面参数只使用官方枚举；MA2000w 无输稿器，
+  跨机型硬件路径仍待验证。正式路径不加载官方 DLL。
+- `retrieve_imageResponse/file_size` 在官方实现中只被反序列化和清零，未用于
+  图像指针或长度计算；Linux 客户端不得把它当作传输总长。
 - Windows Client Tool 的 USB 路径经打印后台 + Kyocera 语言监视器 mailslot
   转发 PJL，未直接打开 USB 设备；Linux 使用 `usblp` 发送同一 UEL 帧，属于
   原生等价实现。
 - USB 原始帧是否与 TCP 完全一致仍是待验证假设；物理 USB 接入后再做完整对照。
-- Web 界面只读，默认绑定 `127.0.0.1`，没有认证；不提供配置写入或扫描。
+- Web 界面默认绑定 `127.0.0.1`，没有认证；提供扫描，但不提供配置写入。
   `tools/kmscn_probe.py` 是独立的只读 KM-WSDL 协议探针；
-  `tools/kmscn_scan.py` 是独立扫描命令行。
+  `tools/kmscn_scan.py` 只是包内扫描服务的兼容命令行适配器。
   多设备总览和手动添加主机已实现，主机允许列表只保存在当前进程内存中。
 - 原生 GUI 是 Web 仪表盘的 GTK3/WebKit2 外壳，不复制状态解析逻辑；需要
   无界面运行或未安装 WebKit 时使用 `--web`。

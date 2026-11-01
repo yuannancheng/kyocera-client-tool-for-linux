@@ -55,11 +55,11 @@
 | F10 | 设备重启/恢复出厂 | reset/restore OID 和官方菜单入口 | `STATIC_ONLY` | P3 | 有独立危险操作确认、断线恢复和重新发现流程 |
 | F11 | 维护菜单 | `KMUTLMNT`、KPSL、39 条 request 定义 | `STATIC_ONLY` | P3 | 先实现只读诊断；破坏性请求逐项真机验证 |
 | F12 | 固件升级 | `ShowFirmwareUpgrade` 入口及语言资源；升级主体不全 | `STATIC_ONLY` | P3 | 官方升级文件和校验行为确认后才实现 |
-| F13 | 扫描图像采集 | TWAIN/KM-WSDL、会话、取图、RAW 解码 | `PARTIAL` | P0 | 主程序内完成彩色/灰度扫描并输出可用文件 |
-| F14 | 设备格式与本地导出 | 官方格式枚举、`file_type`、RAW 分带 | `PARTIAL` | P0 | 分离设备请求格式和本地 PNG/PDF/JPEG 输出 |
+| F13 | 扫描图像采集 | TWAIN/KM-WSDL、会话、取图、RAW 解码 | `REPLICATED` | 已完成 | Web 主程序和 CLI 完成彩色/灰度扫描并输出可用文件 |
+| F14 | 设备格式与本地导出 | 官方格式枚举、`file_type`、RAW 分带 | `REPLICATED` | 已完成 | 设备请求与本地 PNG/PDF/JPEG/TIFF/高压缩 PDF/XPS/BMP/RAW 分离 |
 | F15 | 扫描参数界面 | 颜色、分辨率、尺寸、原稿类型、单双面、ADF、连续扫描 | `PARTIAL` | P0 | Web/GUI 参数完整，默认值来自设备，能力不足时禁用 |
 | F16 | Scan to Folder | `KMSCNFOL`、地址簿/文件名/保存路径字段 | `NOT_STARTED` | P1 | 扫描后按预设命名保存到用户选择目录 |
-| F17 | Scan to PDF | `KMSCNPDF`、HCPDF、PDF 输出字段 | `NOT_STARTED` | P0 | RAW 解码后可靠生成 PDF，并保留原始文件选项 |
+| F17 | Scan to PDF | `KMSCNPDF`、HCPDF、PDF 输出字段 | `REPLICATED` | 已完成 | RAW 解码后生成 PDF/高压缩 PDF，并保留原始 RAW 选项 |
 | F18 | Scan to Email | `KMSCNEML`、本机邮件集成 | `NOT_STARTED` | P2 | 生成附件并调用用户选择的邮件客户端；无凭据内置 |
 | F19 | Quick Scan 预设 | `KMUTLPRE`、`1001.1.*`、`QUICKSCN.ini` | `STATIC_ONLY` | P1 | 可读取、编辑、保存扫描预设并用于新扫描 |
 | F20 | Push Scan | `OnRecvPushScan`、`KMSCNPUS`、结果 OID | `STATIC_ONLY` | P2 | Linux 监听设备请求，执行指定预设并回写结果 |
@@ -76,7 +76,10 @@
 
 ## 4. 重点任务与交付顺序
 
-### 阶段 E1：扫描产品闭环（P0，当前唯一主攻）
+### 阶段 E1：扫描产品闭环（P0，已完成）
+
+状态：`DONE`（2026-11-01）。MA2000w 真机完成彩色 PNG、PDF、JPEG；
+Web 单进程任务、阶段反馈和下载已通过实际 API 扫描验证。
 
 交付：
 

@@ -7,6 +7,7 @@ import json
 import sys
 import time
 import webbrowser
+from pathlib import Path
 
 from .config import collect_config, collect_config_snmp
 from .config_snapshot import (
@@ -44,6 +45,13 @@ from .pjl import (
 )
 from .snmp_status import collect_snmp_snapshot
 from .snmp import BerError, SnmpClient
+from .scan import (
+    LOCAL_OUTPUT_FORMATS,
+    ScanError,
+    ScanOptions,
+    scan_device,
+    write_outputs,
+)
 from .usb import UsbError, discover_usb_printers, select_usb_printer
 from .web import DeviceRegistry, run_server
 
@@ -214,6 +222,101 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--idle", type=float, default=1.5)
     parser.add_argument("--json", action="store_true", help="emit JSON")
     parser.add_argument("--raw", action="store_true", help="emit raw PJL response")
+    parser.add_argument(
+        "--scan",
+        action="store_true",
+        help="run an integrated KM-WSDL network scan",
+    )
+    parser.add_argument(
+        "--scan-output",
+        type=Path,
+        help="scan output file or destination directory",
+    )
+    parser.add_argument(
+        "--scan-format",
+        choices=LOCAL_OUTPUT_FORMATS,
+        default="png",
+        help="local scan format (default: png)",
+    )
+    parser.add_argument(
+        "--scan-color",
+        choices=(
+            "FULL_COLOR",
+            "GRAYSCALE",
+            "BLACK_AND_WHITE",
+            "AUTO_BLACK_AND_WHITE",
+            "AUTO_GRAYSCALE",
+        ),
+        help="official KM-WSDL color selection override",
+    )
+    parser.add_argument(
+        "--scan-resolution",
+        choices=(
+            "RESOLUTION_150X150",
+            "RESOLUTION_200X100",
+            "RESOLUTION_200X200",
+            "RESOLUTION_200X400",
+            "RESOLUTION_300X300",
+            "RESOLUTION_400X400",
+            "RESOLUTION_600X600",
+        ),
+        help="official KM-WSDL resolution override",
+    )
+    parser.add_argument(
+        "--scan-original-image",
+        choices=(
+            "TEXT",
+            "TEXT_AND_PHOTO",
+            "PHOTO",
+            "FOR_OCR",
+            "MAP",
+            "LIGHT_TEXT",
+        ),
+        help="official KM-WSDL original image override",
+    )
+    parser.add_argument(
+        "--scan-max-pages",
+        type=int,
+        default=1,
+        help="maximum pages to retain and export (default: 1)",
+    )
+    parser.add_argument("--scan-max-polls", type=int, default=60)
+    parser.add_argument("--scan-poll-interval", type=float, default=1.0)
+    parser.add_argument("--scan-timeout", type=float, default=30.0)
+    parser.add_argument(
+        "--scan-max-response-bytes",
+        type=int,
+        default=64 * 1024 * 1024,
+    )
+    parser.add_argument(
+        "--scan-device-format",
+        choices=(
+            "PDF",
+            "TIFF",
+            "JPEG",
+            "HIGH_COMPRESSION_PDF",
+            "XPS",
+            "RAW",
+        ),
+        default="RAW",
+    )
+    parser.add_argument(
+        "--scan-duplex",
+        choices=("SIMPLEX", "DUPLEX", "BOOKLET"),
+    )
+    parser.add_argument(
+        "--scan-original-placement",
+        choices=("AUTO", "PLATEN", "ADF"),
+    )
+    parser.add_argument(
+        "--scan-continuous",
+        choices=("OFF", "ON"),
+    )
+    parser.add_argument("--scan-operation-id")
+    parser.add_argument("--scan-retrieve-only", action="store_true")
+    parser.add_argument("--scan-https", action="store_true")
+    parser.add_argument("--scan-port", type=int)
+    parser.add_argument("--scan-insecure", action="store_true")
     parser.add_argument("--watch", type=float, metavar="SECONDS", help="poll repeatedly")
     parser.add_argument("--count", type=int, default=0, help="stop after N polls")
     parser.add_argument("--expect-model", help="fail when the printer model differs")
@@ -475,12 +578,86 @@ def main(argv: list[str] | None = None) -> int:
             "--web/--gui cannot be combined with --watch, --count, --raw "
             "or --json"
         )
+    if args.scan:
+        if not args.host:
+            parser.error("--scan requires --host")
+        if args.device or args.usb or args.snmp:
+            parser.error("--scan cannot be combined with USB or --snmp")
+        if args.config or args.web or args.gui:
+            parser.error("--scan cannot be combined with config or Web/GUI modes")
+        if args.watch is not None or args.count or args.raw:
+            parser.error("--scan cannot be combined with watch/count/raw")
+    elif args.scan_output is not None:
+        parser.error("--scan-output requires --scan")
     if args.usb:
         try:
             args.device = select_usb_printer(discover_usb_printers()).device
         except UsbError as exc:
             print(f"error: {exc}", file=sys.stderr)
             return 2
+
+    if args.scan:
+        options = ScanOptions(
+            color=args.scan_color,
+            resolution=args.scan_resolution,
+            original_image=args.scan_original_image,
+            duplex_mode=args.scan_duplex,
+            original_placement=args.scan_original_placement,
+            continuous_scan_mode=args.scan_continuous,
+            output_format=args.scan_format,
+            max_pages=args.scan_max_pages,
+            max_polls=args.scan_max_polls,
+            poll_interval=args.scan_poll_interval,
+            timeout=args.scan_timeout,
+            max_response_bytes=args.scan_max_response_bytes,
+            device_file_format=args.scan_device_format,
+            operation_id=args.scan_operation_id,
+            retrieve_only=args.scan_retrieve_only,
+            https=args.scan_https,
+            port=args.scan_port,
+            insecure=args.scan_insecure,
+        )
+        try:
+            result = scan_device(args.host, options)
+            destination = args.scan_output or Path.cwd()
+            paths = write_outputs(result, destination)
+        except ScanError as exc:
+            if args.json:
+                print(
+                    json.dumps(
+                        {"ok": False, **exc.to_dict()},
+                        ensure_ascii=False,
+                        indent=2,
+                    )
+                )
+            else:
+                print(
+                    f"scan failed at {exc.stage}: {exc.message}",
+                    file=sys.stderr,
+                )
+            return 1
+        except (OSError, ValueError) as exc:
+            print(f"scan failed: {exc}", file=sys.stderr)
+            return 2
+        payload = result.metadata()
+        payload["ok"] = True
+        for output, path in zip(payload["outputs"], paths):
+            output["path"] = str(path)
+        if args.json:
+            print(json.dumps(payload, ensure_ascii=False, indent=2))
+        else:
+            print(
+                f"scanned {result.pages} page(s) from {result.device} "
+                f"using device format {result.effective_device_format or 'unknown'}"
+            )
+            for artifact, path in zip(result.outputs, paths):
+                print(f"{artifact.kind}\t{artifact.size}\t{path}")
+            if result.close_error:
+                print(
+                    f"close_session warning: {result.close_error}",
+                    file=sys.stderr,
+                )
+        return 0
 
     if args.config:
         try:

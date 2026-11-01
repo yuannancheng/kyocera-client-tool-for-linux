@@ -1,8 +1,8 @@
 # KYOCERA Client Tool for Linux
 
-独立的、非官方 Linux 打印机状态监视器，面向 Kyocera 设备（当前验证机型
-MA2000w）。项目通过公开的 PJL/SNMP 行为和互操作性测试实现只读状态读取：
-支持 TCP 9100、USB `usblp` 和只读 SNMP 路径。
+独立的、非官方 Linux 打印机客户端，面向 Kyocera 设备（当前验证机型
+MA2000w）。项目通过公开的 PJL/SNMP 行为和互操作性测试实现状态读取与网络
+扫描：支持 TCP 9100、USB `usblp`、只读 SNMP 和 KM-WSDL 扫描路径。
 
 本项目与 Kyocera Corporation 及其关联公司没有隶属、授权、赞助或背书关系，
 不是京瓷官方产品。Kyocera、KYOCERA、ECOSYS、MA2000w 等名称是其各自权利人的
@@ -44,6 +44,10 @@ python3 -m kyocera_monitor --usb --json
 python3 -m kyocera_monitor --host 192.168.0.220 --watch 30
 python3 -m kyocera_monitor --host 192.168.0.220 --snmp
 python3 -m kyocera_monitor --host 192.168.0.220 --snmp --json
+python3 -m kyocera_monitor --host 192.168.0.220 --scan \
+  --scan-color FULL_COLOR --scan-format png --scan-output /tmp/scan.png
+python3 -m kyocera_monitor --host 192.168.0.220 --scan \
+  --scan-color GRAYSCALE --scan-format jpeg --scan-output /tmp/scan.jpg
 python3 -m kyocera_monitor --host 192.168.0.220 --config
 python3 -m kyocera_monitor --host 192.168.0.220 --config --json
 python3 -m kyocera_monitor --host 192.168.0.220 --config --snmp
@@ -58,11 +62,10 @@ python3 tools/kmscn_probe.py 192.168.0.220 --capability --json
 python3 tools/kmscn_probe.py 192.168.0.220 --preflight --json --raw
 python3 tools/kmscn_probe.py 192.168.0.220 --https --insecure --json
 python3 tools/kmscn_scan.py 192.168.0.220 \
-  --format RAW --output /tmp/kyocera-scan.raw \
-  --decoded-output /tmp/kyocera-scan.bmp
+  --local-format png --decoded-output /tmp/kyocera-scan.png
 python3 tools/kmscn_scan.py 192.168.0.220 \
-  --color GRAYSCALE --output /tmp/kyocera-gray.raw \
-  --decoded-output /tmp/kyocera-gray.bmp
+  --color GRAYSCALE --local-format jpeg \
+  --decoded-output /tmp/kyocera-gray.jpg
 ```
 
 退出码：`0` 状态正常，`1` 未发现打印机或配置导出没有读到任何对象，`2` 连接或
@@ -80,40 +83,48 @@ python3 tools/kmscn_scan.py 192.168.0.220 \
 该探针的退出码为 `0` 请求成功、`1` 被测服务拒绝请求、返回 Fault 或没有返回
 任何可识别能力项、`2` 连接或协议错误。
 
-`tools/kmscn_scan.py` 是独立 Linux 扫描实现，不加载官方 DLL。它先执行与
-原厂驱动一致的预检，读取设备默认扫描配置，再执行
+扫描编排位于 `kyocera_monitor.scan`，不加载官方 DLL。主程序和 Web/GUI 先执行
+与原厂驱动一致的预检，读取设备默认扫描配置，再执行
 `open_session -> start_scan -> retrieve_image -> ALL_GET_COMPLETE ->
 close_session`。MA2000w 返回私有 RAW 分带流；`kyocera_monitor/kmscn_raw.py`
-按原厂解析状态机还原校准、三颜色平面分带和阴影校正，并输出 24 位 BMP。
-灰度 RAW 使用单一颜色值 `1` 平面，也已按同一官方校准公式解码。
-`--no-decode` 可只保留原始流。
+按原厂解析状态机还原校准、三颜色平面分带和阴影校正。灰度 RAW 使用单一颜色值
+`1` 平面，也已按同一官方校准公式解码。
+
+设备请求格式和本地导出格式分开。MA2000w 固定请求已验证的 RAW，用户可以下载
+PNG、PDF、JPEG、TIFF、高压缩 PDF、XPS、BMP 或原始 RAW；`tools/kmscn_scan.py`
+只保留为兼容适配器。PNG/PDF/BMP/RAW 使用标准库；JPEG、TIFF 以及内嵌 JPEG
+的 PDF/XPS 使用 Pillow。官方实现中的 `retrieve_imageResponse/file_size`
+只被反序列化和清零，没有作为传输总长使用；客户端因此以 HTTP 响应上限和实际
+`image_data` 长度保护读取，不校验该设备报告值。
 
 扫描参数只接受官方 DLL 枚举表中的 token，包括颜色、分辨率、单双面、
 `AUTO/PLATEN/ADF` 原稿位置、连续扫描 `OFF/ON`、原稿类型和输出格式。
 多页取图处理 `CONTINUE_SCAN`、`IMAGE_CREATING_NOW`、每页 `SUCCESS` 和最终
 `ALL_GET_COMPLETE`，可用 `--max-pages` 限制保存页数。解码依据设备响应中的
-`file_type`，不依据请求参数；MA2000w 请求 JPEG 时仍实测返回 RAW。
+`file_type`，不依据请求参数；MA2000w 请求 JPEG 时仍实测返回 RAW，因此 JPEG
+文件由 Linux 本地从 RAW 图像导出，不宣称与设备原生 JPEG 逐字节一致。
 单次取图默认最多接受 64 MiB；需要更高分辨率/更大响应时，可用
 `--max-response-bytes` 显式提高内存上限。
 
 MA2000w 当前验证了 2496×3520 RGB 和灰度平板单页扫描。该机型没有输稿器，
 因此 ADF、双面和多页字段已按官方协议实现并完成模拟状态机测试，但尚未在
 具备相应硬件的其他机型上验证，不能表述为跨机型兼容已验证。
-正式扫描只需要 Python 标准库；Wine、MinGW 和官方 DLL 仅用于受控逆向对照，
-环境与复现步骤见
+PNG/PDF/BMP/RAW 路径只需要 Python 标准库；JPEG/TIFF/高压缩 PDF/XPS 路径
+使用 Pillow。Wine、MinGW 和官方 DLL 仅用于受控逆向对照，环境与复现步骤见
 [`docs/reverse-engineering/tooling.md`](docs/reverse-engineering/tooling.md)。
 
 ## 图形界面
 
 `./kyocera-gui` 或 `python3 -m kyocera_monitor --gui` 打开原生 GTK3 窗口。
-窗口内部是同一个只读 Web 仪表盘，服务只监听 `127.0.0.1` 的随机端口，关闭窗口即
-退出。启动时不需要先指定打印机：可以在页面顶部手动输入 IP，或点击
+窗口内部是同一个本地 Web 仪表盘，服务只监听 `127.0.0.1` 的随机端口，关闭窗口即
+退出。详情页可选择扫描参数、查看阶段进度并下载结果。启动时不需要先指定
+打印机：可以在页面顶部手动输入 IP，或点击
 “发现打印机”使用 SNMP 广播/WS-Discovery 搜索。启动时也可以加
 `--host 192.168.0.220` 直接进入该设备。
 
 原生窗口依赖 GTK3 与 WebKit2 4.1（Debian/Ubuntu 包名通常为
 `gir1.2-gtk-3.0`、`gir1.2-webkit2-4.1`）。缺少依赖时 `--gui` 会返回退出码 2
-并提示改用 `--web`；`--web` 本身只需要 Python 标准库。
+并提示改用 `--web`。
 
 ```bash
 # 无桌面环境或不想装 GTK 时，在浏览器中打开
@@ -300,16 +311,21 @@ options、Communication、SNMP trap、Wi‑Fi 状态、音量与 FAX notificatio
 `oid`/`symbol`/`source` 全量索引。`--config` 的 JSON 和文本输出会带出
 `vendor_name`，人工标签优先。
 
-`--web` 启动只读状态页，默认监听 `127.0.0.1:8080`，可以不带 `--host` 启动。
+`--web` 启动本地状态与扫描页，默认监听 `127.0.0.1:8080`，可以不带 `--host`
+启动。
 `/` 是设备总览页，
 `/device?host=<地址>` 是单设备详情页；`/api/devices` 返回所有已知设备的快照，
 `POST /api/devices`（JSON `{"host": "192.168.0.220"}`）把手动输入的主机加入
 允许列表，`/api/status?host=<地址>` 返回单个设备，`/healthz` 用于存活检查。
+`POST /api/scans` 创建后台扫描任务，任务 ID 可通过 `/api/scans/<id>` 查询
+阶段，成功后的文件由 `/api/scans/<id>/files/<序号>` 下载。
 总览最多用 4 个线程并行取快照，单设备缓存 1 秒，页面每 10–15 秒刷新。
 总览页上的“发现打印机”会调用 `/api/discover`，发现结果加入允许列表后
 自动出现在总览中。
 详情页展示 Lifetime/Scan/Drum 计数、睡眠模式、自动错误清除和表单超时；
-其中 Lifetime counter 已由 PJL/SNMP 双向核对为页计数。
+其中 Lifetime counter 已由 PJL/SNMP 双向核对为页计数。扫描区提供颜色、
+分辨率、原稿类型、页数和输出格式，并显示设备请求格式、设备返回格式和本地
+最终格式，避免把 RAW 请求误认为 RAW 文件。
 服务没有认证，默认只绑定回环地址；使用 `--web-bind 0.0.0.0` 暴露到局域网时
 需要自行增加访问控制。
 
@@ -331,7 +347,7 @@ python3 -m unittest discover -s tests -v
 python3 tools/check_publication.py
 ```
 
-当前 178 个测试覆盖 PJL 解析/帧格式、分段补发与合并、KGETOBJ 结构化字段、
+当前 234 个测试覆盖 PJL 解析/帧格式、分段补发与合并、KGETOBJ 结构化字段、
 147 项配置对象表与 CLI 配置导出、`KMUTLCFG` UI 控件字符串提取、
 147 项对象→模型偏移映射与首批控件→OID 对照、
 配置 SNMP 后备读取、
@@ -340,7 +356,8 @@ SNMP 编码与 walk/行读取边界、SNMP 到 `PrinterSnapshot` 的字段映射
 sysfs 发现、PTY 假设备往返、SNMP/WSD 发现与结果合并，以及 Web 快照缓存、
 设备允许列表与手动添加、多设备并发读取、JSON、页面自包含性、无默认设备启动
 和 GUI 依赖缺失时的回退、KM-WSDL 扫描多页/ADF 状态机、灰度 RAW 解码、
-截断 chunked 响应处理，以及公开树合规检查。
+PNG/PDF/JPEG/TIFF/高压缩 PDF/XPS 导出、扫描后台任务与下载、设备忙保护、
+`file_size` 不作为传输长度、截断 chunked 响应处理，以及公开树合规检查。
 
 ## 研究资料
 

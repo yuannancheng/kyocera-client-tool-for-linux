@@ -15,15 +15,26 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Callable
-from urllib.parse import parse_qs, urlsplit
+from urllib.parse import parse_qs, quote, urlsplit
 
 from .parser import PrinterSnapshot
+from .scan import (
+    ScanArtifact,
+    ScanBusyError,
+    ScanJob,
+    ScanJobManager,
+    ScanOptions,
+)
 
 Collector = Callable[[], PrinterSnapshot]
 
 _HOSTNAME_RE = re.compile(
     r"^(?=.{1,253}$)[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?"
     r"(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*$"
+)
+_SCAN_JOB_PATH_RE = re.compile(r"^/api/scans/([0-9a-f]{32})$")
+_SCAN_FILE_PATH_RE = re.compile(
+    r"^/api/scans/([0-9a-f]{32})/files/([0-9]+)$"
 )
 
 
@@ -220,6 +231,21 @@ def reading_payload(reading: Reading, device: str | None = None) -> dict:
             reading.snapshot.to_dict() if reading.snapshot is not None else None
         ),
     }
+
+
+def scan_job_payload(job: ScanJob) -> dict[str, object]:
+    """Serialize a job and add stable same-origin download links."""
+    payload = job.metadata()
+    result = payload["result"]
+    if isinstance(result, dict):
+        outputs = result.get("outputs")
+        if isinstance(outputs, list):
+            for index, output in enumerate(outputs):
+                if isinstance(output, dict):
+                    output["download_url"] = (
+                        f"/api/scans/{job.job_id}/files/{index}"
+                    )
+    return payload
 
 
 OVERVIEW_HTML = """<!doctype html>
@@ -467,12 +493,30 @@ DEVICE_HTML = """<!doctype html>
            border-radius: 8px; margin-top: 14px; display: none; }
   button { margin-left: auto; padding: 6px 12px; border-radius: 8px;
            border: 1px solid #b9c1c9; background: #fff; cursor: pointer; }
+  button:disabled { cursor: wait; opacity: .65; }
+  form.scan { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+              gap: 12px; margin-top: 12px; align-items: end; }
+  form.scan label { display: grid; gap: 6px; color: #5c6670; font-size: .82rem; }
+  form.scan select { padding: 8px 10px; border-radius: 8px;
+                     border: 1px solid #b9c1c9; background: #fff;
+                     color: inherit; font: inherit; }
+  form.scan button { margin: 0; min-height: 38px; }
+  .progress { margin-top: 12px; padding: 10px 12px; border-radius: 8px;
+              background: #eef3f7; display: none; }
+  .progress.active { display: block; }
+  .downloads { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+  .downloads a { padding: 7px 10px; border-radius: 8px; background: #dfeefa;
+                 color: #174b74; text-decoration: none; }
   @media (prefers-color-scheme: dark) {
     body { background: #14181c; color: #e7ebef; }
     .card { background: #1c2228; border-color: #2b333b; }
     .bar { background: #2b333b; }
     th, td { border-color: #2b333b; }
-    button { background: #1c2228; color: inherit; border-color: #3a444e; }
+    button, form.scan select { background: #1c2228; color: inherit;
+                               border-color: #3a444e; }
+    form.scan label { color: #9aa4ae; }
+    .progress { background: #202a32; }
+    .downloads a { background: #203b50; color: #cce7ff; }
   }
 </style>
 </head>
@@ -507,6 +551,65 @@ DEVICE_HTML = """<!doctype html>
   <div class="card" style="margin-top:12px">
     <div class="label">告警</div>
     <div id="alerts" class="value">-</div>
+  </div>
+  <div class="card" style="margin-top:12px">
+    <div class="label">扫描</div>
+    <form id="scan-form" class="scan" autocomplete="off">
+      <label>颜色
+        <select id="scan-color">
+          <option value="">设备默认</option>
+          <option value="FULL_COLOR">彩色</option>
+          <option value="GRAYSCALE">灰度</option>
+          <option value="BLACK_AND_WHITE">黑白</option>
+          <option value="AUTO_BLACK_AND_WHITE">自动黑白</option>
+          <option value="AUTO_GRAYSCALE">自动灰度</option>
+        </select>
+      </label>
+      <label>分辨率
+        <select id="scan-resolution">
+          <option value="">设备默认</option>
+          <option value="RESOLUTION_150X150">150 × 150 dpi</option>
+          <option value="RESOLUTION_200X200">200 × 200 dpi</option>
+          <option value="RESOLUTION_300X300">300 × 300 dpi</option>
+          <option value="RESOLUTION_400X400">400 × 400 dpi</option>
+          <option value="RESOLUTION_600X600">600 × 600 dpi</option>
+        </select>
+      </label>
+      <label>原稿类型
+        <select id="scan-original-image">
+          <option value="">设备默认</option>
+          <option value="TEXT">文字</option>
+          <option value="TEXT_AND_PHOTO">文字和照片</option>
+          <option value="PHOTO">照片</option>
+          <option value="FOR_OCR">OCR</option>
+          <option value="MAP">地图</option>
+          <option value="LIGHT_TEXT">浅色文字</option>
+        </select>
+      </label>
+      <label>页数
+        <select id="scan-pages">
+          <option value="1">1 页</option>
+          <option value="2">最多 2 页</option>
+          <option value="3">最多 3 页</option>
+          <option value="5">最多 5 页</option>
+        </select>
+      </label>
+      <label>输出格式
+        <select id="scan-format">
+          <option value="png">PNG</option>
+          <option value="pdf">PDF</option>
+          <option value="jpeg">JPEG</option>
+          <option value="tiff">TIFF</option>
+          <option value="high_compression_pdf">高压缩 PDF</option>
+          <option value="xps">XPS</option>
+          <option value="bmp">BMP</option>
+          <option value="raw">RAW（高级）</option>
+        </select>
+      </label>
+      <button id="scan-start" type="submit">开始扫描</button>
+    </form>
+    <div id="scan-progress" class="progress"></div>
+    <div id="scan-downloads" class="downloads"></div>
   </div>
   <div class="card" style="margin-top:12px">
     <div class="label">设备设置</div>
@@ -652,6 +755,115 @@ async function load() {
   }
 }
 
+const scanStageLabels = {
+  queued: "排队",
+  preflight: "预检",
+  default_configuration: "读取配置",
+  open_session: "打开会话",
+  start_scan: "启动扫描",
+  retrieve_image: "取图",
+  decode_raw: "解码",
+  export: "生成文件",
+  close_session: "关闭会话",
+  complete: "完成",
+  unexpected: "内部错误"
+};
+
+function showScanStatus(message, active) {
+  const box = byId("scan-progress");
+  box.textContent = message;
+  box.style.display = "block";
+  box.style.background = active ? "" : (
+    message.includes("失败") ? "#ffd9d9" : "#e8f4e8");
+}
+
+function showScanError(message) {
+  showScanStatus("扫描失败：" + message, false);
+  byId("scan-start").disabled = false;
+  byId("scan-start").textContent = "重新扫描";
+}
+
+function renderScanResult(job) {
+  const progress = byId("scan-progress");
+  const downloads = byId("scan-downloads");
+  downloads.replaceChildren();
+  const result = job.result || {};
+  const outputs = result.outputs || [];
+  for (const output of outputs) {
+    const link = document.createElement("a");
+    link.href = output.download_url;
+    link.download = output.filename;
+    const size = output.bytes >= 1048576
+      ? (output.bytes / 1048576).toFixed(1) + " MB"
+      : Math.max(1, Math.round(output.bytes / 1024)) + " KB";
+    link.textContent = `${output.filename} · ${size}`;
+    downloads.append(link);
+  }
+  let message = `扫描完成：${result.pages || outputs.length || 0} 页` +
+    ` · 设备请求 ${result.requested_device_format || "?"}` +
+    ` / 设备返回 ${result.effective_device_format || "?"}` +
+    ` / 本地 ${(job.output_format || "?").toUpperCase()}`;
+  if (result.close_error) message += `；关闭会话警告：${result.close_error}`;
+  progress.textContent = message;
+  progress.style.display = "block";
+  progress.style.background = result.close_error ? "#fff0c2" : "#e8f4e8";
+  byId("scan-start").disabled = false;
+  byId("scan-start").textContent = "再次扫描";
+}
+
+async function pollScan(jobId) {
+  try {
+    const response = await fetch(
+      "/api/scans/" + encodeURIComponent(jobId), {cache: "no-store"});
+    const job = await response.json();
+    if (!response.ok) throw new Error(job.error || String(response.status));
+    if (job.state === "succeeded") {
+      renderScanResult(job);
+      return;
+    }
+    if (job.state === "failed") {
+      const stage = scanStageLabels[job.stage] || job.stage || "未知阶段";
+      const detail = (job.error && job.error.error) || job.message || "未知错误";
+      showScanError(stage + " · " + detail);
+      return;
+    }
+    const stage = scanStageLabels[job.stage] || job.stage || "处理中";
+    showScanStatus(stage + " · " + (job.message || "请稍候"), true);
+    setTimeout(() => pollScan(jobId), 800);
+  } catch (err) {
+    showScanError(String(err));
+  }
+}
+
+async function startScan(event) {
+  event.preventDefault();
+  const button = byId("scan-start");
+  button.disabled = true;
+  button.textContent = "正在扫描…";
+  byId("scan-downloads").replaceChildren();
+  showScanStatus("正在创建扫描任务", true);
+  const payload = {
+    host: currentHost,
+    color: byId("scan-color").value || null,
+    resolution: byId("scan-resolution").value || null,
+    original_image: byId("scan-original-image").value || null,
+    max_pages: Number(byId("scan-pages").value),
+    output_format: byId("scan-format").value
+  };
+  try {
+    const response = await fetch("/api/scans", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify(payload)
+    });
+    const job = await response.json();
+    if (!response.ok) throw new Error(job.error || String(response.status));
+    pollScan(job.job_id);
+  } catch (err) {
+    showScanError(String(err));
+  }
+}
+
 async function discover() {
   const box = byId("devices");
   box.textContent = "正在搜索…";
@@ -681,6 +893,7 @@ async function discover() {
 
 byId("refresh").addEventListener("click", load);
 byId("discover").addEventListener("click", discover);
+byId("scan-form").addEventListener("submit", startScan);
 text("current-host", currentHost ? "当前: " + currentHost : "当前: 默认设备");
 load();
 setInterval(load, 10000);
@@ -693,7 +906,10 @@ setInterval(load, 10000);
 def make_handler(
     registry: DeviceRegistry,
     discover_fn: Callable[[], list] | None = None,
+    scan_manager: ScanJobManager | None = None,
 ) -> type[BaseHTTPRequestHandler]:
+    manager = scan_manager or ScanJobManager()
+
     class Handler(BaseHTTPRequestHandler):
         server_version = "kyocera-monitor"
 
@@ -739,6 +955,25 @@ def make_handler(
                     {"devices": devices}, ensure_ascii=False
                 ).encode("utf-8")
                 self._respond(200, "application/json; charset=utf-8", body)
+            elif match := _SCAN_JOB_PATH_RE.fullmatch(path):
+                try:
+                    job = manager.get(match.group(1))
+                except KeyError:
+                    self._json_error(404, "scan job not found")
+                    return
+                body = json.dumps(
+                    scan_job_payload(job), ensure_ascii=False
+                ).encode("utf-8")
+                self._respond(200, "application/json; charset=utf-8", body)
+            elif match := _SCAN_FILE_PATH_RE.fullmatch(path):
+                try:
+                    artifact = manager.output(
+                        match.group(1), int(match.group(2))
+                    )
+                except (KeyError, IndexError):
+                    self._json_error(404, "scan output not found")
+                    return
+                self._respond_artifact(artifact)
             elif path == "/api/discover":
                 if discover_fn is None:
                     body = json.dumps(
@@ -774,7 +1009,7 @@ def make_handler(
 
         def do_POST(self) -> None:  # noqa: N802
             parsed = urlsplit(self.path)
-            if parsed.path != "/api/devices":
+            if parsed.path not in {"/api/devices", "/api/scans"}:
                 self._respond(404, "text/plain; charset=utf-8", b"not found\n")
                 return
             try:
@@ -792,6 +1027,9 @@ def make_handler(
             if not isinstance(payload, dict):
                 self._json_error(400, "request body must be a JSON object")
                 return
+            if parsed.path == "/api/scans":
+                self._start_scan(payload)
+                return
             try:
                 host = registry.add_host(payload.get("host"))
             except ValueError as exc:
@@ -802,6 +1040,35 @@ def make_handler(
                 ensure_ascii=False,
             ).encode("utf-8")
             self._respond(200, "application/json; charset=utf-8", body)
+
+        def _start_scan(self, payload: dict[str, object]) -> None:
+            requested = payload.get("host")
+            if requested is not None and not isinstance(requested, str):
+                self._json_error(400, "host must be a string or null")
+                return
+            try:
+                host = registry.resolve(requested)
+            except KeyError:
+                message = (
+                    "no printer selected"
+                    if requested is None
+                    else f"unknown device: {requested}"
+                )
+                self._json_error(404 if requested is not None else 400, message)
+                return
+            try:
+                options = ScanOptions.from_payload(payload)
+                job = manager.start(host, options)
+            except ScanBusyError as exc:
+                self._json_error(409, str(exc))
+                return
+            except ValueError as exc:
+                self._json_error(400, str(exc))
+                return
+            body = json.dumps(
+                scan_job_payload(job), ensure_ascii=False
+            ).encode("utf-8")
+            self._respond(202, "application/json; charset=utf-8", body)
 
         def _json_error(self, status: int, message: str) -> None:
             body = json.dumps({"error": message}, ensure_ascii=False).encode(
@@ -816,12 +1083,20 @@ def make_handler(
                 self._respond(404, "text/plain; charset=utf-8", b"", head=True)
 
         def _respond(
-            self, status: int, content_type: str, body: bytes, *, head: bool = False
+            self,
+            status: int,
+            content_type: str,
+            body: bytes,
+            *,
+            head: bool = False,
+            headers: dict[str, str] | None = None,
         ) -> None:
             self.send_response(status)
             self.send_header("Content-Type", content_type)
             self.send_header("Content-Length", str(len(body)))
             self.send_header("Cache-Control", "no-store")
+            for name, value in (headers or {}).items():
+                self.send_header(name, value)
             self.end_headers()
             if not head:
                 try:
@@ -829,6 +1104,20 @@ def make_handler(
                 except (BrokenPipeError, ConnectionResetError):
                     # Browsers close speculative connections routinely.
                     pass
+
+        def _respond_artifact(self, artifact: ScanArtifact) -> None:
+            self._respond(
+                200,
+                artifact.media_type,
+                artifact.data,
+                headers={
+                    "Content-Disposition": (
+                        "attachment; filename*=UTF-8''"
+                        f"{quote(artifact.filename)}"
+                    ),
+                    "X-Content-Type-Options": "nosniff",
+                },
+            )
 
         def log_message(self, fmt: str, *args) -> None:
             # Keep the console quiet; device errors are visible in the JSON.
@@ -844,9 +1133,14 @@ def run_server(
     port: int = 8080,
     discover_fn: Callable[[], list] | None = None,
     on_listen: Callable[[str], None] | None = None,
+    scan_manager: ScanJobManager | None = None,
 ) -> None:
     server = create_server(
-        registry, bind=bind, port=port, discover_fn=discover_fn
+        registry,
+        bind=bind,
+        port=port,
+        discover_fn=discover_fn,
+        scan_manager=scan_manager,
     )
     if on_listen is not None:
         actual_port = server.server_address[1]
@@ -866,6 +1160,7 @@ def create_server(
     bind: str = "127.0.0.1",
     port: int = 8080,
     discover_fn: Callable[[], list] | None = None,
+    scan_manager: ScanJobManager | None = None,
 ) -> ThreadingHTTPServer:
     """Create (but do not start) the dashboard HTTP server.
 
@@ -874,5 +1169,10 @@ def create_server(
     """
 
     return ThreadingHTTPServer(
-        (bind, port), make_handler(registry, discover_fn)
+        (bind, port),
+        make_handler(
+            registry,
+            discover_fn,
+            scan_manager=scan_manager,
+        ),
     )
