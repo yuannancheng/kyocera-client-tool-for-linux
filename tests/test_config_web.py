@@ -2,10 +2,9 @@ import copy
 import tempfile
 import unittest
 from pathlib import Path
-from unittest import mock
 
 from kyocera_monitor.config import CONFIG, absolute_config_oid
-from kyocera_monitor.config_web import ConfigWorkbench, ConfigWorkbenchError
+from kyocera_monitor.config_web import ConfigWorkbench
 
 
 def records(*, quiet_mode=0, connected=True, wifi_changes=False):
@@ -70,14 +69,10 @@ class ConfigWorkbenchTests(unittest.TestCase):
         self.assertTrue(by_id[144]["sensitive"])
         all_by_id = {item["item_id"]: item for item in result["objects"]}
         self.assertEqual(all_by_id[144]["display"], "<redacted>")
-        self.assertEqual(
-            all_by_id[50]["write_policy"], "reversible_experiment"
-        )
-        self.assertEqual(all_by_id[1]["write_policy"], "read_only")
-        self.assertEqual(
-            [candidate["item_id"] for candidate in result["candidates"]],
-            [2, 50],
-        )
+        self.assertNotIn("write_policy", all_by_id[50])
+        self.assertNotIn("candidates", result)
+        self.assertNotIn("write_execution_available", result)
+        self.assertNotIn("warning", result)
 
     def test_baseline_compare_and_private_storage(self):
         current = {"value": records()}
@@ -101,36 +96,13 @@ class ConfigWorkbenchTests(unittest.TestCase):
         self.assertEqual(comparison["comparison"]["volatile_changed"], 2)
         self.assertEqual(comparison["comparison"]["read_status_changed"], 0)
 
-    def test_plan_and_apply_require_baseline_and_exact_token(self):
-        reader = lambda _host: records()
-        client = mock.Mock()
-        client.host = "printer"
-        execution = {"status": "success"}
-        with tempfile.TemporaryDirectory() as tmp:
-            workbench = ConfigWorkbench(
-                reader,
-                client_factory=lambda _host: client,
-                baseline_directory=Path(tmp),
-            )
-            with self.assertRaisesRegex(
-                ConfigWorkbenchError, "baseline does not exist"
-            ):
-                workbench.plan("printer", 50, "ON")
-
-            workbench.save_baseline("printer")
-            planned = workbench.plan("printer", 50, "ON")
-            self.assertTrue(planned["plan"]["execution"]["allowed"])
-            token = planned["plan"]["confirmation"]["token"]
-            with mock.patch(
-                "kyocera_monitor.config_web."
-                "execute_authorized_config_experiment",
-                return_value=execution,
-            ) as apply:
-                result = workbench.apply("printer", 50, "ON", f"sha256:{token}")
-            self.assertEqual(result["execution"], execution)
-            apply.assert_called_once()
-            self.assertEqual(apply.call_args.args[0], client)
-            self.assertEqual(apply.call_args.args[2], f"sha256:{token}")
+    def test_web_workbench_is_read_only(self):
+        workbench = ConfigWorkbench(
+            lambda _host: records(),
+            baseline_directory=Path("/tmp/unused-kyocera-baseline"),
+        )
+        self.assertFalse(hasattr(workbench, "plan"))
+        self.assertFalse(hasattr(workbench, "apply"))
 
 
 if __name__ == "__main__":

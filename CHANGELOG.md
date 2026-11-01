@@ -2,6 +2,20 @@
 
 ## 2026-11-01
 
+### Fixed — remove development configuration experiments from GUI
+
+- 从正式 Web/GUI 移除“安全回滚实验”整块开发测试控件、写权限列、计划/授权/
+  执行按钮和对应 JavaScript。
+- Web 服务不再注册 `/api/config/plan` 与 `/api/config/apply`；正式界面只保留
+  147 项配置只读采集、敏感值隐藏、`0600` 私有基线和差异比较。
+- `ConfigWorkbench` 改为纯只读组件，不再持有 SNMP 写入客户端工厂；受控
+  item 2/50 实验继续只通过显式 CLI 工作流提供。
+- 新增页面与 API 回归测试，断言正式 GUI/API 中不存在实验入口；版本升级为
+  `0.2.2`。
+- 构建并安装 `dist/kyocera-monitor_0.2.2-1_all.deb`，SHA-256
+  `f6d0cfdbf0a8c62669c297eb61f902e60980c02638a2dab3b84886e60411448b`；
+  已安装页面只保留读取、基线和比较按钮，两条开发写入 API 均实际返回 `404`。
+
 ### Fixed — dark status contrast and persistent printers
 
 - 修复总览页“0 台设备”、加载状态和详情页等待状态在深色主题下继承浅色

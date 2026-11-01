@@ -20,8 +20,6 @@ from urllib.parse import parse_qs, quote, urlsplit
 
 from .config_snapshot import ConfigSnapshotError
 from .config_web import ConfigWorkbench, ConfigWorkbenchError
-from .config_write_executor import ConfigWriteExecutionError
-from .config_write_plan import ConfigWritePlanError
 from .parser import PrinterSnapshot
 from .preferences import (
     SettingsError,
@@ -569,13 +567,9 @@ DEVICE_HTML = """<!doctype html>
   .config-item .reading { margin-top: 5px; }
   .warning-box { margin-top: 12px; padding: 10px 12px; border-radius: 8px;
                  background: #fff3cf; color: #624600; border: 1px solid #e6cc82; }
-  .plan-box { margin-top: 12px; padding: 10px 12px; border-radius: 8px;
-              border: 1px solid #b9c1c9; white-space: pre-wrap;
-              font-family: monospace; font-size: .86rem; display: none; }
   .config-table-wrap { max-height: 360px; overflow: auto; margin-top: 10px; }
   .config-table-wrap table { margin-top: 0; }
   .config-table-wrap tr.unreadable td { color: #8b3d3d; }
-  .config-write { margin-top: 14px; padding-top: 14px; border-top: 1px solid #dfe3e8; }
   .progress { margin-top: 12px; padding: 10px 12px; border-radius: 8px;
               background: #eef3f7; color: #1b1f24; border: 1px solid #d7e0e7;
               display: none; }
@@ -609,8 +603,6 @@ DEVICE_HTML = """<!doctype html>
                         border-color: #74393d; }
     .downloads a { background: #203b50; color: #cce7ff; }
     .config-item { background: #182027; border-color: #2d3842; }
-    .plan-box { border-color: #3a444e; background: #11171c; color: #e7ebef; }
-    .config-write { border-color: #2b333b; }
   }
 </style>
 </head>
@@ -753,36 +745,11 @@ DEVICE_HTML = """<!doctype html>
       <summary>查看已读取的配置对象</summary>
       <div class="config-table-wrap">
         <table>
-          <thead><tr><th>ID</th><th>名称</th><th>状态</th><th>值</th><th>写权限</th></tr></thead>
+          <thead><tr><th>ID</th><th>名称</th><th>状态</th><th>值</th></tr></thead>
           <tbody id="config-objects"></tbody>
         </table>
       </div>
     </details>
-    <div class="config-write">
-      <div class="label">安全回滚实验</div>
-      <div class="warning-box">
-        只允许 Auto error clear 或 Quiet mode 的 OFF → ON → OFF。
-        生成计划会重新读取全部配置；执行前仍必须勾选明确授权。
-      </div>
-      <div class="settings">
-        <label>字段
-          <select id="config-write-item">
-            <option value="">先读取配置</option>
-          </select>
-        </label>
-        <label>目标值
-          <input id="config-write-value" value="ON" readonly>
-        </label>
-      </div>
-      <div class="inline">
-        <button id="config-plan" type="button" disabled>生成写入与回滚计划</button>
-        <button id="config-apply" type="button" disabled>执行 OFF → ON → OFF</button>
-        <label><input id="config-authorize" type="checkbox" disabled>
-          我已阅读计划并授权本次回滚实验</label>
-      </div>
-      <div id="config-plan-result" class="plan-box"></div>
-      <div id="config-execution-result" class="plan-box"></div>
-    </div>
   </div>
   <div class="card" style="margin-top:12px">
     <div class="label">设备发现</div>
@@ -799,8 +766,6 @@ const byId = (id) => document.getElementById(id);
 const text = (id, value) => { byId(id).textContent = value == null || value === "" ? "-" : String(value); };
 const currentHost = new URLSearchParams(location.search).get("host");
 let userSettings = null;
-let configPlan = null;
-let configOverview = null;
 
 function trayRows(trays) {
   const body = byId("trays");
@@ -1202,8 +1167,7 @@ function renderConfigObjects(objects) {
       object.item_id,
       object.label,
       object.readable ? "可读" : "不可读",
-      object.sensitive ? "已隐藏" : (object.display ?? "-"),
-      object.write_policy === "reversible_experiment" ? "可回滚实验" : "只读"
+      object.sensitive ? "已隐藏" : (object.display ?? "-")
     ]) {
       const cell = document.createElement("td");
       cell.textContent = value == null || value === "" ? "-" : String(value);
@@ -1232,37 +1196,13 @@ function renderConfigStatusObjects(objects) {
   }
 }
 
-function renderConfigCandidates(candidates, available) {
-  const select = byId("config-write-item");
-  select.replaceChildren();
-  const placeholder = document.createElement("option");
-  placeholder.value = "";
-  placeholder.textContent = candidates.length ? "选择字段" : "没有可用写入字段";
-  select.append(placeholder);
-  for (const candidate of candidates || []) {
-    const option = document.createElement("option");
-    option.value = String(candidate.item_id);
-    option.textContent = `${candidate.item_id} · ${candidate.label}`;
-    select.append(option);
-  }
-  byId("config-plan").disabled = !available || candidates.length === 0;
-  byId("config-plan-result").style.display = "none";
-  byId("config-execution-result").style.display = "none";
-  byId("config-apply").disabled = true;
-  byId("config-authorize").disabled = true;
-  byId("config-authorize").checked = false;
-  configPlan = null;
-}
-
 function renderConfigOverview(data) {
-  configOverview = data;
   const baseline = data.baseline || {};
   byId("config-baseline-info").textContent = baseline.available
     ? `基线：${baseline.created_at} · 可读 ${baseline.read}/${baseline.total}`
     : (baseline.error ? "基线不可用：" + baseline.error : "尚未保存基线");
   renderConfigStatusObjects(data.status_objects);
   renderConfigObjects(data.objects);
-  renderConfigCandidates(data.candidates, data.write_execution_available);
   byId("config-changes").replaceChildren();
   setConfigStatus(`读取完成：${data.read}/${data.total} 项可读`);
 }
@@ -1349,101 +1289,6 @@ async function compareConfigurationBaseline() {
   );
 }
 
-function showPlan(planData) {
-  const plan = planData.plan;
-  configPlan = plan;
-  const box = byId("config-plan-result");
-  const blockers = plan.review.blockers || [];
-  const lines = [
-    `目标：${plan.object.item_id} ${plan.object.label}`,
-    `当前：${plan.current.display ?? "-"}`,
-    `实验：${plan.before.display} → ${plan.requested.display} → ${plan.rollback.display}`,
-    `SNMP：${plan.commands.snmp_set.oid} Integer ${plan.commands.snmp_set.value}`,
-    `回滚：${plan.commands.snmp_rollback.oid} Integer ${plan.commands.snmp_rollback.value}`,
-    `确认令牌：sha256:${plan.confirmation.token}`
-  ];
-  if (blockers.length) lines.push("阻断：" + blockers.join(", "));
-  if (!planData.write_execution_available) {
-    lines.push("当前连接未开放写入执行器");
-  }
-  box.textContent = lines.join("\\n");
-  box.style.display = "block";
-  const executable = planData.write_execution_available &&
-    plan.execution.allowed && blockers.length === 0;
-  byId("config-authorize").disabled = !executable;
-  byId("config-authorize").checked = false;
-  byId("config-apply").disabled = true;
-  setConfigStatus(executable ? "计划有效，等待明确授权" : "计划已生成但当前不可执行", !executable);
-}
-
-async function planConfigurationExperiment() {
-  const itemId = Number(byId("config-write-item").value);
-  if (!itemId) {
-    setConfigStatus("请先选择字段", true);
-    return;
-  }
-  await runConfigAction(
-    byId("config-plan"),
-    "正在重新读取完整配置并生成回滚计划…",
-    async () => {
-      const data = await configRequest("/api/config/plan", {
-        method: "POST",
-        headers: {"Content-Type": "application/json"},
-        body: JSON.stringify({
-          host: currentHost,
-          item_id: itemId,
-          value: "ON"
-        })
-      });
-      showPlan(data);
-    }
-  );
-}
-
-async function applyConfigurationExperiment() {
-  if (!configPlan || !byId("config-authorize").checked) return;
-  const itemId = configPlan.object.item_id;
-  const label = configPlan.object.label;
-  if (!window.confirm(
-    `确认执行 ${label} OFF → ON → OFF？工具会立即尝试恢复原值。`
-  )) {
-    return;
-  }
-  await runConfigAction(
-    byId("config-apply"),
-    "正在执行受控写入、回读和回滚…",
-    async () => {
-      const data = await configRequest("/api/config/apply", {
-        method: "POST",
-        headers: {"Content-Type": "application/json"},
-        body: JSON.stringify({
-          host: currentHost,
-          item_id: itemId,
-          value: "ON",
-          confirmation_token: "sha256:" + configPlan.confirmation.token
-        })
-      });
-      const execution = data.execution;
-      const box = byId("config-execution-result");
-      box.textContent = [
-        `状态：${execution.status}`,
-        `写入并回读：${execution.verify_on.ok ? "成功" : "失败"}`,
-        `恢复并回读：${execution.verify_off.ok ? "成功" : "失败"}`,
-        `回滚值：${execution.rollback_value}`
-      ].join("\\n");
-      box.style.display = "block";
-      setConfigStatus(
-        execution.status === "success" ? "回滚实验完成" : "回滚实验未完全成功",
-        execution.status !== "success"
-      );
-      byId("config-apply").disabled = true;
-      byId("config-authorize").checked = false;
-    }
-  );
-  byId("config-apply").disabled = true;
-  byId("config-authorize").checked = false;
-}
-
 async function discover() {
   const box = byId("devices");
   box.textContent = "正在搜索…";
@@ -1491,22 +1336,6 @@ byId("preset-delete").addEventListener("click", deletePreset);
 byId("config-read").addEventListener("click", readConfiguration);
 byId("config-baseline-save").addEventListener("click", saveConfigurationBaseline);
 byId("config-baseline-compare").addEventListener("click", compareConfigurationBaseline);
-byId("config-plan").addEventListener("click", planConfigurationExperiment);
-byId("config-apply").addEventListener("click", applyConfigurationExperiment);
-byId("config-authorize").addEventListener("change", () => {
-  byId("config-apply").disabled = !(
-    byId("config-authorize").checked &&
-    configPlan &&
-    configPlan.execution.allowed
-  );
-});
-byId("config-write-item").addEventListener("change", () => {
-  configPlan = null;
-  byId("config-plan-result").style.display = "none";
-  byId("config-apply").disabled = true;
-  byId("config-authorize").disabled = true;
-  byId("config-authorize").checked = false;
-});
 text("current-host", currentHost ? "当前: " + currentHost : "当前: 默认设备");
 setConfigStatus("尚未读取配置");
 loadSettings();
@@ -1644,7 +1473,7 @@ def make_handler(
                 except ConfigWorkbenchError as exc:
                     self._json_error(502, str(exc))
                     return
-                except (ConfigSnapshotError, ConfigWritePlanError) as exc:
+                except ConfigSnapshotError as exc:
                     self._json_error(409, str(exc))
                     return
                 body = json.dumps(
@@ -1722,8 +1551,6 @@ def make_handler(
                 "/api/scans",
                 "/api/settings",
                 "/api/config/baseline",
-                "/api/config/plan",
-                "/api/config/apply",
             }:
                 self._respond(404, "text/plain; charset=utf-8", b"not found\n")
                 return
@@ -1760,8 +1587,8 @@ def make_handler(
                 ).encode("utf-8")
                 self._respond(200, "application/json; charset=utf-8", body)
                 return
-            if parsed.path.startswith("/api/config/"):
-                self._config_operation(parsed.path, payload, config_workbench)
+            if parsed.path == "/api/config/baseline":
+                self._config_operation(payload, config_workbench)
                 return
             if parsed.path == "/api/scans":
                 self._start_scan(payload)
@@ -1788,7 +1615,6 @@ def make_handler(
 
         def _config_operation(
             self,
-            path: str,
             payload: dict[str, object],
             workbench: ConfigWorkbench | None,
         ) -> None:
@@ -1815,38 +1641,11 @@ def make_handler(
                 )
                 return
             try:
-                if path == "/api/config/baseline":
-                    result = workbench.save_baseline(host)
-                else:
-                    item_id = payload.get("item_id")
-                    value = payload.get("value")
-                    if isinstance(item_id, bool) or not isinstance(item_id, int):
-                        raise ValueError("item_id must be an integer")
-                    if not isinstance(value, str):
-                        raise ValueError("value must be a string")
-                    if path == "/api/config/plan":
-                        result = workbench.plan(host, item_id, value)
-                    else:
-                        confirmation = payload.get("confirmation_token")
-                        if not isinstance(confirmation, str):
-                            raise ValueError(
-                                "confirmation_token must be a string"
-                            )
-                        result = workbench.apply(
-                            host,
-                            item_id,
-                            value,
-                            confirmation,
-                        )
+                result = workbench.save_baseline(host)
             except ConfigWorkbenchError as exc:
                 self._json_error(409, str(exc))
                 return
-            except (
-                ConfigSnapshotError,
-                ConfigWritePlanError,
-                ConfigWriteExecutionError,
-                ValueError,
-            ) as exc:
+            except ConfigSnapshotError as exc:
                 self._json_error(400, str(exc))
                 return
             body = json.dumps(result, ensure_ascii=False).encode("utf-8")

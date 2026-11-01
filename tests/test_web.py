@@ -269,22 +269,26 @@ class PageTests(unittest.TestCase):
             self.assertIn(f'id="{element_id}"', DEVICE_HTML)
         self.assertIn("/api/settings", DEVICE_HTML)
 
-    def test_device_page_has_guarded_configuration_workflow(self):
+    def test_device_page_has_read_only_configuration_workflow(self):
         for element_id in (
             "config-read",
             "config-baseline-save",
             "config-baseline-compare",
             "config-status-grid",
             "config-objects",
-            "config-write-item",
-            "config-plan",
-            "config-apply",
-            "config-authorize",
         ):
             self.assertIn(f'id="{element_id}"', DEVICE_HTML)
-        self.assertIn("/api/config/plan", DEVICE_HTML)
-        self.assertIn("/api/config/apply", DEVICE_HTML)
-        self.assertIn("OFF → ON → OFF", DEVICE_HTML)
+        for removed in (
+            "安全回滚实验",
+            "OFF → ON → OFF",
+            "/api/config/plan",
+            "/api/config/apply",
+            'id="config-write-item"',
+            'id="config-plan"',
+            'id="config-apply"',
+            'id="config-authorize"',
+        ):
+            self.assertNotIn(removed, DEVICE_HTML)
 
     def test_pages_are_self_contained(self):
         for page in (OVERVIEW_HTML, DEVICE_HTML):
@@ -710,7 +714,6 @@ class ConfigApiTests(unittest.TestCase):
             "total": 147,
             "status_objects": [],
             "objects": [],
-            "candidates": [],
         }
         self.workbench.baseline_info.return_value = {"available": False}
         status, _, body = self.request(
@@ -726,7 +729,7 @@ class ConfigApiTests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertFalse(json.loads(body)["baseline"]["available"])
 
-    def test_baseline_plan_and_apply_dispatch(self):
+    def test_baseline_dispatch_and_web_write_endpoints_are_absent(self):
         self.workbench.save_baseline.return_value = {"saved": True}
         status, _, _ = self.request(
             "POST",
@@ -736,16 +739,14 @@ class ConfigApiTests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.workbench.save_baseline.assert_called_once_with("192.0.2.1")
 
-        self.workbench.plan.return_value = {"plan": {"ok": True}}
         status, _, _ = self.request(
             "POST",
             "/api/config/plan",
             {"host": "192.0.2.1", "item_id": 2, "value": "ON"},
         )
-        self.assertEqual(status, 200)
-        self.workbench.plan.assert_called_once_with("192.0.2.1", 2, "ON")
+        self.assertEqual(status, 404)
+        self.workbench.plan.assert_not_called()
 
-        self.workbench.apply.return_value = {"execution": {"status": "success"}}
         status, _, _ = self.request(
             "POST",
             "/api/config/apply",
@@ -756,19 +757,7 @@ class ConfigApiTests(unittest.TestCase):
                 "confirmation_token": "sha256:" + "a" * 64,
             },
         )
-        self.assertEqual(status, 200)
-        self.workbench.apply.assert_called_once_with(
-            "192.0.2.1", 2, "ON", "sha256:" + "a" * 64
-        )
-
-    def test_apply_without_confirmation_never_reaches_workbench(self):
-        status, _, body = self.request(
-            "POST",
-            "/api/config/apply",
-            {"host": "192.0.2.1", "item_id": 2, "value": "ON"},
-        )
-        self.assertEqual(status, 400)
-        self.assertIn("confirmation_token", json.loads(body)["error"])
+        self.assertEqual(status, 404)
         self.workbench.apply.assert_not_called()
 
 

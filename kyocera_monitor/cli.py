@@ -1086,14 +1086,6 @@ def main(argv: list[str] | None = None) -> int:
 
             config_workbench = ConfigWorkbench(
                 read_web_configuration,
-                client_factory=lambda key: SnmpClient(
-                    key,
-                    community=args.snmp_community,
-                    version="2c",
-                    port=args.snmp_port,
-                    timeout=args.snmp_timeout,
-                    retries=args.snmp_retries,
-                ),
                 transport="snmp",
             )
         discover_fn = (

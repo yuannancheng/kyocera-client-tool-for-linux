@@ -235,9 +235,9 @@ kyocera-monitor --host 192.168.0.220 --config --snmp \
 community、Wi-Fi SSID、系统联系人或位置，不能提交到公开仓库。比较发现差异时
 退出码为 `1`，一致时为 `0`。Wi-Fi 连接状态、RSSI 和信道作为只读易变观测
 单独列出，不把自然变化计为配置差异；配置值变化和读取状态变化仍返回 `1`。
-当前不发送 PJL `KSETOBJ`；唯一的写入能力是用户显式确认后，通过 SNMPv2c
-执行 `Auto error clear` 或 `Quiet mode` 的 `OFF -> ON -> OFF` 回滚实验。
-写入边界见
+当前不发送 PJL `KSETOBJ`。研究用途的 CLI 仍可在用户显式确认后，通过
+SNMPv2c 执行 `Auto error clear` 或 `Quiet mode` 的 `OFF -> ON -> OFF`
+回滚实验；正式 Web/GUI 不暴露这些测试入口。写入边界见
 `docs/reverse-engineering/config-write-safety.md`。
 
 下一个写入候选可先做只读资格审查：
@@ -351,9 +351,9 @@ options、Communication、SNMP trap、Wi‑Fi 状态、音量与 FAX notificatio
 不是设备主动推送。
 详情页的统一配置区可只读采集 147 项配置，展示面板与 Wi‑Fi 状态，保存
 `0600` 私有基线并比较差异；SNMP community、Wi‑Fi SSID 等敏感值在页面中
-隐藏。只有 `Auto error clear` 和 `Quiet mode` 会显示可回滚实验入口，生成
-完整写入/回读/恢复计划并需要单独勾选授权后才能执行；其他对象固定标记为
-只读。
+隐藏。Web/GUI 不提供配置写入、写入计划或回滚实验入口，也不注册
+`/api/config/plan` 和 `/api/config/apply`；受控实验只保留在研究用途的 CLI
+工作流中。
 服务没有认证，默认只绑定回环地址；使用 `--web-bind 0.0.0.0` 暴露到局域网时
 需要自行增加访问控制。
 
@@ -375,7 +375,7 @@ python3 -m unittest discover -s tests -v
 python3 tools/check_publication.py
 ```
 
-当前 266 个测试覆盖 PJL 解析/帧格式、分段补发与合并、KGETOBJ 结构化字段、
+当前 265 个测试覆盖 PJL 解析/帧格式、分段补发与合并、KGETOBJ 结构化字段、
 147 项配置对象表与 CLI 配置导出、`KMUTLCFG` UI 控件字符串提取、
 147 项对象→模型偏移映射与首批控件→OID 对照、
 配置 SNMP 后备读取、
