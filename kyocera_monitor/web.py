@@ -256,6 +256,20 @@ def scan_job_payload(job: ScanJob) -> dict[str, object]:
     return payload
 
 
+def content_disposition(filename: str) -> str:
+    """Return a portable attachment header for ASCII and Unicode names."""
+    fallback = (
+        filename.encode("ascii", "replace")
+        .decode("ascii")
+        .replace("\\", "_")
+        .replace('"', "'")
+    ) or "kyocera-download"
+    return (
+        f'attachment; filename="{fallback}"; '
+        f"filename*=UTF-8''{quote(filename, safe='')}"
+    )
+
+
 OVERVIEW_HTML = """<!doctype html>
 <html lang="zh-CN">
 <head>
@@ -561,11 +575,18 @@ DEVICE_HTML = """<!doctype html>
   .inline label { display: inline-flex; align-items: center; gap: 6px; color: inherit; }
   .inline button { margin: 0; }
   .progress { margin-top: 12px; padding: 10px 12px; border-radius: 8px;
-              background: #eef3f7; display: none; }
+              background: #eef3f7; color: #1b1f24; border: 1px solid #d7e0e7;
+              display: none; }
   .progress.active { display: block; }
+  .progress.success { display: block; background: #e5f4e7; color: #174c22;
+                      border-color: #b8ddbf; }
+  .progress.warning { display: block; background: #fff3cf; color: #624600;
+                      border-color: #e6cc82; }
+  .progress.failure { display: block; background: #ffe1e1; color: #751a1a;
+                      border-color: #e7b1b1; }
   .downloads { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
   .downloads a { padding: 7px 10px; border-radius: 8px; background: #dfeefa;
-                 color: #174b74; text-decoration: none; }
+                 color: #174b74; text-decoration: none; cursor: pointer; }
   @media (prefers-color-scheme: dark) {
     body { background: #14181c; color: #e7ebef; }
     .card { background: #1c2228; border-color: #2b333b; }
@@ -574,7 +595,13 @@ DEVICE_HTML = """<!doctype html>
     button, form.scan select, .settings input { background: #1c2228; color: inherit;
                                                 border-color: #3a444e; }
     form.scan label, .settings label { color: #9aa4ae; }
-    .progress { background: #202a32; }
+    .progress { background: #202a32; color: #e7ebef; border-color: #35414c; }
+    .progress.success { background: #1d3523; color: #d3f2d8;
+                        border-color: #356943; }
+    .progress.warning { background: #3d331b; color: #f6dfaa;
+                        border-color: #735d2b; }
+    .progress.failure { background: #3c2022; color: #f6c8c8;
+                        border-color: #74393d; }
     .downloads a { background: #203b50; color: #cce7ff; }
   }
 </style>
@@ -859,18 +886,28 @@ const scanStageLabels = {
   unexpected: "内部错误"
 };
 
-function showScanStatus(message, active) {
+function setScanStatus(message, state) {
   const box = byId("scan-progress");
   box.textContent = message;
-  box.style.display = "block";
-  box.style.background = active ? "" : (
-    message.includes("失败") ? "#ffd9d9" : "#e8f4e8");
+  box.className = "progress active " + state;
 }
 
 function showScanError(message) {
-  showScanStatus("扫描失败：" + message, false);
+  setScanStatus("扫描失败：" + message, "failure");
   byId("scan-start").disabled = false;
   byId("scan-start").textContent = "重新扫描";
+}
+
+function nativeDownload(output) {
+  const bridge = window.webkit &&
+    window.webkit.messageHandlers &&
+    window.webkit.messageHandlers.kyoceraDownload;
+  if (!bridge) return false;
+  bridge.postMessage({
+    url: output.download_url,
+    filename: output.filename
+  });
+  return true;
 }
 
 function renderScanResult(job) {
@@ -887,6 +924,12 @@ function renderScanResult(job) {
       ? (output.bytes / 1048576).toFixed(1) + " MB"
       : Math.max(1, Math.round(output.bytes / 1024)) + " KB";
     link.textContent = `${output.filename} · ${size}`;
+    link.title = "下载 " + output.filename;
+    link.addEventListener("click", (event) => {
+      if (!nativeDownload(output)) return;
+      event.preventDefault();
+      setScanStatus("正在下载 " + output.filename, "active");
+    });
     downloads.append(link);
   }
   let message = `扫描完成：${result.pages || outputs.length || 0} 页` +
@@ -899,9 +942,7 @@ function renderScanResult(job) {
     message += ` · 已保存 ${saved.length} 个文件到 ${folder}`;
   }
   if (result.close_error) message += `；关闭会话警告：${result.close_error}`;
-  progress.textContent = message;
-  progress.style.display = "block";
-  progress.style.background = result.close_error ? "#fff0c2" : "#e8f4e8";
+  setScanStatus(message, result.close_error ? "warning" : "success");
   byId("scan-start").disabled = false;
   byId("scan-start").textContent = "再次扫描";
 }
@@ -923,7 +964,7 @@ async function pollScan(jobId) {
       return;
     }
     const stage = scanStageLabels[job.stage] || job.stage || "处理中";
-    showScanStatus(stage + " · " + (job.message || "请稍候"), true);
+    setScanStatus(stage + " · " + (job.message || "请稍候"), "active");
     setTimeout(() => pollScan(jobId), 800);
   } catch (err) {
     showScanError(String(err));
@@ -936,7 +977,7 @@ async function startScan(event) {
   button.disabled = true;
   button.textContent = "正在扫描…";
   byId("scan-downloads").replaceChildren();
-  showScanStatus("正在创建扫描任务", true);
+  setScanStatus("正在创建扫描任务", "active");
   const payload = {
     host: currentHost,
     preset_id: byId("preset-select").value || null,
@@ -1394,9 +1435,8 @@ def make_handler(
                 artifact.media_type,
                 artifact.data,
                 headers={
-                    "Content-Disposition": (
-                        "attachment; filename*=UTF-8''"
-                        f"{quote(artifact.filename)}"
+                    "Content-Disposition": content_disposition(
+                        artifact.filename
                     ),
                     "X-Content-Type-Options": "nosniff",
                 },

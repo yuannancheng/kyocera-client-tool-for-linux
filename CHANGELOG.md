@@ -2,6 +2,21 @@
 
 ## 2026-11-01
 
+### Fixed — scan completion contrast and download failure
+
+- 修复深色主题下扫描完成提示继承白色文字、同时使用浅色内联背景造成不可读的
+  问题。进展、成功、警告和失败现在使用明确的前景/背景/边框组合，不再覆盖
+  主题背景后保留错误文字颜色。
+- 原生 GTK/WebKit 窗口新增内部下载桥：点击扫描结果文件名后，直接从对应后台
+  任务取得产物，以 `0600` 权限和冲突安全的文件名保存到 `~/Downloads`，并显示
+  实际保存路径；普通浏览器继续使用 HTTP 附件下载。
+- `/api/scans/<id>/files/<n>` 现在同时发送 ASCII `filename` 和 UTF-8
+  `filename*` 两种附件文件名，提高 WebKit/浏览器兼容性。
+- 新增文件名字段化、路径穿越、独占写入、消息桥接、结果颜色和附件头测试；
+  使用真实隐藏 GTK/WebKit 窗口完成一次消息桥接落盘验证。
+- 版本升级为 `0.1.1`，Debian 包为 `0.1.1-1`，可由已安装的 `0.1.0-1`
+  直接升级。
+
 ### Added — E2 onboarding workflows and Debian package
 
 - Web/GUI 新增最多 30 个本地扫描预设；预设复用官方扫描 token，可保存、

@@ -224,6 +224,26 @@ class PageTests(unittest.TestCase):
         ):
             self.assertIn(f'value="{value}"', DEVICE_HTML)
 
+    def test_scan_result_contrast_is_theme_safe(self):
+        for token in (
+            ".progress.success",
+            ".progress.warning",
+            ".progress.failure",
+            ".progress.success { display: block; background: #e5f4e7; color: #174c22;",
+            ".progress.success { background: #1d3523; color: #d3f2d8;",
+        ):
+            self.assertIn(token, DEVICE_HTML)
+        self.assertNotIn("progress.style.background", DEVICE_HTML)
+        self.assertIn(
+            'setScanStatus(message, result.close_error ? "warning" : "success")',
+            DEVICE_HTML,
+        )
+
+    def test_device_page_has_native_download_bridge(self):
+        self.assertIn('messageHandlers.kyoceraDownload', DEVICE_HTML)
+        self.assertIn("link.addEventListener(\"click\"", DEVICE_HTML)
+        self.assertIn('setScanStatus("正在下载 "', DEVICE_HTML)
+
     def test_device_page_has_presets_folder_and_settings(self):
         for element_id in (
             "preset-select",
@@ -432,7 +452,8 @@ class ScanApiTests(unittest.TestCase):
         )
         self.assertEqual(status, 200)
         self.assertEqual(headers["Content-Type"], "image/png")
-        self.assertIn("attachment;", headers["Content-Disposition"])
+        self.assertIn('filename="scan.png"', headers["Content-Disposition"])
+        self.assertIn("filename*=UTF-8''scan.png", headers["Content-Disposition"])
         self.assertTrue(data.startswith(b"\x89PNG"))
 
     def test_invalid_scan_options_return_json_400(self):

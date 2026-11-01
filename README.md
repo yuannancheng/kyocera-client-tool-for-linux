@@ -166,7 +166,7 @@ python3 -m pip install --user .
 
 ```bash
 python3 tools/build_deb.py
-sudo apt install ./dist/kyocera-monitor_0.1.0-1_all.deb
+sudo apt install ./dist/kyocera-monitor_0.1.1-1_all.deb
 ```
 
 构建过程只使用本地 Python 和 `dpkg-deb`，不联网。包的运行依赖声明为
@@ -368,7 +368,7 @@ python3 -m unittest discover -s tests -v
 python3 tools/check_publication.py
 ```
 
-当前 247 个测试覆盖 PJL 解析/帧格式、分段补发与合并、KGETOBJ 结构化字段、
+当前 253 个测试覆盖 PJL 解析/帧格式、分段补发与合并、KGETOBJ 结构化字段、
 147 项配置对象表与 CLI 配置导出、`KMUTLCFG` UI 控件字符串提取、
 147 项对象→模型偏移映射与首批控件→OID 对照、
 配置 SNMP 后备读取、
