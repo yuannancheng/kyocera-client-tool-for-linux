@@ -1,8 +1,9 @@
-"""Execute the one explicitly authorized Auto error clear experiment.
+"""Execute explicitly authorized single-field configuration experiments.
 
-The executor supports only item 2 changing from OFF to ON and rolling back to
-OFF over SNMPv2c.  Every forward attempt is followed by a rollback attempt and
-a same-OID readback, including when the forward write or verification fails.
+The executors support only item 2 Auto error clear and item 50 Quiet mode,
+each changing from OFF to ON and rolling back to OFF over SNMPv2c. Every
+forward attempt is followed by a rollback attempt and a same-OID readback,
+including when the forward write or verification fails.
 """
 
 from __future__ import annotations
@@ -13,6 +14,7 @@ from typing import Any
 
 from .config_write_plan import (
     AUTHORIZATION_SCOPE,
+    QUIET_MODE_AUTHORIZATION_SCOPE,
     WRITE_PLAN_FORMAT,
     WRITE_PLAN_VERSION,
 )
@@ -71,20 +73,20 @@ def _wait_for_value(
         time.sleep(min(interval, remaining))
 
 
-def execute_auto_error_clear_experiment(
+def _validate_plan(
     client: SnmpClient,
     plan: dict[str, Any],
     confirmation_token: str,
     *,
-    readback_timeout: float = 4.0,
-    readback_interval: float = 0.25,
-) -> dict[str, Any]:
-    """Run the authorized OFF -> ON -> OFF experiment."""
+    authorization_scope: str,
+    item_id: int,
+    label: str,
+) -> None:
     if plan.get("format") != WRITE_PLAN_FORMAT:
         raise ConfigWriteExecutionError("unrecognized write plan format")
     if plan.get("version") != WRITE_PLAN_VERSION:
         raise ConfigWriteExecutionError("unsupported write plan version")
-    if plan["execution"].get("authorization_scope") != AUTHORIZATION_SCOPE:
+    if plan["execution"].get("authorization_scope") != authorization_scope:
         raise ConfigWriteExecutionError("unexpected write authorization scope")
     if plan["transport"] != "snmp":
         raise ConfigWriteExecutionError("this executor supports SNMP only")
@@ -97,8 +99,10 @@ def execute_auto_error_clear_experiment(
     expected_token = plan["confirmation"]["token"]
     if not hmac.compare_digest(expected_token, _confirmation_value(confirmation_token)):
         raise ConfigWriteExecutionError("confirmation token does not match plan")
-    if plan["object"]["item_id"] != 2:
-        raise ConfigWriteExecutionError("only Auto error clear is authorized")
+    if plan["object"]["item_id"] != item_id:
+        raise ConfigWriteExecutionError(
+            f"only {label} is authorized by this executor"
+        )
     if (
         plan["before"]["value"] != 0
         or plan["current"]["value"] != 0
@@ -106,9 +110,29 @@ def execute_auto_error_clear_experiment(
         or plan["rollback"]["value"] != 0
     ):
         raise ConfigWriteExecutionError(
-            "authorized transition must be Auto error clear OFF -> ON -> OFF"
+            f"authorized transition must be {label} OFF -> ON -> OFF"
         )
 
+
+def _execute_off_on_off_experiment(
+    client: SnmpClient,
+    plan: dict[str, Any],
+    confirmation_token: str,
+    *,
+    authorization_scope: str,
+    item_id: int,
+    label: str,
+    readback_timeout: float,
+    readback_interval: float,
+) -> dict[str, Any]:
+    _validate_plan(
+        client,
+        plan,
+        confirmation_token,
+        authorization_scope=authorization_scope,
+        item_id=item_id,
+        label=label,
+    )
     oid = plan["object"]["absolute_oid"]
     before_value = _read_integer(client, oid)
     if before_value != 0:
@@ -120,7 +144,9 @@ def execute_auto_error_clear_experiment(
         "status": "rollback_failed",
         "target": plan["target"],
         "transport": "snmp",
-        "authorization_scope": AUTHORIZATION_SCOPE,
+        "authorization_scope": authorization_scope,
+        "item_id": item_id,
+        "label": label,
         "oid": oid,
         "preflight_value": before_value,
         "requested_value": 1,
@@ -181,3 +207,74 @@ def execute_auto_error_clear_experiment(
     else:
         result["status"] = "rollback_failed"
     return result
+
+
+def execute_auto_error_clear_experiment(
+    client: SnmpClient,
+    plan: dict[str, Any],
+    confirmation_token: str,
+    *,
+    readback_timeout: float = 4.0,
+    readback_interval: float = 0.25,
+) -> dict[str, Any]:
+    """Run the authorized Auto error clear OFF -> ON -> OFF experiment."""
+    return _execute_off_on_off_experiment(
+        client,
+        plan,
+        confirmation_token,
+        authorization_scope=AUTHORIZATION_SCOPE,
+        item_id=2,
+        label="Auto error clear",
+        readback_timeout=readback_timeout,
+        readback_interval=readback_interval,
+    )
+
+
+def execute_quiet_mode_experiment(
+    client: SnmpClient,
+    plan: dict[str, Any],
+    confirmation_token: str,
+    *,
+    readback_timeout: float = 4.0,
+    readback_interval: float = 0.25,
+) -> dict[str, Any]:
+    """Run the authorized Quiet mode OFF -> ON -> OFF experiment."""
+    return _execute_off_on_off_experiment(
+        client,
+        plan,
+        confirmation_token,
+        authorization_scope=QUIET_MODE_AUTHORIZATION_SCOPE,
+        item_id=50,
+        label="Quiet mode",
+        readback_timeout=readback_timeout,
+        readback_interval=readback_interval,
+    )
+
+
+def execute_authorized_config_experiment(
+    client: SnmpClient,
+    plan: dict[str, Any],
+    confirmation_token: str,
+    *,
+    readback_timeout: float = 4.0,
+    readback_interval: float = 0.25,
+) -> dict[str, Any]:
+    """Dispatch only the exact single-field experiments implemented above."""
+    scope = plan.get("execution", {}).get("authorization_scope")
+    if scope == AUTHORIZATION_SCOPE:
+        return execute_auto_error_clear_experiment(
+            client,
+            plan,
+            confirmation_token,
+            readback_timeout=readback_timeout,
+            readback_interval=readback_interval,
+        )
+    if scope == QUIET_MODE_AUTHORIZATION_SCOPE:
+        return execute_quiet_mode_experiment(
+            client,
+            plan,
+            confirmation_token,
+            readback_timeout=readback_timeout,
+            readback_interval=readback_interval,
+        )
+    raise ConfigWriteExecutionError("unexpected write authorization scope")

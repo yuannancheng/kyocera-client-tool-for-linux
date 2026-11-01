@@ -42,7 +42,7 @@ NEXT_WRITE_CANDIDATES: tuple[CandidateDefinition, ...] = (
         ui_dialog="0x006b",
         ui_control="0x0455",
         model_offset="0x0018",
-        mapping_confidence="static_verified",
+        mapping_confidence="device_verified",
         static_evidence={
             "ui_initialization": (
                 "0x00405ff4 in FUN_00405c10: GetDlgItem(0x455), "
@@ -62,13 +62,19 @@ NEXT_WRITE_CANDIDATES: tuple[CandidateDefinition, ...] = (
                 "0x0040314f in FUN_00402ec0: relative prefix '1.'"
             ),
             "reset_request_set_by_item50": "false",
+            "device_validation": (
+                "2026-11-01 MA2000w SNMPv2c SET OFF -> ON returned Integer "
+                "1 and read back 1; SET OFF returned Integer 0 and read back "
+                "0; full configuration comparison had no persistent or "
+                "read-status changes."
+            ),
         },
         rationale=(
             "The checked Client Tool path connects checkbox 0x0455 to "
             "snapshot offset 0x0018, compares it in diff case 0x31, and "
             "serializes OID 1001.2.1.1.1.14.1 as an integer 0/1.  The "
-            "network and USB writers consume the same record.  No device "
-            "write/readback experiment has yet established behavior."
+            "network and USB writers consume the same record.  MA2000w "
+            "SNMPv2c write/readback and rollback have now been verified."
         ),
     ),
 )
@@ -147,10 +153,9 @@ def build_config_candidate_report(snapshot: dict[str, Any]) -> dict[str, Any]:
             _append_once(read_blockers, "unexpected_current_value")
 
         write_blockers = list(read_blockers)
-        _append_once(write_blockers, "same_oid_write_readback_unverified")
         _append_once(
             write_blockers,
-            "device_failure_and_reboot_behavior_unverified",
+            "device_failure_recovery_unverified",
         )
         _append_once(write_blockers, "explicit_user_authorization_required")
 
@@ -216,7 +221,7 @@ def build_config_candidate_report(snapshot: dict[str, Any]) -> dict[str, Any]:
         "recommendation": {
             "item_id": ready["item_id"] if ready is not None else None,
             "status": (
-                "ready_for_authorization_review"
+                "device_verified_explicit_authorization_required"
                 if ready is not None
                 else "blocked"
             ),

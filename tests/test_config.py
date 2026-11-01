@@ -42,6 +42,7 @@ from kyocera_monitor.config_write_plan import (
 from kyocera_monitor.config_write_executor import (
     ConfigWriteExecutionError,
     execute_auto_error_clear_experiment,
+    execute_quiet_mode_experiment,
 )
 from kyocera_monitor.pjl import UEL
 from kyocera_monitor.snmp import BerError, VarBind
@@ -245,7 +246,7 @@ class ResponseTests(unittest.TestCase):
         self.assertNotIn("label", by_id[5])
         self.assertEqual(by_id[50]["label"], "Quiet mode")
         self.assertEqual(by_id[50]["display"], "OFF")
-        self.assertEqual(by_id[50]["confidence"], "inferred")
+        self.assertEqual(by_id[50]["confidence"], "verified")
         self.assertEqual(by_id[59]["value"], "192.168.0.220")
         self.assertEqual(by_id[65]["value"], "public")
         self.assertEqual(by_id[65]["label"], "SNMP read community")
@@ -625,7 +626,7 @@ class ConfigWritePlanTests(unittest.TestCase):
         with self.assertRaisesRegex(ConfigWritePlanError, "accepts only"):
             build_config_write_plan(self.baseline, current, "2=2")
 
-    def test_quiet_mode_plan_is_audit_only(self):
+    def test_quiet_mode_plan_is_limited_to_authorized_experiment(self):
         current = build_config_snapshot(
             copy.deepcopy(self.records),
             transport="snmp",
@@ -658,20 +659,14 @@ class ConfigWritePlanTests(unittest.TestCase):
             "1.3.6.1.4.1.1347.1001.2.1.1.1.14.1",
         )
         self.assertTrue(plan["review"]["plan_preconditions_valid"])
-        self.assertFalse(plan["review"]["executor_supported"])
-        self.assertFalse(plan["review"]["ready_for_executor_implementation"])
-        self.assertFalse(plan["execution"]["allowed"])
+        self.assertTrue(plan["review"]["executor_supported"])
+        self.assertTrue(plan["review"]["ready_for_executor_implementation"])
+        self.assertTrue(plan["execution"]["allowed"])
         self.assertEqual(
             plan["execution"]["authorization_scope"],
-            "no-device-write-authorized-v1",
+            "quiet-mode-off-to-on-then-off-v1",
         )
-        for blocker in (
-            "same_oid_write_readback_unverified",
-            "device_failure_and_reboot_behavior_unverified",
-            "executor_not_implemented",
-            "explicit_user_authorization_required",
-        ):
-            self.assertIn(blocker, plan["execution"]["blockers"])
+        self.assertEqual(plan["execution"]["blockers"], [])
         self.assertEqual(len(plan["confirmation"]["token"]), 64)
 
     def test_quiet_mode_plan_blocks_noop_and_unreadable_current(self):
@@ -752,7 +747,8 @@ class ConfigWritePlanTests(unittest.TestCase):
             payload = json.loads(output.getvalue())
             plan = payload["write_plan"]
             self.assertTrue(plan["review"]["plan_preconditions_valid"])
-            self.assertFalse(plan["execution"]["allowed"])
+            self.assertTrue(plan["review"]["executor_supported"])
+            self.assertTrue(plan["execution"]["allowed"])
 
 
 class ConfigWriteCandidateTests(unittest.TestCase):
@@ -773,7 +769,7 @@ class ConfigWriteCandidateTests(unittest.TestCase):
         self.assertEqual(report["recommendation"]["item_id"], 50)
         self.assertEqual(
             report["recommendation"]["status"],
-            "ready_for_authorization_review",
+            "device_verified_explicit_authorization_required",
         )
         candidate = report["candidates"][0]
         self.assertEqual(candidate["item_id"], 50)
@@ -783,18 +779,18 @@ class ConfigWriteCandidateTests(unittest.TestCase):
         self.assertFalse(candidate["write"]["allowed"])
         self.assertEqual(
             candidate["evidence"]["mapping_confidence"],
-            "static_verified",
+            "device_verified",
         )
         self.assertNotIn(
             "field_mapping_inferred",
             candidate["write"]["blockers"],
         )
-        self.assertIn(
+        self.assertNotIn(
             "same_oid_write_readback_unverified",
             candidate["write"]["blockers"],
         )
         self.assertIn(
-            "device_failure_and_reboot_behavior_unverified",
+            "device_failure_recovery_unverified",
             candidate["write"]["blockers"],
         )
         self.assertIn(
@@ -806,6 +802,7 @@ class ConfigWriteCandidateTests(unittest.TestCase):
         self.assertIn("0x00401b57", evidence["network_writer"])
         self.assertIn("0x0040314f", evidence["usb_writer"])
         self.assertEqual(evidence["reset_request_set_by_item50"], "false")
+        self.assertIn("read back 1", evidence["device_validation"])
 
     def test_unreadable_or_unknown_values_block_the_candidate(self):
         missing = copy.deepcopy(self.records)
@@ -871,10 +868,11 @@ class FakeSnmpWriteClient:
     def __init__(
         self,
         *,
+        oid: str = "1.3.6.1.4.1.1347.43.5.1.1.34.1",
         fail_on_call: int | None = None,
         failure: BaseException | None = None,
     ):
-        self.oid = "1.3.6.1.4.1.1347.43.5.1.1.34.1"
+        self.oid = oid
         self.value = 0
         self.fail_on_call = fail_on_call
         self.failure = failure
@@ -897,6 +895,7 @@ class ConfigWriteExecutorTests(unittest.TestCase):
     def setUp(self):
         self.records = parse_config_response(
             kgetobj("1.43.5.1.1.34.1", 0, 2, "0")
+            + kgetobj("1.1001.2.1.1.1.14.1", 0, 2, "0")
             + kgetobj("1.40.10.1.1.4.1", 0, 64, "4330413830304443")
         )
         self.baseline = build_config_snapshot(
@@ -913,6 +912,12 @@ class ConfigWriteExecutorTests(unittest.TestCase):
             self.baseline,
             current,
             "2=ON",
+            created_at=datetime(2026, 11, 1, tzinfo=timezone.utc),
+        )
+        self.quiet_plan = build_config_write_plan(
+            self.baseline,
+            current,
+            "50=ON",
             created_at=datetime(2026, 11, 1, tzinfo=timezone.utc),
         )
 
@@ -981,6 +986,31 @@ class ConfigWriteExecutorTests(unittest.TestCase):
         self.assertEqual(client.calls, [1, 0])
         self.assertEqual(client.value, 0)
 
+    def test_quiet_mode_forward_and_rollback(self):
+        oid = "1.3.6.1.4.1.1347.1001.2.1.1.1.14.1"
+        client = FakeSnmpWriteClient(oid=oid)
+        result = execute_quiet_mode_experiment(
+            client,
+            self.quiet_plan,
+            self.quiet_plan["confirmation"]["token"],
+            readback_timeout=0,
+        )
+        self.assertEqual(result["status"], "success")
+        self.assertEqual(result["item_id"], 50)
+        self.assertEqual(result["label"], "Quiet mode")
+        self.assertEqual(client.calls, [1, 0])
+        self.assertEqual(client.value, 0)
+
+    def test_quiet_mode_executor_rejects_auto_error_plan(self):
+        client = FakeSnmpWriteClient()
+        with self.assertRaisesRegex(ConfigWriteExecutionError, "scope"):
+            execute_quiet_mode_experiment(
+                client,
+                self.plan,
+                self.plan["confirmation"]["token"],
+            )
+        self.assertEqual(client.calls, [])
+
     def test_cli_applies_only_with_matching_token_and_rolls_back(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "baseline.json"
@@ -1013,6 +1043,41 @@ class ConfigWriteExecutorTests(unittest.TestCase):
         self.assertEqual(client.value, 0)
         payload = json.loads(output.getvalue())
         self.assertEqual(payload["write_execution"]["status"], "success")
+
+    def test_cli_dispatches_quiet_mode_experiment(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "baseline.json"
+            save_config_snapshot(path, self.baseline)
+            token = self.quiet_plan["confirmation"]["token"]
+            oid = "1.3.6.1.4.1.1347.1001.2.1.1.1.14.1"
+            client = FakeSnmpWriteClient(oid=oid)
+            output = io.StringIO()
+            with patch.object(
+                cli, "collect_config_snmp", return_value=self.records
+            ):
+                with patch.object(cli, "SnmpClient", return_value=client):
+                    with redirect_stdout(output):
+                        code = cli.main(
+                            [
+                                "--host",
+                                "printer",
+                                "--config",
+                                "--snmp",
+                                "--config-apply",
+                                str(path),
+                                "--config-set",
+                                "50=ON",
+                                "--config-confirm",
+                                token,
+                                "--json",
+                            ]
+                        )
+        self.assertEqual(code, 0)
+        self.assertEqual(client.calls, [1, 0])
+        payload = json.loads(output.getvalue())
+        execution = payload["write_execution"]
+        self.assertEqual(execution["status"], "success")
+        self.assertEqual(execution["item_id"], 50)
 
 
 if __name__ == "__main__":

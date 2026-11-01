@@ -204,7 +204,8 @@ community、Wi-Fi SSID、系统联系人或位置，不能提交到公开仓库�
 退出码为 `1`，一致时为 `0`。Wi-Fi 连接状态、RSSI 和信道作为只读易变观测
 单独列出，不把自然变化计为配置差异；配置值变化和读取状态变化仍返回 `1`。
 当前不发送 PJL `KSETOBJ`；唯一的写入能力是用户显式确认后，通过 SNMPv2c
-执行 `Auto error clear OFF -> ON -> OFF` 回滚实验。写入边界见
+执行 `Auto error clear` 或 `Quiet mode` 的 `OFF -> ON -> OFF` 回滚实验。
+写入边界见
 `docs/reverse-engineering/config-write-safety.md`。
 
 下一个写入候选可先做只读资格审查：
@@ -218,16 +219,18 @@ kyocera-monitor --host 192.168.0.220 --config --snmp \
 可读、类型是否为整数、当前值是否落在已记录的 `OFF/ON` 范围，并把“当前读取
 有效”和“允许写入”分开。官方静态路径已确认 `0x455` 控件值经模型 `+0x18`
 序列化为该 OID 的整数 `0/1`，网络和 USB 写入器都消费同一记录；原厂 item 50
-差异分支不设置控制器重启请求。实际设备写入回读、失败/重启行为和用户授权
-仍未确认，因此 `mapping_confidence` 为 `static_verified`，但
-`write.allowed` 始终为 `false`。
+差异分支不设置控制器重启请求。MA2000w 已通过 SNMPv2c 写为 `ON`、回读 `1`、
+恢复 `OFF` 并回读 `0`；随后 147 项比较无持久配置变化或读取状态变化。
+`mapping_confidence` 因而是 `device_verified`，但候选报告不构成后续写入授权，
+`write.allowed` 仍固定为 `false`，并保留失败恢复和再次明确授权的边界。
 `--json` 只输出 `candidate_report` 摘要，不附带完整 147 项对象表；该模式不
 直接生成写入计划，也不发送任何 `KSETOBJ` 或 SNMP SET。
 
 可基于基线生成单字段写入预演。计划器支持：
 
-- item 2 `Auto error clear`：可继续交给唯一获准的 SNMPv2c 回滚执行器；
-- item 50 `Quiet mode`：只生成审计计划，`execution.allowed` 固定为 `false`。
+- item 2 `Auto error clear`：可继续交给获准的 SNMPv2c 回滚执行器；
+- item 50 `Quiet mode`：可交给相同令牌、相同基线和同 OID 回读约束的一次性
+  回滚执行器。
 
 ```bash
 kyocera-monitor --host 192.168.0.220 --config --snmp \
@@ -239,9 +242,8 @@ kyocera-monitor --host 192.168.0.220 --config --snmp \
 
 计划会检查目标、传输、全表配置漂移和读取状态变化，并给出当前值、目标值、
 回滚值、官方 `KMUTLCFG.exe` 命令预览、SNMP 参数预览和 SHA-256 确认令牌。
-`--json` 输出完整的 `write_plan`。item 50 的计划还会保留同 OID 写入回读、
-设备失败/重启行为、执行器和用户授权 blockers；令牌只用于计划审计，不能交给
-当前执行器。
+`--json` 输出完整的 `write_plan`。令牌、基线、目标、旧值和新值必须完全一致，
+执行器才允许发出 SET。
 
 获准的真机实验使用同一基线、同一赋值和计划返回的令牌：
 
@@ -251,16 +253,17 @@ kyocera-monitor --host 192.168.0.220 --config --snmp \
   --config-set 2=ON --config-confirm sha256:<token>
 ```
 
-执行器仅支持 SNMPv2c 和 `Auto error clear OFF -> ON -> OFF`。SET 后必须读到
-`1`，随后立即写回 `0` 并再次读到 `0`；即使正向写入或回读失败也会尝试回滚。
-其他对象、反向操作、PJL 写入和设备重置均被拒绝。
+执行器仅支持 SNMPv2c、item 2 `Auto error clear` 和 item 50 `Quiet mode`
+的 `OFF -> ON -> OFF`。SET 后必须读到 `1`，随后立即写回 `0` 并再次读到
+`0`；即使正向写入或回读失败也会尝试回滚。其他对象、反向操作、PJL 写入和
+设备重置均被拒绝。
 
 `tools/clienttool_ui_strings.py` 只提取控件 ID、字符串资源 ID、文本是否存在
 及其长度，不输出本地化标签或组合框选项，生成
 `docs/reverse-engineering/data/clienttool-ui-controls.tsv`。结合模型偏移后，
 `43.5.1.1.23.1` 标为睡眠时间、`42.5.1.1.43.1` 标为关机定时器、
-`1001.2.1.1.1.14.1` 标为 Quiet mode；三者仍标记为
-`confidence: "inferred"`，尚未做写入回读验证。
+`1001.2.1.1.1.14.1` 标为 Quiet mode；Quiet mode 已通过真机写入回读，
+另外两项仍标记为 `confidence: "inferred"`。
 
 `tools/clienttool_config_offsets.py` 读取本地静态分析导出，提取 147 项对象
 到界面模型偏移的映射，生成

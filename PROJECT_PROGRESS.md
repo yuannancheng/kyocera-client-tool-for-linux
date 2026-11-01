@@ -11,7 +11,7 @@
 MA2000w。
 
 当前结论：**MA2000w 网络扫描已在 Linux 端独立打通。** 只读监控、设备发现、
-本地 Web/GUI、配置只读导出、配置安全基线、单页扫描和首个受控配置写入均可用；
+本地 Web/GUI、配置只读导出、配置安全基线、单页扫描和两项受控配置写入均可用；
 彩色与灰度 RAW、
 官方扫描参数覆盖和多页状态机处理均已实现。2026-10-29 使用 32 位 Wine
 诊断宿主捕获官方 DLL 的真实 SOAP 1.2 请求，随后在不依赖官方 DLL 的 Python
@@ -76,7 +76,8 @@ BMP 输出和关会话。最大风险已从“协议方法猜测”转为“其�
 | 配置只读基线与差异 | `DONE` | 147 项私密快照、SHA-256、通道/目标绑定、只读差异测试 |
 | 配置单字段写入计划 | `DONE` | item 2 dry-run、漂移阻断、回滚预演和确认令牌；不执行写入 |
 | 配置写入与回滚 | `DONE` | MA2000w item 2 SNMPv2c OFF→ON→OFF；SET echo、双重回读和全表恢复一致 |
-| item 50 审计写入计划 | `DONE` | OFF/ON 计划、回滚、预览和令牌；执行固定阻断，测试覆盖 3 项 |
+| item 50 审计写入计划 | `DONE` | OFF/ON 计划、回滚、预览和令牌；测试覆盖 3 项 |
+| item 50 写入与回滚 | `DONE` | MA2000w SNMPv2c OFF→ON→OFF；双重回读成功，全表无持久漂移 |
 
 ## 已验证能力
 
@@ -123,17 +124,17 @@ BMP 输出和关会话。最大风险已从“协议方法猜测”转为“其�
   任何写命令。
 - **配置写入计划**：`--config-plan` 支持 item 2 `Auto error clear` 和
   item 50 `Quiet mode` 的 OFF/ON 计划，要求全表无持久配置漂移和读取状态
-  变化，并生成当前值、目标值、回滚值、PJL/SNMP 预览及确认令牌。item 50
-  固定 `execution.allowed=false`，令牌不能被现有执行器消费。
-- **单字段配置写入**：只有 SNMPv2c `Auto error clear OFF -> ON -> OFF`
-  可由匹配令牌的 `--config-apply` 执行。MA2000w 真机 SET/回读/回滚均成功；
-  操作后完整 147 项比较一致，未观察到重启。PJL 写入和其他字段未开放。
-- **下一候选只读审查**：`--config-candidates` 评估 item 50 `Quiet mode`
-  的读取状态、Integer 类型和 `OFF/ON` 枚举；`write.allowed` 固定为 `false`，
-  明确保留缺少写入回读、设备失败/重启证据和授权缺失等 blockers。
-- **item 50 静态写入路径**：官方控件 `0x455` → 模型 `+0x18` → 差异
-  case `0x31` → OID `1001.2.1.1.1.14.1`，序列化为整数 `0/1`；网络/USB
-  写入器一致，item 50 分支不设置原厂控制器重置请求。尚未做真机写入。
+  变化，并生成当前值、目标值、回滚值、PJL/SNMP 预览及确认令牌。
+- **单字段配置写入**：SNMPv2c `Auto error clear` 和 `Quiet mode` 的
+  `OFF -> ON -> OFF` 可由匹配令牌、基线和 scope 的 `--config-apply` 执行。
+  MA2000w 两个字段的 SET/回读/回滚均成功；操作后完整 147 项比较均无持久
+  配置变化，未观察到重启或断网。PJL 写入和其他字段未开放。
+- **item 50 候选与设备证据**：`--config-candidates` 评估读取状态、Integer
+  类型和 `OFF/ON` 枚举；`mapping_confidence=device_verified`。候选报告中的
+  `write.allowed` 仍固定为 `false`，保留设备失败恢复和再次明确授权边界。
+- **item 50 写入路径**：官方控件 `0x455` → 模型 `+0x18` → 差异 case `0x31`
+  → OID `1001.2.1.1.1.14.1`，整数 `0/1`；MA2000w SNMPv2c 已写入 `1`、
+  回读 `1`、恢复 `0`、回读 `0`。设备仍可访问，全表无持久漂移。
 
 ## 当前优先级
 
@@ -142,11 +143,7 @@ BMP 输出和关会话。最大风险已从“协议方法猜测”转为“其�
    对照官方 KMIP 输出。没有相应硬件时不得标记为跨机型兼容已验证。
 2. **P1：USB 硬件验证。** 接入设备后跑 `--list-usb`、`--usb --json`，与 TCP
    结果逐项对照；同时验证断线重连和睡眠唤醒。
-3. **P2：item 50 `Quiet mode` 真机实验。** 已完成只读候选、官方静态读写
-   路径、失败分支核对和审计计划。下一步仅在用户明确确认对象、旧值、新值、
-   回滚值和可能重启副作用后，实现并执行一次受限 SET/同 OID 回读/恢复；
-   当前不得向该字段发送 SET。
-4. **P3：按需补字段语义。** OID 全量清点冻结；只有阻塞扫描或写入时才查新字段。
+3. **P3：按需补字段语义。** OID 全量清点冻结；只有阻塞扫描或写入时才查新字段。
 
 ## 待验证假设
 
@@ -218,7 +215,39 @@ BMP 输出和关会话。最大风险已从“协议方法猜测”转为“其�
 - 干净归档和 Git bundle 位于 `/tmp/kyocera-client-tool-for-linux-20261018.tar.gz`
   和 `/tmp/kyocera-client-tool-for-linux-20261018.bundle`。
 
-## 最近一次工作交接（第三十九轮）
+## 最近一次工作交接（第四十轮）
+
+日期：2026-11-01。范围：在用户明确确认后实现并执行一次 MA2000w item 50
+`Quiet mode` SNMPv2c `OFF -> ON -> OFF` 实验。
+
+完成与证据：
+
+- 新增 `Quiet mode` 专项执行器和 CLI 分发；只接受
+  `quiet-mode-off-to-on-then-off-v1`、item 50、同 OID 和精确
+  `OFF -> ON -> OFF`，并保留令牌、目标、基线及预写值检查。
+- 本地基线为 `/tmp/kyocera-quiet-mode.59mM4w/baseline.json`，权限 `0600`；
+  文件 SHA-256 为
+  `73f601ec4706ee5ab49aad275cb223875b8d108cd1a1b5c94f319b8c76b5153c`。
+  基线和计划前读取均为 `96/147`，item 50 为 `0/OFF`。
+- 计划令牌为
+  `sha256:362f7173a67c9bc168784cc958a3410fcadbedc0c9d12af3f35c20cbd9870e3e`。
+  执行结果：SET ON 成功，回读 `1`；SET OFF 成功，回读 `0`；状态 `success`。
+- 实验后完整 147 项比较为 0 个持久配置变化、1 个易变观测变化、0 个读取
+  状态变化、146 项不变。唯一变化为 Wi-Fi RSSI `-69 dBm -> -68 dBm`；
+  设备持续可访问，未观察到断网或控制器重置。
+- `Quiet mode` 业务标签升级为 `confidence=verified`；候选报告升级为
+  `mapping_confidence=device_verified`，移除同 OID 写入回读 blocker，保留
+  设备失败恢复和再次授权 blockers。
+- 专项测试 20/20；全量测试 210/210；公开树检查通过。本次只发送了已授权的
+  item 50 SNMP SET/回读和只读全表采集，没有发送 PJL `KSETOBJ` 或重置命令。
+
+遗留问题：
+
+- 尚未实测设备拒绝 SET、写后超时、回滚失败或断线恢复。
+- 尚未比较 item 50 的 USB `KSETOBJ` 与 SNMP SET 实际设备行为。
+- 其他字段写入仍需逐项静态审查、计划、真机回读和新的明确授权。
+
+## 历史交接（第三十九轮）
 
 日期：2026-11-01。范围：把 item 50 从只读候选推进到审计计划和静态失败边界
 核对；没有发送设备配置写入或重置命令。

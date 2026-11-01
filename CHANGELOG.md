@@ -2,20 +2,25 @@
 
 ## 2026-11-01
 
-### Added — audit-only Quiet mode write plans
+### Added — verified Quiet mode write and rollback
 
-- 扩展 `--config-plan`，item 50 `Quiet mode` 现在可从完整性受保护的基线生成
-  审计计划，包含当前值、目标值、回滚值、PJL/SNMP 命令预览和 SHA-256 令牌。
-- item 50 计划固定 `execution.allowed=false`，保留同 OID 写入回读、设备
-  失败/重启行为、执行器缺失和用户授权 blockers；现有 `--config-apply` 无法
-  消费该令牌。
+- 扩展 `--config-plan` 和 `--config-apply`，item 50 `Quiet mode` 可生成
+  当前值、目标值、回滚值、PJL/SNMP 预览和 SHA-256 令牌，并交给只接受
+  `OFF -> ON -> OFF` 的专项执行器。
+- 新增 `quiet-mode-off-to-on-then-off-v1` scope 和 CLI 分发；令牌、基线、
+  目标、字段、旧值及新值必须全部匹配，预写值不是 `OFF` 时不会发送 SET。
 - 修正 dry-run CLI 退出码：计划前置条件有效时返回 `0`，不再把“该字段尚无
   执行器”误报为命令失败；no-op、漂移或读取不稳定仍返回 `1`。
 - 在哈希匹配的 `KMUTLCFG.exe` 导出上复核失败处理：SNMP error-status 非零
   会记录失败原因/对象，无响应单独记录 timeout；USB 等待响应最长 50 秒并把
-  `STATUS!=0` 计为失败。这些是客户端静态行为，不是 Quiet mode 设备端写入证据。
-- 新增 3 个专项测试；全量测试 207/207；本次未向设备发送 SET、`KSETOBJ`
-  或重置命令。
+  `STATUS!=0` 计为失败。
+- MA2000w 真机完成 item 50 `OFF -> ON -> OFF`：两次 SET 成功，同 OID 回读
+  分别为 `1` 和 `0`。随后 147 项比较无持久配置变化、无读取状态变化；
+  唯一变化为 Wi-Fi RSSI 自然波动。
+- `Quiet mode` 目录标签升级为 `verified`，候选报告升级为
+  `device_verified`；候选审查仍不允许替代后续明确授权或证明失败恢复行为。
+- 专项测试 20/20；全量测试 210/210；公开树检查通过。本次只发送已授权的
+  item 50 SNMP SET/回读和只读全表采集，没有发送 PJL `KSETOBJ` 或重置命令。
 
 ### Added — read-only next configuration write candidate review
 

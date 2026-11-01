@@ -214,7 +214,7 @@ CONFIG_KNOWN: dict[str, dict[str, object]] = {
     "1001.2.1.1.1.14.1": {
         "label": "Quiet mode",
         "choices": {0: "OFF", 1: "ON"},
-        "confidence": "inferred",
+        "confidence": "verified",
     },
     # Wi-Fi status page (KMUTLCFG dialog 0x00f3): each object is read
     # directly into the model slot that the page displays.  The enums come

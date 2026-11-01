@@ -22,6 +22,7 @@ WRITE_PLAN_FORMAT = "kyocera-client-config-write-plan"
 WRITE_PLAN_VERSION = 2
 
 AUTHORIZATION_SCOPE = "auto-error-clear-off-to-on-then-off-v1"
+QUIET_MODE_AUTHORIZATION_SCOPE = "quiet-mode-off-to-on-then-off-v1"
 
 
 class ConfigWritePlanError(ValueError):
@@ -40,8 +41,8 @@ class SafeIntegerSetting:
 
 
 # Candidates intentionally have tiny, independently evidenced state spaces.
-# They may generate audit-only plans even when no device-write executor is
-# authorized.  Add fields only after their official mapping is verified.
+# Executors remain limited to the exact transitions recorded here.  Add fields
+# only after their official mapping and rollback behavior are reviewed.
 SAFE_INTEGER_SETTINGS: dict[int, SafeIntegerSetting] = {
     2: SafeIntegerSetting(
         item_id=2,
@@ -65,20 +66,17 @@ SAFE_INTEGER_SETTINGS: dict[int, SafeIntegerSetting] = {
         reason=(
             "Native main-dialog control 0x0455 maps through snapshot offset "
             "0x0018 and diff case 0x31 to OID 1001.2.1.1.1.14.1. The official "
-            "binary serializes it as integer 0/1; no device write/readback "
-            "experiment has established acceptance or reboot behavior."
+            "binary serializes it as integer 0/1. MA2000w accepted the "
+            "SNMPv2c ON and OFF writes, returned the expected same-OID "
+            "readbacks, and completed the full configuration recovery check."
         ),
-        authorization_scope="no-device-write-authorized-v1",
-        execution_blockers=(
-            "same_oid_write_readback_unverified",
-            "device_failure_and_reboot_behavior_unverified",
-            "executor_not_implemented",
-            "explicit_user_authorization_required",
-        ),
+        authorization_scope=QUIET_MODE_AUTHORIZATION_SCOPE,
+        authorized_transition=(0, 1),
         execution_note=(
-            "This is an audit-only plan. Quiet mode has a statically verified "
-            "serialization path, but no executor is authorized and no write "
-            "command may be derived from this plan for device execution."
+            "Execution is limited to the explicitly authorized Quiet mode "
+            "OFF -> ON -> OFF experiment. A matching confirmation token is "
+            "required, and rollback is attempted even when the forward write "
+            "or readback fails."
         ),
     ),
 }

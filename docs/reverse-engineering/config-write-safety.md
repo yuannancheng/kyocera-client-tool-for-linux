@@ -2,22 +2,24 @@
 
 ## 当前状态
 
-已实现**一个受控写入实验**：MA2000w 的 item 2 `Auto error clear`
-通过 SNMPv2c 从 `OFF` 写为 `ON`，回读确认后立即恢复 `OFF`。当前工具提供：
+已实现**两个受控写入实验**：MA2000w 的 item 2 `Auto error clear` 和 item 50
+`Quiet mode` 均通过 SNMPv2c 从 `OFF` 写为 `ON`，回读确认后立即恢复
+`OFF`。当前工具提供：
 
 - 147 项配置对象的只读 PJL/SNMP 采集；
 - 带 SHA-256 完整性校验的本地快照；
 - 传输通道和目标绑定；
 - 基线/当前值的只读差异检查。
 - `Auto error clear` 单字段 dry-run 写入计划、命令预览、回滚预演和确认令牌。
-- 仅限 SNMPv2c、相同计划与匹配确认令牌的 `OFF -> ON -> OFF` 执行器。
-- item 50 `Quiet mode` 的只读候选审查和独立审计计划；计划不授权或执行写入。
+- `Quiet mode` 的 dry-run 计划、命令预览、回滚预演和确认令牌。
+- 仅限 SNMPv2c、相同计划与匹配确认令牌的 item 2/item 50
+  `OFF -> ON -> OFF` 执行器。
 
 其他对象、PJL `KSETOBJ`、SNMPv1 SET、密码/网络字段和设备重置仍不可写。
 
-## 首个候选字段
+## item 2 Auto error clear
 
-当前只允许 item 2 `Auto error clear`：
+当前执行器只允许 item 2 `Auto error clear` 和 item 50 `Quiet mode`：
 
 | 属性 | 值 |
 | --- | --- |
@@ -31,7 +33,7 @@
 选择它的原因是状态空间小、不改变 IP/Wi-Fi/SNMP 认证等网络可达性，且当前值
 可直接作为回滚值。2026-11-01 已完成一次成功写入、回读和恢复。
 
-## 下一个候选的只读评估
+## item 50 的设备验证与候选报告
 
 `--config-candidates` 只审查 item 50 `Quiet mode`：
 
@@ -43,7 +45,7 @@
 | 类型 | Integer |
 | 当前已知枚举 | `0=OFF`、`1=ON` |
 | UI 证据 | 主对话框 `0x006b` 的控件 `0x0455` → 模型偏移 `0x0018` → item 50 |
-| 静态映射 | `static_verified` |
+| 映射证据 | `device_verified` |
 
 2026-11-01 对 MA2000w `192.168.0.220` 连续执行两次 SNMPv2c 全表只读采集，
 两次均为 `96/147` 项可读，item 50 均为 `STATUS=0`、值 `0/OFF`。报告会区分：
@@ -52,10 +54,11 @@
   枚举内；
 - `write.allowed`：表示是否已有足够证据和授权执行写入。
 
-后一项固定为 `false`。当前 blockers 包括没有同 OID 写入回读样本、失败/断线/
-设备重启行为未知，以及缺少用户明确授权。候选命令本身不生成计划或确认令牌。
+同 OID 写入回读和恢复已经由 MA2000w 真机验证。后一项仍固定为 `false`，
+因为候选报告本身不能授权后续写入；剩余 blockers 是设备失败恢复行为尚未
+实测，以及每次实验仍需要用户明确授权。候选命令本身不生成计划或确认令牌。
 
-### item 50 审计计划
+### item 50 计划与执行边界
 
 `--config-plan` 可以读取 item 50 的基线与当前完整只读采集，生成当前值、目标值、
 回滚值、PJL/SNMP 预览和 SHA-256 令牌：
@@ -65,13 +68,10 @@ kyocera-monitor --host 192.168.0.220 --config --snmp \
   --config-plan kyocera-config-baseline.json --config-set 50=ON
 ```
 
-该计划仍固定包含 `execution.allowed=false`，并列出
-`same_oid_write_readback_unverified`、
-`device_failure_and_reboot_behavior_unverified`、
-`executor_not_implemented` 和 `explicit_user_authorization_required`。
-计划器也拒绝当前值等于目标值的 no-op、配置漂移、读取状态变化和目标/传输
-不匹配。生成的令牌只标识这份审计计划，不能被现有 `--config-apply` 执行器
-消费。
+计划前置条件有效时，item 50 的 `execution.allowed=true`，授权范围为
+`quiet-mode-off-to-on-then-off-v1`。执行还要求相同基线、目标、赋值和 SHA-256
+令牌，并只允许 `0/OFF -> 1/ON -> 0/OFF`。计划器拒绝 no-op、配置漂移、
+读取状态变化和目标/传输不匹配；现有执行器拒绝 item 50 的反向转换或其他字段。
 
 ### item 50 静态读写数据流
 
@@ -90,10 +90,9 @@ kyocera-monitor --host 192.168.0.220 --config --snmp \
 | SNMP 失败处理 | `FUN_00401b20` 对 error-status 非零记录失败原因和失败对象，对无响应标记 timeout；`FUN_00402ec0` 等待 USB 响应最长 50 秒并把 `STATUS!=0` 计为失败 |
 
 结论边界：静态路径证明官方程序的控件值、OID、整数 `0/1` 编码以及网络/USB
-消费者一致；它不证明 MA2000w 接受 SET、写后何时回读稳定，或设备是否因内部
-逻辑自行重启。官方错误分支只说明客户端如何报告失败，不是设备接受或拒绝该
-字段的实测证据。`config.py` 的业务标签仍保留 `confidence=inferred`，因为
-该字段尚未完成真机写入回读；候选报告单独使用 `static_verified` 描述静态路径。
+消费者一致。MA2000w 后续实测确认该 OID 接受 SET、同 OID 回读为预期值并成功
+恢复；`config.py` 因而将该字段标为 `confidence=verified`。官方错误分支仍只
+说明客户端如何报告失败；真实设备拒绝、超时或恢复失败仍未实测。
 
 真机验证命令（仅发送配置 GET）：
 
@@ -105,6 +104,37 @@ kyocera-monitor --host 192.168.0.220 --config --snmp \
 两次运行中的第二次约 20 秒完成全表读取，只输出候选摘要，未发送
 `KSETOBJ`、SNMP SET 或设备复位。`--json` 同样只输出
 `candidate_report`，不附带完整配置对象表。
+
+### item 50 真机写入证据
+
+日期：2026-11-01。环境：MA2000w，SNMPv2c，主机 `192.168.0.220`。
+
+基线文件为本地 `/tmp` 中的 `0600` 快照，SHA-256 为
+`73f601ec4706ee5ab49aad275cb223875b8d108cd1a1b5c94f319b8c76b5153c`。
+基线及计划前的当前读取均为 `96/147`，item 50 均为 `0/OFF`。确认令牌
+为 `sha256:362f7173a67c9bc168784cc958a3410fcadbedc0c9d12af3f35c20cbd9870e3e`。
+
+运行范围：
+
+```text
+1.3.6.1.4.1.1347.1001.2.1.1.1.14.1 = 1
+SET response: success, echoed Integer 1
+readback: 1
+1.3.6.1.4.1.1347.1001.2.1.1.1.14.1 = 0
+SET response: success, echoed Integer 0
+readback: 0
+```
+
+结果：
+
+- SET ON、回读 ON、SET OFF、回读 OFF 全部成功，执行状态为 `success`；
+- 随后完整 147 项只读比较为 0 个配置变化、1 个易变观测变化、
+  0 个读取状态变化、146 项不变；
+- 唯一变化是 Wi-Fi RSSI `-69 dBm -> -68 dBm`，属于已区分的只读遥测；
+- 写入和回滚后设备仍可正常响应 SNMP，未观察到断网或需要控制器重置；
+- 该结果确认 MA2000w 上 item 50 的整数 `0/1` 写入、同 OID 回读和恢复路径。
+
+尚未实测设备拒绝 SET、写后超时、USB `KSETOBJ` 失败或回滚失败时的行为。
 
 ## Dry-run 计划
 
@@ -247,5 +277,6 @@ SSID、系统联系人/位置等站点数据，不得提交到公开仓库。
 - Wi-Fi、IP、SNMP community 等字段修改后是否会立即切断当前连接；
 - 其他机型的对象可写性和取值范围。
 
-现有真机样本只覆盖 `Auto error clear` 的成功写入和回滚。在上述问题对目标
-字段和机型仍有未知项时，不得把更广泛的配置写入标记为兼容或可用。
+现有真机样本覆盖 `Auto error clear` 和 `Quiet mode` 的成功写入与回滚；
+其他对象、失败恢复、USB 写入和其他机型仍有未知项，不得把更广泛的配置写入
+标记为兼容或可用。

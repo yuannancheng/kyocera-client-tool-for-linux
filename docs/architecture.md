@@ -22,7 +22,7 @@ kyocera_monitor/
   config_snapshot.py  配置基线、完整性校验、目标绑定和只读差异
   config_write_candidates.py 下一个写入候选的只读资格审查
   config_write_plan.py 单字段 dry-run、回滚字段和确认令牌
-  config_write_executor.py 唯一获准字段的 SNMPv2c 写入、回读和回滚
+  config_write_executor.py 获准字段的 SNMPv2c 写入、回读和回滚
 tools/
   pjl_probe.py          原始 PJL 探测
   snmp_probe.py         调用 kyocera_monitor.snmp 的 SNMP 命令行
@@ -74,16 +74,15 @@ MA2000w（`0482:0d51`），多个候选时要求显式 `--device`。
   配置，因此不进入仓库。写入边界详见
   `docs/reverse-engineering/config-write-safety.md`。
 - `--config-plan` 只生成审计用计划；item 2 `Auto error clear` 和 item 50
-  `Quiet mode` 都能生成命令预览、回滚值和确认令牌。`--config-apply` 的当前
-  唯一授权范围仍是 item 2 的 SNMPv2c `OFF -> ON -> OFF`；item 50 的
-  `execution.allowed` 固定为 `false`，无法交给现有执行器。
+  `Quiet mode` 都能生成命令预览、回滚值和确认令牌。`--config-apply` 只接受
+  这两个字段的 SNMPv2c `OFF -> ON -> OFF` 实验，scope 与字段必须匹配。
 - `--config-apply` 要求相同计划、匹配的 SHA-256 确认令牌和 SNMPv2c。执行器
   在正向写入或回读失败时仍尝试回滚，并要求最终同 OID 回读为 `0`。
 - `--config-candidates` 只评估 item 50 `Quiet mode` 的读取状态、类型和枚举，
   不直接生成写入计划或确认令牌；`write.allowed` 固定为 `false`。候选报告
-  记录已静态核对的 `BM_GETCHECK → model +0x18 → OID → integer 0/1`
-  数据流、网络/USB 失败处理和未设置原厂重启请求标志的事实；缺少写后回读、
-  设备失败/重启证据或用户授权仍会保留为 blockers。
+  记录已核对的 `BM_GETCHECK → model +0x18 → OID → integer 0/1` 数据流、
+  网络/USB 失败处理、未设置原厂重启请求标志，以及 MA2000w 的
+  `OFF -> ON -> OFF` 写入回读结果；设备失败恢复和再次授权仍保留为 blockers。
 - 不把 KGETOBJ 的数值无标记地解释成未经验证的业务字段；推断字段必须带
   `confidence` 标记，原始键值始终保留。
 - Windows 原工具的网络路径使用 SNMP；Linux 实现优先使用已验证的 PJL 9100

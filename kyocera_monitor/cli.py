@@ -26,7 +26,7 @@ from .config_write_plan import (
 )
 from .config_write_executor import (
     ConfigWriteExecutionError,
-    execute_auto_error_clear_experiment,
+    execute_authorized_config_experiment,
 )
 from .discovery import discover
 from .parser import PrinterSnapshot, parse_response
@@ -282,7 +282,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--config-apply",
         metavar="PATH",
-        help="execute the explicitly authorized Auto error clear experiment",
+        help="execute an explicitly authorized single-field experiment",
     )
     parser.add_argument(
         "--config-confirm",
@@ -527,7 +527,7 @@ def main(argv: list[str] | None = None) -> int:
                         timeout=args.snmp_timeout,
                         retries=args.snmp_retries,
                     )
-                    write_execution = execute_auto_error_clear_experiment(
+                    write_execution = execute_authorized_config_experiment(
                         client,
                         write_plan,
                         args.config_confirm,
@@ -580,7 +580,10 @@ def main(argv: list[str] | None = None) -> int:
                 )
             )
         elif write_execution is not None:
-            print("configuration write execution: Auto error clear OFF -> ON -> OFF")
+            print(
+                "configuration write execution: "
+                f"{write_execution['label']} OFF -> ON -> OFF"
+            )
             print(f"target: {write_execution['target']} (snmp)")
             print(f"object OID: {write_execution['oid']}")
             print(f"status: {write_execution['status']}")
