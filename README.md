@@ -27,6 +27,9 @@ SOFTWARE.
 复制的界面文本、维护包密钥或设备凭据。第三方依赖和商标说明见
 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) 与 [NOTICE](NOTICE)。
 
+官方 Client Tool 30 项用户功能的证据、当前复刻状态和交付顺序见
+[`docs/official-feature-parity-plan.md`](docs/official-feature-parity-plan.md)。
+
 ## 使用
 
 ```bash

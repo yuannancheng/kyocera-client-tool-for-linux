@@ -696,3 +696,32 @@ MA2000w 真机请求 `GRAYSCALE + RAW` 后得到：
 - 其他输出格式、600 DPI、ADF、多页和双面仍需在相应机型上真机验证。
 - 单次 `retrieve_image` 默认上限为 64 MiB；`--max-response-bytes` 可显式
   提高上限。该参数是本地资源保护，不是协议字段。
+
+#### 9.9.6 为什么当前结果仍主要是 RAW
+
+2026-11-01 只读复核确认，这不是单一代码选择，而是三个事实叠加：
+
+1. MA2000w 的 `get_capability` 返回
+   `scan_image_configuration_capability`，但没有返回
+   `output_image_configuration_capability`。
+2. MA2000w 的 `get_default_configuration` 明确返回
+   `output_image_configuration/image_file_format=RAW`。
+3. 实测请求 `JPEG` 后，`retrieve_imageResponse/file_type` 仍为 `RAW`。
+
+因此 `KMSCNAPI.dll` 中的 PDF/TIFF/JPEG/XPS/RAW 枚举是整个驱动支持的线协议
+token 集合，不是单台设备已经协商成功的格式集合。请求值也不能替代响应中的
+`file_type`。
+
+客户端侧另有一个产品缺口：目前只实现 RAW 分带解码到 BMP；如果设备返回
+JPEG/TIFF/PDF，程序会保存原始响应体，但没有统一的可视化/导出策略。
+`--format` 只控制发给设备的 `image_file_format`，不应被用户理解为最终文件
+格式。
+
+下一阶段需要把“设备请求格式”和“本地导出格式”解耦：
+
+- 设备格式继续使用官方 token，并始终以响应 `file_type` 为准；
+- MA2000w RAW 解码后可本地导出 PNG/PDF，JPEG 则使用明确的编解码依赖或
+  可选后端；
+- 对设备原生 JPEG/TIFF/PDF 做 MIME/魔数校验后直接保存；
+- Web/GUI 以 PNG/PDF 为默认产物，“原始 RAW”降为高级选项；
+- 在 UI 中显示“请求格式、设备返回格式、最终保存格式”三者，避免再次混淆。
