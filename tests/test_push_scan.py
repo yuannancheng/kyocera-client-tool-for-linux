@@ -7,8 +7,14 @@ from unittest import mock
 from kyocera_monitor import cli
 from kyocera_monitor.push_scan import (
     PUSH_SCAN_OIDS,
+    VENDOR_ALERT_STATUS_ROOT,
     interpret_push_scan,
+    iter_push_scan_events,
+    parse_vendor_status_code,
+    push_scan_event,
     read_push_scan,
+    read_vendor_status_codes,
+    vendor_status_codes,
 )
 from kyocera_monitor.snmp import VarBind
 from kyocera_monitor.web import DEVICE_HTML, DeviceRegistry, make_handler
@@ -159,6 +165,90 @@ class PushScanReadTests(unittest.TestCase):
         self.assertEqual(result["readiness"]["state"], "ready")
         client.set_integer.assert_not_called()
 
+    def test_vendor_status_walk_is_read_only(self):
+        client = mock.Mock()
+        client.walk.return_value = [
+            VarBind(f"{VENDOR_ALERT_STATUS_ROOT}.1.1", 0x04, b"35078"),
+        ]
+        with mock.patch(
+            "kyocera_monitor.push_scan.SnmpClient",
+            return_value=client,
+        ):
+            codes = read_vendor_status_codes("192.168.0.220")
+        self.assertEqual(codes, [35078])
+        client.walk.assert_called_once_with(
+            VENDOR_ALERT_STATUS_ROOT,
+            max_rows=64,
+        )
+        client.get.assert_not_called()
+        client.set_integer.assert_not_called()
+
+
+class PushScanEventTests(unittest.TestCase):
+    def test_vendor_values_use_the_official_leading_number(self):
+        self.assertEqual(parse_vendor_status_code(b"35078"), 35078)
+        self.assertEqual(parse_vendor_status_code(" 89003,other"), 89003)
+        self.assertEqual(parse_vendor_status_code("0x15bfb"), 89083)
+        self.assertIsNone(parse_vendor_status_code(b"status unavailable"))
+
+    def test_rows_are_kept_in_official_order(self):
+        codes = vendor_status_codes(
+            [
+                VarBind(f"{VENDOR_ALERT_STATUS_ROOT}.2.1", 0x04, b"35078"),
+                VarBind("1.3.6.1.4.1.1347.unrelated.1", 0x04, b"89001"),
+                VarBind(f"{VENDOR_ALERT_STATUS_ROOT}.1.1", 0x04, b"89003"),
+            ]
+        )
+        self.assertEqual(codes, [35078, 89003])
+
+    def test_89xxx_is_converted_to_preset_number(self):
+        event = push_scan_event(89003, host="192.168.0.220")
+        self.assertIsNotNone(event)
+        self.assertEqual(event["preset_number"], 3)
+        self.assertTrue(event["official_preset_range"]["within_range"])
+        self.assertEqual(event["execution_state"], "listener_only")
+        self.assertFalse(event["execution_supported"])
+        self.assertFalse(event["result_writeback_supported"])
+        self.assertIsNone(push_scan_event(35078, host="192.168.0.220"))
+
+    def test_listener_emits_only_transitions_to_89xxx(self):
+        values = iter(
+            [
+                [35078],
+                [89003],
+                [89003],
+                [35078],
+                [89001],
+            ]
+        )
+        sleeps = []
+        observations = list(
+            iter_push_scan_events(
+                "192.168.0.220",
+                lambda: next(values),
+                poll_interval=0.5,
+                max_polls=5,
+                sleep=sleeps.append,
+            )
+        )
+        events = [
+            event["preset_number"]
+            for _poll, _codes, event in observations
+            if event is not None
+        ]
+        self.assertEqual(events, [3, 1])
+        self.assertEqual(sleeps, [0.5, 0.5, 0.5, 0.5])
+
+    def test_initial_89xxx_is_not_lost(self):
+        observations = list(
+            iter_push_scan_events(
+                "192.168.0.220",
+                lambda: [89002],
+                max_polls=1,
+            )
+        )
+        self.assertEqual(observations[0][2]["preset_number"], 2)
+
 
 class PushScanCliTests(unittest.TestCase):
     def test_cli_prints_json_and_does_not_write(self):
@@ -184,6 +274,35 @@ class PushScanCliTests(unittest.TestCase):
         self.assertEqual(json.loads(output.getvalue())["readiness"]["state"], "ready")
         read.assert_called_once()
         self.assertEqual(read.call_args.kwargs["version"], "2c")
+
+    def test_cli_listener_emits_json_events_without_execution(self):
+        codes = iter([[35078], [89005]])
+        with mock.patch.object(
+            cli,
+            "read_vendor_status_codes",
+            side_effect=lambda *_args, **_kwargs: next(codes),
+        ) as read, mock.patch.object(cli.time, "sleep"):
+            output = io.StringIO()
+            with redirect_stdout(output), redirect_stderr(io.StringIO()):
+                status = cli.main(
+                    [
+                        "--host",
+                        "192.168.0.220",
+                        "--push-scan-listen",
+                        "--push-scan-poll-interval",
+                        "0.1",
+                        "--push-scan-max-polls",
+                        "2",
+                        "--snmp-version",
+                        "2c",
+                        "--json",
+                    ]
+                )
+        self.assertEqual(status, 0)
+        event = json.loads(output.getvalue())
+        self.assertEqual(event["preset_number"], 5)
+        self.assertFalse(event["execution_supported"])
+        self.assertEqual(read.call_count, 2)
 
 
 class PushScanWebTests(unittest.TestCase):

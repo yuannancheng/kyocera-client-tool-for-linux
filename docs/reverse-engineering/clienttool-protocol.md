@@ -1159,7 +1159,24 @@ uint32 tag
 | Push Scan | `1001.4.1.5.0` | IPv6 地址 | 实测空字符串 |
 | Push Scan | `1001.4.1.6.0` | 接口/目标类型 | 实测 `1` |
 
-### 8.2 结果码
+### 8.2 Push Scan 触发码
+
+状态码 `89000`–`89999` 表示一次 Push Scan 请求，预设号等于状态码减
+`89000`：
+
+```text
+status = 89000 + preset
+preset = status - 89000
+```
+
+`KMSTMNW.exe!FUN_0042f520` 从 `@PJL USTATUS DEVICE` 或
+`@PJL INFO STATUS` 的 `CODE=` 识别 89xxx，经内部消息 `0x46e` 交给
+`FUN_0044fac0`。该函数在 `0x0044fc45` 减去 `0x15ba8`，结果写入
+`OnRecvPushScan` 使用的对象偏移 `+0x2e810`。网络监视路径会遍历厂商告警
+文本列 `1.3.6.1.4.1.1347.43.18.2.1.3`，把每行首个数值合成为同一状态码。
+官方预设启用接口接受 0–30。
+
+### 8.3 结果码
 
 `FUN_004b2070`/`FUN_004b2180` 写 `1001.3.1.3.0`：
 
@@ -1178,7 +1195,7 @@ uint32 tag
 1 = OK
 ```
 
-### 8.3 KPUSHSCAN
+### 8.4 KPUSHSCAN
 
 `KMSTMVM.exe` 的 `FUN_00419570` 在 USB/本地路径发送：
 

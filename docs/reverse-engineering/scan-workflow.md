@@ -194,12 +194,59 @@ address_type    = 1 (IPv4)
 与本机接口，并明确把结果字段标为“上次报告结果”；它不发送 SET，不启动预设，
 不声称已观察到设备触发。
 
+### 5.2 Push Scan 状态码与事件监听（2026-11-01）
+
+定向指令分析补充确认了完整触发编码：
+
+```text
+89000 <= CODE <= 89999
+preset = CODE - 89000
+```
+
+证据链：
+
+1. `KMSTMNW.exe!FUN_0042f520`（`PickUpUSTATUSDEVICE`）同时解析
+   `@PJL USTATUS DEVICE` 和 `@PJL INFO STATUS` 的 `CODE=`、`CODE2=`；
+   当代码除以 1000 等于 89 时，调用 `FUN_0042c5b0(0x10, code)`。
+2. `FUN_0042c5b0` 的 `case 0x10` 调 `FUN_0042b480`；后者再发送内部
+   消息 `0x46e`。
+3. `FUN_0044fac0`（`OnRecvStatus`）在 `0x0044fc45` 执行
+   `code - 0x15ba8`（十进制 89000），把结果写入对象 `+0x2e810`，并把
+   `+0x2e814` 置 1。
+4. `OnRecvPushScan` 读取 `+0x2e810`，组装
+   `KMSCNPUS.EXE <preset>`；官方 `KMQSEnablePreset` 接受 0–30 的预设号。
+
+网络 Client Tool 还有一条等价来源。`KMSTMNET.exe!FUN_004b70a0` 通过
+`FUN_004bae20` 遍历厂商告警文本列
+`1.3.6.1.4.1.1347.43.18.2.1.3`，将每行首个数值解析为状态码，再经
+`FUN_004b0890` 合成 `@PJL USTATUS DEVICE CODE=...`。因此 Linux 不需要发送
+`@PJL USTATUS DEVICE=ON`，可直接用只读 SNMP GETNEXT 轮询该列。
+
+MA2000w 当前只读结果：
+
+```text
+1.3.6.1.4.1.1347.43.18.2.1.3.1.1 = OctetString: 35078
+```
+
+两次有限轮询均返回 `35078`，验证了真实对象和稳定状态：
+
+```bash
+python3 -m kyocera_monitor --host 192.168.0.220 \
+  --push-scan-listen --push-scan-poll-interval 0.5 \
+  --push-scan-max-polls 2 --snmp-version 2c
+```
+
+Linux 监听器只在首个状态码发生过渡时产生事件；持续相同的 `89xxx` 不会重复
+触发。事件包含设备地址、状态码、预设号、是否落在官方 0–30 范围，以及
+`execution_supported=false`。`--json` 输出逐行 JSON，便于脚本消费。
+
 仍未确认：
 
-- `OnRecvPushScan` 使用的预设号来自对象 `+0x2e810`，但该槽位的赋值来源尚未
-  在现有静态导出中定位；
-- 设备如何把一次具体 Push Scan 请求传达到 Windows 客户端的完整消息时序；
-- Linux 完成预设执行后是否以及何时回写 `.3.0=0/1`。
+- 当前 MA2000w 的网络目标为 USB，本轮没有在面板中切换配置，因此未观察到真实
+  `89xxx` 事件；
+- Linux 本地预设 ID/参数与设备 0–30 预设号的产品映射；
+- 自动执行扫描后的完成/失败判定，以及是否、何时回写 `.3.0=0/1`；
+- 网络 Client Tool 在检测到 `89xxx` 后清除或保持该厂商告警文本的时序。
 
 复现：
 

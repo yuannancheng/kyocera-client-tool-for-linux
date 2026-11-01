@@ -1336,8 +1336,8 @@ function renderPushScan(data) {
     (readiness.ready === true ? "ready"
       : readiness.ready === false ? "warning" : "");
   const note = byId("push-scan-note");
-  note.textContent = "该功能只检查设备当前目标和上次结果；不会接收设备请求、" +
-    "启动预设或回写结果 OID。官方预设号选择来源仍待验证。";
+  note.textContent = "此页面只检查当前目标和上次结果。命令行 " +
+    "--push-scan-listen 可报告 89xxx 触发事件，但不会启动本地预设或回写结果。";
 }
 
 async function readPushScan() {

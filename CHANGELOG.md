@@ -2,6 +2,23 @@
 
 ## 2026-11-01
 
+### Added — Push Scan trigger detection
+
+- 通过原始指令和反编译复核确认 Push Scan 触发码为 `89000–89999`，预设号为
+  `CODE - 89000`；`KMSTMNW.exe!FUN_0044fac0` 在 `0x0044fc45` 执行减法并写入
+  `OnRecvPushScan` 使用的对象偏移。
+- 确认网络 Client Tool 从厂商告警文本列
+  `1.3.6.1.4.1.1347.43.18.2.1.3` 读取状态码；MA2000w 真机该列返回
+  `OctetString: 35078`。
+- CLI 新增 `--push-scan-listen`、`--push-scan-poll-interval` 和
+  `--push-scan-max-polls`。监听器使用只读 SNMP GETNEXT，只在首个状态码改变
+  并进入 `89xxx` 时产生事件；相同状态不重复触发。
+- JSON 事件包含设备、状态码、预设号、官方 0–30 范围判断和执行限制；不发送
+  PJL `USTATUS=ON`、不启动本地预设、不回写结果 OID。
+- MA2000w 两次真机轮询均为 `35078`，无虚假事件。版本升级为 `0.2.4`；
+  构建并安装 `dist/kyocera-monitor_0.2.4-1_all.deb`，SHA-256
+  `61935edadf40ea526fe8a36bc25dfce869175a8105d7a8a385778cfa6b60ece7`。
+
 ### Added — read-only Push Scan readiness
 
 - 新增 `kyocera_monitor.push_scan` 和 `--push-scan`，通过一次 SNMP GET 读取

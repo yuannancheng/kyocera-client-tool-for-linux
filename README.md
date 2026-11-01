@@ -53,6 +53,8 @@ python3 -m kyocera_monitor --host 192.168.0.220 --config --json
 python3 -m kyocera_monitor --host 192.168.0.220 --config --snmp
 python3 -m kyocera_monitor --host 192.168.0.220 --push-scan \
   --snmp-version 2c --json
+python3 -m kyocera_monitor --host 192.168.0.220 --push-scan-listen \
+  --push-scan-poll-interval 2 --snmp-version 2c --json
 python3 -m kyocera_monitor --host 192.168.0.220 --web
 python3 -m kyocera_monitor --web --web-open
 python3 -m kyocera_monitor --host 192.168.0.220 --snmp --web --web-port 8080
@@ -168,7 +170,7 @@ python3 -m pip install --user .
 
 ```bash
 python3 tools/build_deb.py
-sudo apt install ./dist/kyocera-monitor_0.2.3-1_all.deb
+sudo apt install ./dist/kyocera-monitor_0.2.4-1_all.deb
 ```
 
 构建过程只使用本地 Python 和 `dpkg-deb`，不联网。包的运行依赖声明为
@@ -272,8 +274,15 @@ kyocera-monitor --host 192.168.0.220 --push-scan \
 比较目标是否匹配本机接口或主机名，并区分 `usb_destination`、
 `not_configured`、`ready` 和 `other_host`。MA2000w 真机当前返回
 `interface=USB`、IPv4 `0.0.0.0`、IPv4 地址类型和上次结果 `OK`，因此网络
-Push Scan 明确未配置。该探针不接收设备触发器、不执行预设、不回写结果；
-官方预设号选择和完整触发时序仍是待验证项。
+Push Scan 明确未配置。
+
+Push Scan 触发码进一步确认为 `89000 + preset`：`89000–89999` 的状态码在
+官方程序中减去 `89000` 后作为预设号。`--push-scan-listen` 只读轮询厂商告警
+文本列 `1.3.6.1.4.1.1347.43.18.2.1.3`，在首个状态码从其他值变为
+`89xxx` 时输出事件；相同状态不会重复触发，离开后可接受下一次事件。
+监听器不发送 PJL
+`USTATUS=ON`、不运行本地预设、不回写结果 OID。MA2000w 两次真机轮询均为
+`35078`，未产生虚假 Push Scan 事件。
 
 可基于基线生成单字段写入预演。计划器支持：
 
@@ -393,7 +402,7 @@ python3 -m unittest discover -s tests -v
 python3 tools/check_publication.py
 ```
 
-当前 276 个测试覆盖 PJL 解析/帧格式、分段补发与合并、KGETOBJ 结构化字段、
+当前 283 个测试覆盖 PJL 解析/帧格式、分段补发与合并、KGETOBJ 结构化字段、
 147 项配置对象表与 CLI 配置导出、`KMUTLCFG` UI 控件字符串提取、
 147 项对象→模型偏移映射与首批控件→OID 对照、
 配置 SNMP 后备读取、

@@ -2,21 +2,25 @@
 
 The official Client Tool receives Push Scan settings through its status
 pipeline, compares the configured destination with local interfaces, and then
-launches a preset-specific scanner application.  The preset selection source is
-not yet recovered, so this module deliberately stops at the verified,
-non-mutating device state and never claims to receive or execute a Push Scan.
+launches a preset-specific scanner application.  Device status codes 89000
+through 89999 encode the requested preset as ``code - 89000``.  This module
+implements the read-only settings probe and event detector, but does not launch
+or acknowledge a scan.
 """
 
 from __future__ import annotations
 
 import ipaddress
+import re
 import socket
+import time
 from datetime import datetime, timezone
-from typing import Iterable, Sequence
+from typing import Callable, Iterable, Iterator
 
 from .snmp import SnmpClient, VarBind
 
 PUSH_SCAN_ROOT = "1.3.6.1.4.1.1347.1001.4.1"
+VENDOR_ALERT_STATUS_ROOT = "1.3.6.1.4.1.1347.43.18.2.1.3"
 PUSH_SCAN_OIDS = {
     "interface": f"{PUSH_SCAN_ROOT}.1.0",
     "ipv4_address": f"{PUSH_SCAN_ROOT}.2.0",
@@ -41,9 +45,15 @@ RESULT_NAMES = {
 }
 
 EXECUTION_LIMITATION = (
-    "Preset selection and device-trigger delivery remain unresolved; "
-    "this read-only view does not receive Push Scan requests, run presets, "
-    "or write the result OID."
+    "Preset execution and result writeback are not implemented; "
+    "the read-only listener reports requests but does not launch a scan."
+)
+PUSH_SCAN_STATUS_MIN = 89000
+PUSH_SCAN_STATUS_MAX = 89999
+PUSH_SCAN_PRESET_MAX = 30
+
+_LEADING_C_NUMBER_RE = re.compile(
+    r"^\s*([+-]?(?:0[xX][0-9a-fA-F]+|0[0-7]*|[1-9][0-9]*))"
 )
 
 
@@ -287,8 +297,10 @@ def interpret_push_scan(
         },
         "execution": {
             "supported": False,
-            "state": "static_only",
+            "state": "listener_only",
             "trigger_observed": False,
+            "listener_entrypoint": "kyocera-monitor --push-scan-listen",
+            "preset_selection": "status_code_minus_89000",
             "result_writeback_supported": False,
             "reason": EXECUTION_LIMITATION,
         },
@@ -330,6 +342,140 @@ def read_push_scan(
     )
 
 
+def parse_vendor_status_code(value: object) -> int | None:
+    """Parse the leading number as Client Tool's ``strtoul(value, NULL, 0)``.
+
+    The vendor alert-display column is an OctetString even though its useful
+    value is numeric.  The official network monitor parses the leading number
+    with base auto-detection and ignores the rest of the row.
+    """
+
+    if isinstance(value, bytes):
+        try:
+            text = value.decode("ascii")
+        except UnicodeDecodeError:
+            return None
+    elif isinstance(value, str):
+        text = value
+    elif isinstance(value, int) and not isinstance(value, bool):
+        return value
+    else:
+        return None
+    match = _LEADING_C_NUMBER_RE.match(text)
+    if match is None:
+        return None
+    token = match.group(1)
+    sign = -1 if token.startswith("-") else 1
+    unsigned = token.lstrip("+-")
+    if unsigned.lower().startswith("0x"):
+        number = int(unsigned[2:], 16)
+    elif len(unsigned) > 1 and unsigned.startswith("0"):
+        number = int(unsigned[1:], 8)
+    else:
+        number = int(unsigned, 10)
+    return sign * number
+
+
+def vendor_status_codes(varbinds: Iterable[VarBind]) -> list[int]:
+    """Return parseable status codes in the official table-row order."""
+
+    codes: list[int] = []
+    for varbind in varbinds:
+        if not varbind.oid.startswith(VENDOR_ALERT_STATUS_ROOT + "."):
+            continue
+        code = parse_vendor_status_code(varbind.value)
+        if code is not None:
+            codes.append(code)
+    return codes
+
+
+def read_vendor_status_codes(
+    host: str,
+    *,
+    community: str = "public",
+    version: str = "2c",
+    port: int = 161,
+    timeout: float = 1.5,
+    retries: int = 2,
+    max_rows: int = 64,
+) -> list[int]:
+    """Read the vendor alert-status column through read-only SNMP GETNEXT."""
+
+    client = SnmpClient(
+        host,
+        community=community,
+        version=version,
+        port=port,
+        timeout=timeout,
+        retries=retries,
+    )
+    return vendor_status_codes(
+        client.walk(VENDOR_ALERT_STATUS_ROOT, max_rows=max_rows)
+    )
+
+
+def push_scan_event(code: int, *, host: str) -> dict[str, object] | None:
+    """Convert an official 89xxx status code into a Push Scan event."""
+
+    if not PUSH_SCAN_STATUS_MIN <= code <= PUSH_SCAN_STATUS_MAX:
+        return None
+    preset = code - PUSH_SCAN_STATUS_MIN
+    return {
+        "event": "push_scan_request",
+        "host": host,
+        "status_code": code,
+        "preset_number": preset,
+        "official_preset_range": {
+            "min": 0,
+            "max": PUSH_SCAN_PRESET_MAX,
+            "within_range": preset <= PUSH_SCAN_PRESET_MAX,
+        },
+        "observed_at": datetime.now(tz=timezone.utc).isoformat(
+            timespec="seconds"
+        ),
+        "execution_state": "listener_only",
+        "execution_supported": False,
+        "result_writeback_supported": False,
+        "limitation": EXECUTION_LIMITATION,
+    }
+
+
+def iter_push_scan_events(
+    host: str,
+    read_codes: Callable[[], list[int]],
+    *,
+    poll_interval: float = 2.0,
+    max_polls: int | None = None,
+    sleep: Callable[[float], None] = time.sleep,
+) -> Iterator[tuple[int, list[int], dict[str, object] | None]]:
+    """Poll the official vendor status column and yield trigger transitions.
+
+    Each tuple contains ``(poll_number, codes, event)``.  ``event`` is only
+    set when the first (official) code changes into the Push Scan range, which
+    prevents a persistent 89xxx status from launching the same preset
+    repeatedly.
+    """
+
+    if poll_interval < 0:
+        raise ValueError("poll_interval must be non-negative")
+    if max_polls is not None and max_polls < 1:
+        raise ValueError("max_polls must be positive or None")
+    previous: int | None = None
+    poll = 0
+    while max_polls is None or poll < max_polls:
+        poll += 1
+        codes = read_codes()
+        current = codes[0] if codes else None
+        event = None
+        if current != previous and current is not None:
+            event = push_scan_event(current, host=host)
+        previous = current
+        yield poll, codes, event
+        if max_polls is not None and poll >= max_polls:
+            break
+        sleep(poll_interval)
+
+
 def format_push_scan(result: dict[str, object]) -> str:
     """Render a compact human-readable Push Scan inspection."""
 
@@ -364,10 +510,19 @@ __all__ = [
     "ADDRESS_TYPE_NAMES",
     "INTERFACE_NAMES",
     "PUSH_SCAN_OIDS",
+    "PUSH_SCAN_PRESET_MAX",
     "PUSH_SCAN_ROOT",
+    "PUSH_SCAN_STATUS_MAX",
+    "PUSH_SCAN_STATUS_MIN",
     "RESULT_NAMES",
+    "VENDOR_ALERT_STATUS_ROOT",
     "format_push_scan",
     "interpret_push_scan",
+    "iter_push_scan_events",
     "local_host_identity",
+    "parse_vendor_status_code",
+    "push_scan_event",
     "read_push_scan",
+    "read_vendor_status_codes",
+    "vendor_status_codes",
 ]

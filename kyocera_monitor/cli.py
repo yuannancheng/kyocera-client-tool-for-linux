@@ -44,7 +44,12 @@ from .pjl import (
     open_channel,
     query_merged,
 )
-from .push_scan import format_push_scan, read_push_scan
+from .push_scan import (
+    format_push_scan,
+    iter_push_scan_events,
+    read_push_scan,
+    read_vendor_status_codes,
+)
 from .snmp_status import collect_snmp_snapshot
 from .snmp import BerError, SnmpClient
 from .scan import (
@@ -359,6 +364,26 @@ def main(argv: list[str] | None = None) -> int:
         ),
     )
     parser.add_argument(
+        "--push-scan-listen",
+        action="store_true",
+        help=(
+            "listen for official 89xxx Push Scan status events through "
+            "read-only SNMP polling; does not execute a preset"
+        ),
+    )
+    parser.add_argument(
+        "--push-scan-poll-interval",
+        type=float,
+        default=2.0,
+        help="seconds between Push Scan status polls (default: 2)",
+    )
+    parser.add_argument(
+        "--push-scan-max-polls",
+        type=int,
+        default=0,
+        help="stop after N status polls; 0 runs until interrupted",
+    )
+    parser.add_argument(
         "--config",
         action="store_true",
         help=(
@@ -509,11 +534,13 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("--snmp cannot be combined with --usb")
     if args.snmp and not args.host:
         parser.error("--snmp requires --host")
-    if args.push_scan:
+    if args.push_scan and args.push_scan_listen:
+        parser.error("--push-scan and --push-scan-listen are mutually exclusive")
+    if args.push_scan or args.push_scan_listen:
         if not args.host:
-            parser.error("--push-scan requires --host")
+            parser.error("Push Scan inspection requires --host")
         if args.snmp:
-            parser.error("--push-scan cannot be combined with --snmp")
+            parser.error("Push Scan inspection cannot be combined with --snmp")
         if any(
             (
                 args.device,
@@ -529,8 +556,21 @@ def main(argv: list[str] | None = None) -> int:
             )
         ):
             parser.error(
-                "--push-scan cannot be combined with other device modes"
+                "Push Scan inspection cannot be combined with other device modes"
             )
+    if not args.push_scan_listen and (
+        args.push_scan_poll_interval != 2.0
+        or args.push_scan_max_polls != 0
+    ):
+        parser.error(
+            "--push-scan-poll-interval/--push-scan-max-polls require "
+            "--push-scan-listen"
+        )
+    if args.push_scan_listen:
+        if args.push_scan_poll_interval < 0:
+            parser.error("--push-scan-poll-interval must be non-negative")
+        if args.push_scan_max_polls < 0:
+            parser.error("--push-scan-max-polls must be non-negative")
     if args.config and (
         args.web
         or args.gui
@@ -651,6 +691,60 @@ def main(argv: list[str] | None = None) -> int:
             )
         else:
             print(format_push_scan(push_scan_result))
+        return 0
+
+    if args.push_scan_listen:
+        def read_codes():
+            return read_vendor_status_codes(
+                args.host,
+                community=args.snmp_community,
+                version=args.snmp_version,
+                port=args.snmp_port,
+                timeout=args.snmp_timeout,
+                retries=args.snmp_retries,
+            )
+
+        max_polls = args.push_scan_max_polls or None
+        if not args.json:
+            print(
+                f"listening for Push Scan status codes on {args.host}",
+                file=sys.stderr,
+                flush=True,
+            )
+        try:
+            for poll, codes, event in iter_push_scan_events(
+                args.host,
+                read_codes,
+                poll_interval=args.push_scan_poll_interval,
+                max_polls=max_polls,
+            ):
+                if event is not None:
+                    if args.json:
+                        print(
+                            json.dumps(
+                                event,
+                                ensure_ascii=False,
+                                separators=(",", ":"),
+                            ),
+                            flush=True,
+                        )
+                    else:
+                        print(
+                            "Push Scan preset "
+                            f"{event['preset_number']} requested "
+                            f"(status {event['status_code']})"
+                        )
+                elif not args.json:
+                    current = codes[0] if codes else "unavailable"
+                    print(
+                        f"poll {poll}: current status {current}",
+                        file=sys.stderr,
+                    )
+        except KeyboardInterrupt:
+            return 0
+        except (BerError, OSError, TimeoutError, ValueError) as exc:
+            print(f"Push Scan listener failed: {exc}", file=sys.stderr)
+            return 2
         return 0
 
     if args.scan:
