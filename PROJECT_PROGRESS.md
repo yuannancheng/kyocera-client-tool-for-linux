@@ -76,6 +76,7 @@ BMP 输出和关会话。最大风险已从“协议方法猜测”转为“其�
 | 配置只读基线与差异 | `DONE` | 147 项私密快照、SHA-256、通道/目标绑定、只读差异测试 |
 | 配置单字段写入计划 | `DONE` | item 2 dry-run、漂移阻断、回滚预演和确认令牌；不执行写入 |
 | 配置写入与回滚 | `DONE` | MA2000w item 2 SNMPv2c OFF→ON→OFF；SET echo、双重回读和全表恢复一致 |
+| item 50 审计写入计划 | `DONE` | OFF/ON 计划、回滚、预览和令牌；执行固定阻断，测试覆盖 3 项 |
 
 ## 已验证能力
 
@@ -120,9 +121,10 @@ BMP 输出和关会话。最大风险已从“协议方法猜测”转为“其�
   规范化 JSON 带 SHA-256；`--config-compare` 校验权限、通道和目标后只比较
   设备语义值。官方 `KMUTLCFG.exe` USB 模板已复核为 `VALUE =`，且没有发送
   任何写命令。
-- **配置写入计划**：`--config-plan` 仅允许 item 2 `Auto error clear` 的
-  `OFF/ON` 转换，要求全表无持久配置漂移和读取状态变化，并生成当前值、
-  目标值、回滚值、PJL/SNMP 预览及确认令牌。
+- **配置写入计划**：`--config-plan` 支持 item 2 `Auto error clear` 和
+  item 50 `Quiet mode` 的 OFF/ON 计划，要求全表无持久配置漂移和读取状态
+  变化，并生成当前值、目标值、回滚值、PJL/SNMP 预览及确认令牌。item 50
+  固定 `execution.allowed=false`，令牌不能被现有执行器消费。
 - **单字段配置写入**：只有 SNMPv2c `Auto error clear OFF -> ON -> OFF`
   可由匹配令牌的 `--config-apply` 执行。MA2000w 真机 SET/回读/回滚均成功；
   操作后完整 147 项比较一致，未观察到重启。PJL 写入和其他字段未开放。
@@ -140,9 +142,10 @@ BMP 输出和关会话。最大风险已从“协议方法猜测”转为“其�
    对照官方 KMIP 输出。没有相应硬件时不得标记为跨机型兼容已验证。
 2. **P1：USB 硬件验证。** 接入设备后跑 `--list-usb`、`--usb --json`，与 TCP
    结果逐项对照；同时验证断线重连和睡眠唤醒。
-3. **P2：审查 item 50 `Quiet mode`。** 已完成只读候选评估和官方静态读写
-   路径核对；下一步是设计具体旧值→新值计划。未经新的明确授权不得向该字段
-   发送 SET。
+3. **P2：item 50 `Quiet mode` 真机实验。** 已完成只读候选、官方静态读写
+   路径、失败分支核对和审计计划。下一步仅在用户明确确认对象、旧值、新值、
+   回滚值和可能重启副作用后，实现并执行一次受限 SET/同 OID 回读/恢复；
+   当前不得向该字段发送 SET。
 4. **P3：按需补字段语义。** OID 全量清点冻结；只有阻塞扫描或写入时才查新字段。
 
 ## 待验证假设
@@ -215,7 +218,35 @@ BMP 输出和关会话。最大风险已从“协议方法猜测”转为“其�
 - 干净归档和 Git bundle 位于 `/tmp/kyocera-client-tool-for-linux-20261018.tar.gz`
   和 `/tmp/kyocera-client-tool-for-linux-20261018.bundle`。
 
-## 最近一次工作交接（第三十八轮）
+## 最近一次工作交接（第三十九轮）
+
+日期：2026-11-01。范围：把 item 50 从只读候选推进到审计计划和静态失败边界
+核对；没有发送设备配置写入或重置命令。
+
+完成与证据：
+
+- `--config-plan` 新增 item 50 `Quiet mode`：接受 `0/OFF`、`1/ON`，生成
+  当前值、目标值、回滚值、PJL/SNMP 预览和确定性 SHA-256 令牌。
+- item 50 计划固定 `execution.allowed=false`，保留
+  `same_oid_write_readback_unverified`、
+  `device_failure_and_reboot_behavior_unverified`、`executor_not_implemented`
+  和 `explicit_user_authorization_required`。
+- dry-run 退出码改为依据 `plan_preconditions_valid`，因此“计划有效但尚无
+  执行器”返回 `0`；no-op、漂移、读取状态变化仍返回 `1`。
+- 官方 `KMUTLCFG.exe` 哈希仍为
+  `63e202a050fe44611377deb4c5d01246da45fd51cda22f308ff990867730c9ea`。
+  静态复核确认 SNMP error-status 非零和 timeout 有独立错误分支；
+  USB 写入等待响应最长 50 秒，`STATUS!=0` 计为失败。静态分支不代表设备端
+  接受或拒绝 item 50。
+- 新增 3 个计划/CLI 测试；全量测试 207/207；Python 编译检查和公开树检查通过。
+
+遗留问题：
+
+- 尚未观察 MA2000w 接受 item 50 SET 后的响应、回读延迟和实际设备副作用。
+- 尚无获准的 item 50 执行器；需要用户显式授权后才能实现和运行。
+- 尚未比较 item 50 的 USB `KSETOBJ` 与 SNMP SET 实际设备行为。
+
+## 历史交接（第三十八轮）
 
 日期：2026-11-01。范围：核对 item 50 的官方静态读写路径；没有发送设备
 配置写入或重置命令。

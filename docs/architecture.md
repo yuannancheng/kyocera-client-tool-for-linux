@@ -73,15 +73,17 @@ MA2000w（`0482:0d51`），多个候选时要求显式 `--device`。
   传输和目标，避免把一个设备的备份误用于另一个设备。快照可能包含敏感站点
   配置，因此不进入仓库。写入边界详见
   `docs/reverse-engineering/config-write-safety.md`。
-- `--config-plan` 只生成审计用计划；`--config-apply` 仅在相同计划、匹配的
-  SHA-256 确认令牌和 SNMPv2c 下执行。当前唯一授权范围是 item 2
-  `Auto error clear` 的 `OFF -> ON -> OFF`。执行器在正向写入或回读失败时仍
-  尝试回滚，并要求最终同 OID 回读为 `0`。
+- `--config-plan` 只生成审计用计划；item 2 `Auto error clear` 和 item 50
+  `Quiet mode` 都能生成命令预览、回滚值和确认令牌。`--config-apply` 的当前
+  唯一授权范围仍是 item 2 的 SNMPv2c `OFF -> ON -> OFF`；item 50 的
+  `execution.allowed` 固定为 `false`，无法交给现有执行器。
+- `--config-apply` 要求相同计划、匹配的 SHA-256 确认令牌和 SNMPv2c。执行器
+  在正向写入或回读失败时仍尝试回滚，并要求最终同 OID 回读为 `0`。
 - `--config-candidates` 只评估 item 50 `Quiet mode` 的读取状态、类型和枚举，
-  不生成写入计划或确认令牌；`write.allowed` 固定为 `false`。候选报告记录
-  已静态核对的 `BM_GETCHECK → model +0x18 → OID → integer 0/1` 数据流和
-  未设置原厂重启请求标志的事实；缺少写后回读、设备失败/重启证据或用户授权
-  仍会保留为 blockers。
+  不直接生成写入计划或确认令牌；`write.allowed` 固定为 `false`。候选报告
+  记录已静态核对的 `BM_GETCHECK → model +0x18 → OID → integer 0/1`
+  数据流、网络/USB 失败处理和未设置原厂重启请求标志的事实；缺少写后回读、
+  设备失败/重启证据或用户授权仍会保留为 blockers。
 - 不把 KGETOBJ 的数值无标记地解释成未经验证的业务字段；推断字段必须带
   `confidence` 标记，原始键值始终保留。
 - Windows 原工具的网络路径使用 SNMP；Linux 实现优先使用已验证的 PJL 9100

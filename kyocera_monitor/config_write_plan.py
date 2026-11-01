@@ -1,8 +1,9 @@
-"""Dry-run plans for the first carefully selected configuration write.
+"""Dry-run plans for carefully reviewed single-field configuration writes.
 
 This module validates a baseline against a fresh configuration read and
 produces a reviewable plan with command previews and rollback information.  It
-never opens a device channel and never sends a write command.
+never opens a device channel and never sends a write command.  Planning a field
+does not imply that the current build has an authorized executor for it.
 """
 
 from __future__ import annotations
@@ -32,11 +33,15 @@ class SafeIntegerSetting:
     item_id: int
     choices: dict[int, str]
     reason: str
+    authorization_scope: str
+    execution_blockers: tuple[str, ...] = ()
+    authorized_transition: tuple[int, int] | None = None
+    execution_note: str = ""
 
 
-# The first write candidate intentionally has a tiny, independently evidenced
-# state space.  Add fields only after their official mapping and rollback
-# behavior have equally strong evidence.
+# Candidates intentionally have tiny, independently evidenced state spaces.
+# They may generate audit-only plans even when no device-write executor is
+# authorized.  Add fields only after their official mapping is verified.
 SAFE_INTEGER_SETTINGS: dict[int, SafeIntegerSetting] = {
     2: SafeIntegerSetting(
         item_id=2,
@@ -46,7 +51,36 @@ SAFE_INTEGER_SETTINGS: dict[int, SafeIntegerSetting] = {
             "and OID 43.5.1.1.34.1; the official binary and device reads "
             "establish an integer ON/OFF setting."
         ),
-    )
+        authorization_scope=AUTHORIZATION_SCOPE,
+        authorized_transition=(0, 1),
+        execution_note=(
+            "Execution is limited to Auto error clear OFF -> ON -> OFF. "
+            "A matching confirmation token is required, and rollback is "
+            "attempted even when the forward write or readback fails."
+        ),
+    ),
+    50: SafeIntegerSetting(
+        item_id=50,
+        choices={0: "OFF", 1: "ON"},
+        reason=(
+            "Native main-dialog control 0x0455 maps through snapshot offset "
+            "0x0018 and diff case 0x31 to OID 1001.2.1.1.1.14.1. The official "
+            "binary serializes it as integer 0/1; no device write/readback "
+            "experiment has established acceptance or reboot behavior."
+        ),
+        authorization_scope="no-device-write-authorized-v1",
+        execution_blockers=(
+            "same_oid_write_readback_unverified",
+            "device_failure_and_reboot_behavior_unverified",
+            "executor_not_implemented",
+            "explicit_user_authorization_required",
+        ),
+        execution_note=(
+            "This is an audit-only plan. Quiet mode has a statically verified "
+            "serialization path, but no executor is authorized and no write "
+            "command may be derived from this plan for device execution."
+        ),
+    ),
 }
 
 _ASSIGNMENT_RE = re.compile(r"^\s*(\d+)\s*=\s*([^=\s]+)\s*$")
@@ -147,11 +181,10 @@ def build_config_write_plan(
         blockers.append("unstable_configuration_read")
     if current_value == requested_value and current_record.get("status") == 0:
         blockers.append("requested_value_equals_current_value")
-    if not (
-        before_value == 0
-        and current_value == 0
-        and requested_value == 1
-    ):
+    if candidate.authorized_transition is not None and (
+        before_value,
+        requested_value,
+    ) != candidate.authorized_transition:
         blockers.append("outside_authorized_experiment")
 
     timestamp = created_at or datetime.now(timezone.utc)
@@ -170,6 +203,12 @@ def build_config_write_plan(
         if rollback_is_valid
         else None
     )
+    execution_blockers = list(blockers)
+    for blocker in candidate.execution_blockers:
+        if blocker not in execution_blockers:
+            execution_blockers.append(blocker)
+    executor_supported = candidate.authorized_transition is not None
+
     payload: dict[str, Any] = {
         "format": WRITE_PLAN_FORMAT,
         "version": WRITE_PLAN_VERSION,
@@ -238,19 +277,19 @@ def build_config_write_plan(
             "require_status_zero": True,
         },
         "review": {
-            "ready_for_executor_implementation": not blockers,
+            "plan_preconditions_valid": not blockers,
+            "executor_supported": executor_supported,
+            "ready_for_executor_implementation": (
+                not blockers and executor_supported
+            ),
             "blockers": blockers,
         },
         "execution": {
-            "allowed": not blockers,
+            "allowed": not blockers and executor_supported,
             "requires_confirmation_token": True,
-            "authorization_scope": AUTHORIZATION_SCOPE,
-            "blockers": blockers,
-            "note": (
-                "Execution is limited to Auto error clear OFF -> ON -> OFF. "
-                "A matching confirmation token is required, and rollback is "
-                "attempted even when the forward write or readback fails."
-            ),
+            "authorization_scope": candidate.authorization_scope,
+            "blockers": execution_blockers,
+            "note": candidate.execution_note,
         },
     }
     confirmation_payload = {

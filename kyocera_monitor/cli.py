@@ -621,13 +621,20 @@ def main(argv: list[str] | None = None) -> int:
                 f"{plan['commands']['snmp_set']['oid']} "
                 f"Integer {plan['commands']['snmp_set']['value']}"
             )
-            blockers = plan["review"]["blockers"]
+            review = plan["review"]
+            blockers = review["blockers"]
             print(
                 "review: "
-                + ("ready for executor implementation" if not blockers else "blocked")
+                + (
+                    "plan preconditions valid"
+                    if review["plan_preconditions_valid"]
+                    else "blocked"
+                )
             )
             for blocker in blockers:
-                print(f"blocker: {blocker}")
+                print(f"plan blocker: {blocker}")
+            if not review["executor_supported"]:
+                print("executor: unavailable for this field")
             if plan["execution"]["allowed"]:
                 print(
                     "execution: authorized with confirmation token "
@@ -755,7 +762,11 @@ def main(argv: list[str] | None = None) -> int:
                 "write plan generated; no write command was sent",
                 file=sys.stderr,
             )
-            return 0 if write_plan["review"]["ready_for_executor_implementation"] else 1
+            return (
+                0
+                if write_plan["review"]["plan_preconditions_valid"]
+                else 1
+            )
         if write_execution is not None:
             print(
                 f"write execution finished: {write_execution['status']}",

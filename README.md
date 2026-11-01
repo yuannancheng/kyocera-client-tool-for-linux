@@ -222,19 +222,26 @@ kyocera-monitor --host 192.168.0.220 --config --snmp \
 仍未确认，因此 `mapping_confidence` 为 `static_verified`，但
 `write.allowed` 始终为 `false`。
 `--json` 只输出 `candidate_report` 摘要，不附带完整 147 项对象表；该模式不
-生成写入计划，也不发送任何 `KSETOBJ` 或 SNMP SET。
+直接生成写入计划，也不发送任何 `KSETOBJ` 或 SNMP SET。
 
-可基于基线生成单字段写入预演。目前只开放已验证为 0/1 整数的
-`Auto error clear`（item 2）：
+可基于基线生成单字段写入预演。计划器支持：
+
+- item 2 `Auto error clear`：可继续交给唯一获准的 SNMPv2c 回滚执行器；
+- item 50 `Quiet mode`：只生成审计计划，`execution.allowed` 固定为 `false`。
 
 ```bash
 kyocera-monitor --host 192.168.0.220 --config --snmp \
   --config-plan kyocera-config-baseline.json --config-set 2=OFF
+
+kyocera-monitor --host 192.168.0.220 --config --snmp \
+  --config-plan kyocera-config-baseline.json --config-set 50=ON
 ```
 
 计划会检查目标、传输、全表配置漂移和读取状态变化，并给出当前值、目标值、
 回滚值、官方 `KMUTLCFG.exe` 命令预览、SNMP 参数预览和 SHA-256 确认令牌。
-`--json` 输出完整的 `write_plan`。
+`--json` 输出完整的 `write_plan`。item 50 的计划还会保留同 OID 写入回读、
+设备失败/重启行为、执行器和用户授权 blockers；令牌只用于计划审计，不能交给
+当前执行器。
 
 获准的真机实验使用同一基线、同一赋值和计划返回的令牌：
 

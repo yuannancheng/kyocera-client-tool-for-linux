@@ -515,6 +515,7 @@ class ConfigWritePlanTests(unittest.TestCase):
     def setUp(self):
         self.records = parse_config_response(
             kgetobj("1.43.5.1.1.34.1", 0, 2, "0")
+            + kgetobj("1.1001.2.1.1.1.14.1", 0, 2, "0")
             + kgetobj("1.40.10.1.1.4.1", 0, 64, "4330413830304443")
         )
         self.baseline = build_config_snapshot(
@@ -624,6 +625,78 @@ class ConfigWritePlanTests(unittest.TestCase):
         with self.assertRaisesRegex(ConfigWritePlanError, "accepts only"):
             build_config_write_plan(self.baseline, current, "2=2")
 
+    def test_quiet_mode_plan_is_audit_only(self):
+        current = build_config_snapshot(
+            copy.deepcopy(self.records),
+            transport="snmp",
+            target="printer",
+        )
+        plan = build_config_write_plan(
+            self.baseline,
+            current,
+            "50=ON",
+            created_at=datetime(2026, 11, 1, tzinfo=timezone.utc),
+        )
+        self.assertEqual(plan["object"]["item_id"], 50)
+        self.assertEqual(
+            plan["object"]["absolute_oid"],
+            "1.3.6.1.4.1.1347.1001.2.1.1.1.14.1",
+        )
+        self.assertEqual(plan["before"]["value"], 0)
+        self.assertEqual(plan["requested"]["value"], 1)
+        self.assertEqual(plan["rollback"]["value"], 0)
+        self.assertEqual(
+            plan["commands"]["pjl_line"],
+            '@PJL KSETOBJ OBJ="1.1001.2.1.1.1.14.1" VALUE =1',
+        )
+        self.assertEqual(
+            plan["commands"]["pjl_rollback_line"],
+            '@PJL KSETOBJ OBJ="1.1001.2.1.1.1.14.1" VALUE =0',
+        )
+        self.assertEqual(
+            plan["commands"]["snmp_set"]["oid"],
+            "1.3.6.1.4.1.1347.1001.2.1.1.1.14.1",
+        )
+        self.assertTrue(plan["review"]["plan_preconditions_valid"])
+        self.assertFalse(plan["review"]["executor_supported"])
+        self.assertFalse(plan["review"]["ready_for_executor_implementation"])
+        self.assertFalse(plan["execution"]["allowed"])
+        self.assertEqual(
+            plan["execution"]["authorization_scope"],
+            "no-device-write-authorized-v1",
+        )
+        for blocker in (
+            "same_oid_write_readback_unverified",
+            "device_failure_and_reboot_behavior_unverified",
+            "executor_not_implemented",
+            "explicit_user_authorization_required",
+        ):
+            self.assertIn(blocker, plan["execution"]["blockers"])
+        self.assertEqual(len(plan["confirmation"]["token"]), 64)
+
+    def test_quiet_mode_plan_blocks_noop_and_unreadable_current(self):
+        noop = build_config_write_plan(self.baseline, self.baseline, "50=OFF")
+        self.assertIn(
+            "requested_value_equals_current_value",
+            noop["review"]["blockers"],
+        )
+        self.assertFalse(noop["review"]["plan_preconditions_valid"])
+
+        missing_records = copy.deepcopy(self.records)
+        record = next(item for item in missing_records if item["item_id"] == 50)
+        record["status"] = 2
+        record["value"] = None
+        record["display"] = None
+        missing = build_config_snapshot(
+            missing_records,
+            transport="snmp",
+            target="printer",
+        )
+        plan = build_config_write_plan(self.baseline, missing, "50=ON")
+        self.assertIn("current_object_not_readable", plan["review"]["blockers"])
+        self.assertIn("unstable_configuration_read", plan["review"]["blockers"])
+        self.assertFalse(plan["review"]["plan_preconditions_valid"])
+
     def test_cli_generates_plan_without_writing(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "baseline.json"
@@ -652,6 +725,34 @@ class ConfigWritePlanTests(unittest.TestCase):
                     "ready_for_executor_implementation"
                 ]
             )
+
+    def test_cli_generates_quiet_mode_plan_without_writing(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "baseline.json"
+            save_config_snapshot(path, self.baseline)
+            output = io.StringIO()
+            with patch.object(cli, "collect_config_snmp", return_value=self.records):
+                with patch.object(cli, "SnmpClient") as snmp_client:
+                    with redirect_stdout(output):
+                        code = cli.main(
+                            [
+                                "--host",
+                                "printer",
+                                "--config",
+                                "--snmp",
+                                "--config-plan",
+                                str(path),
+                                "--config-set",
+                                "50=ON",
+                                "--json",
+                            ]
+                        )
+            self.assertEqual(code, 0)
+            snmp_client.assert_not_called()
+            payload = json.loads(output.getvalue())
+            plan = payload["write_plan"]
+            self.assertTrue(plan["review"]["plan_preconditions_valid"])
+            self.assertFalse(plan["execution"]["allowed"])
 
 
 class ConfigWriteCandidateTests(unittest.TestCase):

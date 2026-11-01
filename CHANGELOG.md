@@ -2,6 +2,21 @@
 
 ## 2026-11-01
 
+### Added — audit-only Quiet mode write plans
+
+- 扩展 `--config-plan`，item 50 `Quiet mode` 现在可从完整性受保护的基线生成
+  审计计划，包含当前值、目标值、回滚值、PJL/SNMP 命令预览和 SHA-256 令牌。
+- item 50 计划固定 `execution.allowed=false`，保留同 OID 写入回读、设备
+  失败/重启行为、执行器缺失和用户授权 blockers；现有 `--config-apply` 无法
+  消费该令牌。
+- 修正 dry-run CLI 退出码：计划前置条件有效时返回 `0`，不再把“该字段尚无
+  执行器”误报为命令失败；no-op、漂移或读取不稳定仍返回 `1`。
+- 在哈希匹配的 `KMUTLCFG.exe` 导出上复核失败处理：SNMP error-status 非零
+  会记录失败原因/对象，无响应单独记录 timeout；USB 等待响应最长 50 秒并把
+  `STATUS!=0` 计为失败。这些是客户端静态行为，不是 Quiet mode 设备端写入证据。
+- 新增 3 个专项测试；全量测试 207/207；本次未向设备发送 SET、`KSETOBJ`
+  或重置命令。
+
 ### Added — read-only next configuration write candidate review
 
 - 新增 `--config-candidates`：从一次完整只读配置采集评估 item 50

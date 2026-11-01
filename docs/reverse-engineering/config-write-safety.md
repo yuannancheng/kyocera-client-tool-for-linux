@@ -11,7 +11,7 @@
 - 基线/当前值的只读差异检查。
 - `Auto error clear` 单字段 dry-run 写入计划、命令预览、回滚预演和确认令牌。
 - 仅限 SNMPv2c、相同计划与匹配确认令牌的 `OFF -> ON -> OFF` 执行器。
-- item 50 `Quiet mode` 的只读候选审查报告；它不生成计划，也不授权写入。
+- item 50 `Quiet mode` 的只读候选审查和独立审计计划；计划不授权或执行写入。
 
 其他对象、PJL `KSETOBJ`、SNMPv1 SET、密码/网络字段和设备重置仍不可写。
 
@@ -53,8 +53,25 @@
 - `write.allowed`：表示是否已有足够证据和授权执行写入。
 
 后一项固定为 `false`。当前 blockers 包括没有同 OID 写入回读样本、失败/断线/
-设备重启行为未知，以及缺少用户明确授权。该报告不能作为写入计划或确认令牌
-使用。
+设备重启行为未知，以及缺少用户明确授权。候选命令本身不生成计划或确认令牌。
+
+### item 50 审计计划
+
+`--config-plan` 可以读取 item 50 的基线与当前完整只读采集，生成当前值、目标值、
+回滚值、PJL/SNMP 预览和 SHA-256 令牌：
+
+```bash
+kyocera-monitor --host 192.168.0.220 --config --snmp \
+  --config-plan kyocera-config-baseline.json --config-set 50=ON
+```
+
+该计划仍固定包含 `execution.allowed=false`，并列出
+`same_oid_write_readback_unverified`、
+`device_failure_and_reboot_behavior_unverified`、
+`executor_not_implemented` 和 `explicit_user_authorization_required`。
+计划器也拒绝当前值等于目标值的 no-op、配置漂移、读取状态变化和目标/传输
+不匹配。生成的令牌只标识这份审计计划，不能被现有 `--config-apply` 执行器
+消费。
 
 ### item 50 静态读写数据流
 
@@ -70,11 +87,13 @@
 | 网络写入 | `FUN_00401b20` 在 `0x00401b57` 调用差异生成器，随后把变化记录交给 Net-SNMP SET |
 | USB 写入 | `FUN_00402ec0` 使用相对 OID 前缀 `1.` 和 `@PJL KSETOBJ OBJ="%s%s" VALUE =%s\r\n` |
 | 重启请求 | item 50 的差异分支不写 `[application+0x57ec]`；原厂程序不会因该字段单独设置其控制器重置请求标志 |
+| SNMP 失败处理 | `FUN_00401b20` 对 error-status 非零记录失败原因和失败对象，对无响应标记 timeout；`FUN_00402ec0` 等待 USB 响应最长 50 秒并把 `STATUS!=0` 计为失败 |
 
 结论边界：静态路径证明官方程序的控件值、OID、整数 `0/1` 编码以及网络/USB
 消费者一致；它不证明 MA2000w 接受 SET、写后何时回读稳定，或设备是否因内部
-逻辑自行重启。`config.py` 的业务标签仍保留 `confidence=inferred`，因为该
-字段尚未完成真机写入回读；候选报告单独使用 `static_verified` 描述静态路径。
+逻辑自行重启。官方错误分支只说明客户端如何报告失败，不是设备接受或拒绝该
+字段的实测证据。`config.py` 的业务标签仍保留 `confidence=inferred`，因为
+该字段尚未完成真机写入回读；候选报告单独使用 `static_verified` 描述静态路径。
 
 真机验证命令（仅发送配置 GET）：
 
