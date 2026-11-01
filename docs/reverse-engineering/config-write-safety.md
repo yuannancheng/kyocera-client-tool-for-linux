@@ -15,23 +15,46 @@
 - 仅限 SNMPv2c、相同计划与匹配确认令牌的 item 2/item 50
   `OFF -> ON -> OFF` 执行器。
 - `--config-audit-safe` 的无害整数字段白名单、逐项目标回读和自动恢复。
-- Web/GUI 只读配置工作台：147 项对象、敏感值脱敏、面板/Wi‑Fi 状态、
+- Web/GUI 配置工作台：147 项对象、敏感值脱敏、面板/Wi‑Fi 状态、
   `0600` 私有基线和差异比较。
+- Web/GUI 九个已审核整数属性的正常设置写入：旧值一致性检查、明确确认、
+  SET 后回读以及失败恢复。
 
-其他对象、PJL `KSETOBJ`、SNMPv1 SET、密码/网络字段和设备重置仍不可写。
+其他字段、PJL `KSETOBJ`、SNMPv1 SET、密码/网络字段和设备重置仍不可写。
 
 ### Web/GUI 配置入口
 
-Network 模式的 Web/GUI 使用只读 SNMPv2c 配置工作台。页面只显示脱敏后的对象
-值；SNMP community、Wi‑Fi SSID、系统联系人和位置不会返回给浏览器。Web 服务
-不注册 `/api/config/plan` 或 `/api/config/apply`，页面也不提供写权限列、
-计划、授权或执行按钮。基线保存在
+Network 模式的 Web/GUI 使用 SNMPv2c 配置工作台。页面只显示脱敏后的对象值；
+SNMP community、Wi‑Fi SSID、系统联系人和位置不会返回给浏览器。基线保存在
 `$XDG_CONFIG_HOME/kyocera-monitor/baselines/<目标哈希>.json`，文件权限为
 `0600`。
 
-受控写入实验仅通过 CLI 的 `--config-plan` 和 `--config-apply` 提供。执行器
-要求相同基线、目标、赋值和匹配令牌；无令牌、令牌不匹配、目标变化、漂移、
-no-op、反向转换和其他 item 均拒绝。
+页面可编辑以下九个整数属性：
+
+- item 1 `Sleep time`；
+- item 2 `Auto error clear`；
+- item 3 `Auto error clear timeout`；
+- item 49 `Print density`；
+- item 50 `Quiet mode`；
+- item 51 `Units`；
+- item 52 `Form feed timeout`；
+- item 84 `Auto clear panel`；
+- item 85 `Auto clear panel time`。
+
+这些字段均来自已还原的官方控件/差异表；item 2 和 item 50 已做独立真机写入
+与恢复，其他七个字段属于已执行的 25 项无害整数审计。`POST /api/config/apply` 只接受上述
+item、整数目标值、页面实际读取的 `expected_value` 和 `confirm=true`。设备当前
+值变化时在写入前拒绝；SET 后重新读取同一对象，回读不一致或写入异常时尝试
+恢复旧值并报告恢复结果。页面不提供全表批量提交或自动重启。
+
+CLI 的 `--config-plan` / `--config-apply` 仍是独立的强约束
+`OFF -> ON -> OFF` 研究流程，要求相同基线、目标、赋值和匹配令牌；正式页面
+不调用这两个实验方法。网络可达性、SNMP community/trap、Wi-Fi、传真、
+字符串、重置触发、计数器和未知语义字段继续排除。
+
+设备 Push Scan 的接口、IPv4/IPv6/主机名目标和地址类型对象只有官方读取调用
+证据；未找到 Client Tool 的可复现 SET 路径，因此不纳入设备属性写入。界面中的
+Push Scan 槽位仅是 `89xxx` 设备触发号到 Linux 本地预设的产品层映射。
 
 ## item 2 Auto error clear
 

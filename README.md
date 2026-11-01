@@ -170,7 +170,7 @@ python3 -m pip install --user .
 
 ```bash
 python3 tools/build_deb.py
-sudo apt install ./dist/kyocera-monitor_0.2.5-1_all.deb
+sudo apt install ./dist/kyocera-monitor_0.2.6-1_all.deb
 ```
 
 构建过程只使用本地 Python 和 `dpkg-deb`，不联网。包的运行依赖声明为
@@ -241,7 +241,8 @@ community、Wi-Fi SSID、系统联系人或位置，不能提交到公开仓库�
 单独列出，不把自然变化计为配置差异；配置值变化和读取状态变化仍返回 `1`。
 当前不发送 PJL `KSETOBJ`。研究用途的 CLI 仍可在用户显式确认后，通过
 SNMPv2c 执行 `Auto error clear` 或 `Quiet mode` 的 `OFF -> ON -> OFF`
-回滚实验；正式 Web/GUI 不暴露这些测试入口。写入边界见
+回滚实验。正式 Web/GUI 另行开放九个经真机审计的整数属性，提供旧值校验、
+明确确认、SET 后回读和失败恢复；不包含 `OFF -> ON -> OFF` 测试流程。写入边界见
 `docs/reverse-engineering/config-write-safety.md`。
 
 下一个写入候选可先做只读资格审查：
@@ -286,6 +287,11 @@ Push Scan 触发码进一步确认为 `89000 + preset`：`89000–89999` 的状�
 USB、未配置和查询失败均不会执行。未绑定、重复绑定和越界配置同样不会执行。
 监听器不发送 PJL
 `USTATUS=ON`，结果 OID 回写仍因为官方完成判定调用方未知而禁用。
+
+设备侧 Push Scan 接口和目标字段（`1001.4.1.1/2/4/5/6.0`）目前只有官方
+读取路径，没有可复现的 Client Tool SET 路径。项目不会在正式界面盲写这些
+对象；设备目标应在打印机面板或厂商 Scan Destination 工具中设置。Linux
+页面的“Push Scan 槽位”只表示设备触发号到本地扫描预设的映射。
 
 ```bash
 kyocera-monitor --host 192.168.0.220 --push-scan-listen \
@@ -386,13 +392,16 @@ options、Communication、SNMP trap、Wi‑Fi 状态、音量与 FAX notificatio
 本地预设，并指定一个绝对目录在扫描完成后自动保存。总览页可导出全部已知
 设备的计数 CSV，并可显式开启浏览器状态通知；通知只观察页面已经读取的状态，
 不是设备主动推送。
-详情页的统一配置区可只读采集 147 项配置，展示面板与 Wi‑Fi 状态，保存
+详情页的统一配置区可读取 147 项配置，展示面板与 Wi‑Fi 状态，保存
 `0600` 私有基线并比较差异；SNMP community、Wi‑Fi SSID 等敏感值在页面中
-隐藏。Web/GUI 不提供配置写入、写入计划或回滚实验入口，也不注册
-`/api/config/plan` 和 `/api/config/apply`；受控实验只保留在研究用途的 CLI
-工作流中。详情页的 Push Scan 区通过 `/api/push-scan` 显示只读就绪状态，
-扫描预设编辑区可设置对应的设备槽位；自动执行入口仍是显式 CLI 监听器，
-Web 页面不会自行启动扫描或写结果 OID。
+隐藏。睡眠、错误清除、打印浓度、长度单位、送纸/面板超时和静音模式等九个
+已审核整数属性可写入；`POST /api/config/apply` 要求页面旧值、目标值、
+`confirm=true`，并在 SET 后重新读取设备，失败时尝试恢复旧值。网络、SNMP
+凭据、Wi‑Fi、传真、字符串、重置和其他未知字段仍只读。`/api/config/plan`
+不存在，CLI 的令牌化 `OFF -> ON -> OFF` 研究流程保持独立。
+详情页的 Push Scan 区通过 `/api/push-scan` 显示设备只读状态，并说明设备
+目标字段没有已确认写入链；扫描预设编辑区可设置本地槽位映射。自动执行入口
+仍是显式 CLI 监听器，Web 页面不会自行启动扫描或写结果 OID。
 服务没有认证，默认只绑定回环地址；使用 `--web-bind 0.0.0.0` 暴露到局域网时
 需要自行增加访问控制。
 

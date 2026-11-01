@@ -742,7 +742,11 @@ DEVICE_HTML = """<!doctype html>
     <div id="settings" class="value">-</div>
   </div>
   <div class="card" style="margin-top:12px">
-    <div class="label">配置、面板与 Wi-Fi</div>
+    <div class="label">设备属性配置、面板与 Wi-Fi</div>
+    <p class="muted">
+      仅开放已由官方控件映射和真机写入验证的整数属性。提交后会重新读取设备；
+      回读失败时自动尝试恢复原值。
+    </p>
     <div class="inline">
       <button id="config-read" type="button">读取 147 项配置</button>
       <button id="config-baseline-save" type="button">保存当前为基线</button>
@@ -751,6 +755,13 @@ DEVICE_HTML = """<!doctype html>
     </div>
     <div id="config-baseline-info" class="muted"></div>
     <div id="config-status-grid" class="config-grid"></div>
+    <div id="config-edit-status" class="muted"></div>
+    <div class="config-table-wrap">
+      <table>
+        <thead><tr><th>属性</th><th>当前值</th><th>新值</th><th>操作</th></tr></thead>
+        <tbody id="config-edit-items"></tbody>
+      </table>
+    </div>
     <div id="config-changes"></div>
     <details style="margin-top:12px">
       <summary>查看已读取的配置对象</summary>
@@ -763,7 +774,7 @@ DEVICE_HTML = """<!doctype html>
     </details>
   </div>
   <div class="card" style="margin-top:12px">
-    <div class="label">Push Scan 就绪状态</div>
+    <div class="label">Push Scan 状态与本地预设映射</div>
     <div class="inline">
       <button id="push-scan-read" type="button">读取 Push Scan 状态</button>
       <span id="push-scan-status" class="muted">尚未读取</span>
@@ -1236,6 +1247,121 @@ function renderConfigStatusObjects(objects) {
   }
 }
 
+function applyEditedConfig(itemId) {
+  const row = document.querySelector(
+    `#config-edit-items tr[data-item-id="${itemId}"]`
+  );
+  if (!row) return;
+  const control = row.querySelector("[data-config-control]");
+  const button = row.querySelector("button");
+  const value = Number(control.value);
+  const expected = Number(row.dataset.currentValue);
+  if (!Number.isInteger(value)) {
+    setEditConfigStatus("请输入整数", true);
+    return;
+  }
+  if (!window.confirm(
+    `确认把设备属性 ${itemId} 从 ${expected} 改为 ${value}？` +
+    "提交后会读取设备验证，失败时尝试恢复原值。"
+  )) return;
+  button.disabled = true;
+  setEditConfigStatus("正在写入并回读设备…");
+  fetch(configUrl("/api/config/apply"), {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({
+      host: currentHost,
+      item_id: itemId,
+      value,
+      expected_value: expected,
+      confirm: true
+    })
+  }).then(async response => {
+    const payload = await response.json();
+    if (!response.ok) throw new Error(payload.error || String(response.status));
+    row.dataset.currentValue = String(payload.requested);
+    const current = row.querySelector("[data-config-current]");
+    current.textContent = payload.observed_display || String(payload.observed);
+    control.value = String(payload.observed);
+    setEditConfigStatus(`属性 ${itemId} 已写入并回读成功`);
+  }).catch(err => {
+    setEditConfigStatus("写入失败：" + String(err), true);
+  }).finally(() => {
+    button.disabled = false;
+  });
+}
+
+function setEditConfigStatus(message, error = false) {
+  const status = byId("config-edit-status");
+  status.textContent = message;
+  status.style.color = error ? "#a12222" : "";
+}
+
+function renderConfigEditing(editing) {
+  const body = byId("config-edit-items");
+  body.replaceChildren();
+  if (!editing?.available) {
+    setEditConfigStatus("当前连接不提供设备写入通道");
+    return;
+  }
+  const items = editing.items || [];
+  if (!items.length) {
+    setEditConfigStatus("没有可显示的已审核属性");
+    return;
+  }
+  for (const item of items) {
+    const row = document.createElement("tr");
+    row.dataset.itemId = String(item.item_id);
+    row.dataset.currentValue = String(item.current_value);
+
+    const name = document.createElement("td");
+    const label = document.createElement("strong");
+    label.textContent = item.label;
+    const detail = document.createElement("div");
+    detail.className = "muted";
+    detail.textContent = item.description;
+    name.append(label, detail);
+
+    const current = document.createElement("td");
+    current.dataset.configCurrent = "";
+    current.textContent = item.current_display || "不可读";
+
+    const editor = document.createElement("td");
+    let control;
+    if (item.choices?.length) {
+      control = document.createElement("select");
+      for (const choice of item.choices) {
+        const option = document.createElement("option");
+        option.value = String(choice.value);
+        option.textContent = choice.label;
+        control.append(option);
+      }
+    } else {
+      control = document.createElement("input");
+      control.type = "number";
+      control.min = "0";
+      control.step = "1";
+    }
+    control.dataset.configControl = "";
+    control.disabled = !item.readable;
+    control.value = item.current_value == null
+      ? "" : String(item.current_value);
+    editor.append(control);
+
+    const action = document.createElement("td");
+    const button = document.createElement("button");
+    button.type = "button";
+    button.textContent = "写入并回读";
+    button.disabled = !item.readable;
+    button.addEventListener("click", () => applyEditedConfig(item.item_id));
+    action.append(button);
+
+    row.append(name, current, editor, action);
+    body.append(row);
+  }
+  setEditConfigStatus("");
+}
+
 function renderConfigOverview(data) {
   const baseline = data.baseline || {};
   byId("config-baseline-info").textContent = baseline.available
@@ -1243,6 +1369,7 @@ function renderConfigOverview(data) {
     : (baseline.error ? "基线不可用：" + baseline.error : "尚未保存基线");
   renderConfigStatusObjects(data.status_objects);
   renderConfigObjects(data.objects);
+  renderConfigEditing(data.editing);
   byId("config-changes").replaceChildren();
   setConfigStatus(`读取完成：${data.read}/${data.total} 项可读`);
 }
@@ -1361,9 +1488,11 @@ function renderPushScan(data) {
     (readiness.ready === true ? "ready"
       : readiness.ready === false ? "warning" : "");
   const note = byId("push-scan-note");
-  note.textContent = "此页面只检查当前目标和上次结果。命令行 " +
-    "--push-scan-listen 可报告 89xxx；显式加上 --push-scan-run 会执行" +
-    "“Push Scan 槽位”匹配的本地预设。结果 OID 回写仍未启用。";
+  note.textContent = "设备侧 Push Scan 目标由打印机面板/Scan Destination " +
+    "设置；官方 Client Tool 只读取这组状态 OID，未提供可复现的 SET 路径，" +
+    "因此这里不会盲写接口或目标地址。“Push Scan 槽位”只保存 Linux " +
+    "本地预设映射。命令行 --push-scan-listen 可报告 89xxx；显式加上 " +
+    "--push-scan-run 会执行匹配的本地预设，结果 OID 回写仍未启用。";
 }
 
 async function readPushScan() {
@@ -1679,6 +1808,7 @@ def make_handler(
                 "/api/scans",
                 "/api/settings",
                 "/api/config/baseline",
+                "/api/config/apply",
             }:
                 self._respond(404, "text/plain; charset=utf-8", b"not found\n")
                 return
@@ -1716,7 +1846,10 @@ def make_handler(
                 self._respond(200, "application/json; charset=utf-8", body)
                 return
             if parsed.path == "/api/config/baseline":
-                self._config_operation(payload, config_workbench)
+                self._config_baseline_operation(payload, config_workbench)
+                return
+            if parsed.path == "/api/config/apply":
+                self._config_apply_operation(payload, config_workbench)
                 return
             if parsed.path == "/api/scans":
                 self._start_scan(payload)
@@ -1741,7 +1874,7 @@ def make_handler(
             ).encode("utf-8")
             self._respond(200, "application/json; charset=utf-8", body)
 
-        def _config_operation(
+        def _config_baseline_operation(
             self,
             payload: dict[str, object],
             workbench: ConfigWorkbench | None,
@@ -1775,6 +1908,49 @@ def make_handler(
                 return
             except ConfigSnapshotError as exc:
                 self._json_error(400, str(exc))
+                return
+            body = json.dumps(result, ensure_ascii=False).encode("utf-8")
+            self._respond(200, "application/json; charset=utf-8", body)
+
+        def _config_apply_operation(
+            self,
+            payload: dict[str, object],
+            workbench: ConfigWorkbench | None,
+        ) -> None:
+            if workbench is None:
+                self._json_error(
+                    409,
+                    "configuration is unavailable for this connection",
+                )
+                return
+            if payload.get("confirm") is not True:
+                self._json_error(400, "configuration write requires confirm=true")
+                return
+            requested = payload.get("host")
+            if requested is not None and not isinstance(requested, str):
+                self._json_error(400, "host must be a string or null")
+                return
+            try:
+                host = registry.resolve(requested)
+            except KeyError:
+                self._json_error(
+                    404 if requested is not None else 400,
+                    (
+                        f"unknown device: {requested}"
+                        if requested is not None
+                        else "no printer selected"
+                    ),
+                )
+                return
+            try:
+                result = workbench.apply_integer(
+                    host,
+                    payload.get("item_id"),
+                    payload.get("value"),
+                    payload.get("expected_value"),
+                )
+            except ConfigWorkbenchError as exc:
+                self._json_error(409, str(exc))
                 return
             body = json.dumps(result, ensure_ascii=False).encode("utf-8")
             self._respond(200, "application/json; charset=utf-8", body)

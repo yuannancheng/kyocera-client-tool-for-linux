@@ -2,9 +2,10 @@ import copy
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from kyocera_monitor.config import CONFIG, absolute_config_oid
-from kyocera_monitor.config_web import ConfigWorkbench
+from kyocera_monitor.config_web import ConfigWorkbench, ConfigWorkbenchError
 
 
 def records(*, quiet_mode=0, connected=True, wifi_changes=False):
@@ -73,6 +74,11 @@ class ConfigWorkbenchTests(unittest.TestCase):
         self.assertNotIn("candidates", result)
         self.assertNotIn("write_execution_available", result)
         self.assertNotIn("warning", result)
+        self.assertFalse(result["editing"]["available"])
+        self.assertIn(
+            50,
+            {item["item_id"] for item in result["editing"]["items"]},
+        )
 
     def test_baseline_compare_and_private_storage(self):
         current = {"value": records()}
@@ -96,13 +102,74 @@ class ConfigWorkbenchTests(unittest.TestCase):
         self.assertEqual(comparison["comparison"]["volatile_changed"], 2)
         self.assertEqual(comparison["comparison"]["read_status_changed"], 0)
 
-    def test_web_workbench_is_read_only(self):
+    def test_web_workbench_has_no_experimental_plan_or_apply_methods(self):
         workbench = ConfigWorkbench(
             lambda _host: records(),
             baseline_directory=Path("/tmp/unused-kyocera-baseline"),
         )
         self.assertFalse(hasattr(workbench, "plan"))
         self.assertFalse(hasattr(workbench, "apply"))
+
+    def test_reviewed_integer_write_reads_back(self):
+        current = {"value": records(quiet_mode=0)}
+
+        def reader(_host):
+            return copy.deepcopy(current["value"])
+
+        def writer(host, oid, value):
+            self.assertEqual(host, "printer")
+            self.assertEqual(
+                oid,
+                "1.3.6.1.4.1.1347.1001.2.1.1.1.14.1",
+            )
+            current["value"] = records(quiet_mode=value)
+            return mock.Mock()
+
+        workbench = ConfigWorkbench(
+            reader,
+            writer=writer,
+            baseline_directory=Path("/tmp/unused-kyocera-baseline"),
+        )
+        result = workbench.apply_integer("printer", 50, 1, 0)
+        self.assertEqual(result["status"], "applied")
+        self.assertEqual(result["before"], 0)
+        self.assertEqual(result["requested"], 1)
+        self.assertEqual(result["observed"], 1)
+
+    def test_write_rejects_stale_page_state_without_calling_writer(self):
+        writer = mock.Mock()
+        workbench = ConfigWorkbench(
+            lambda _host: records(quiet_mode=1),
+            writer=writer,
+            baseline_directory=Path("/tmp/unused-kyocera-baseline"),
+        )
+        with self.assertRaisesRegex(ConfigWorkbenchError, "configuration changed"):
+            workbench.apply_integer("printer", 50, 0, 0)
+        writer.assert_not_called()
+
+    def test_failed_readback_attempts_restore(self):
+        calls = []
+
+        def writer(_host, _oid, value):
+            calls.append(value)
+
+        workbench = ConfigWorkbench(
+            lambda _host: records(quiet_mode=0),
+            writer=writer,
+            baseline_directory=Path("/tmp/unused-kyocera-baseline"),
+        )
+        with self.assertRaisesRegex(
+            ConfigWorkbenchError,
+            "did not read back",
+        ):
+            workbench.apply_integer(
+                "printer",
+                50,
+                1,
+                0,
+                readback_timeout=0,
+            )
+        self.assertEqual(calls, [1, 0])
 
 
 if __name__ == "__main__":

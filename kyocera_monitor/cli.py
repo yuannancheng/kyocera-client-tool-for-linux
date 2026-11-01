@@ -1299,8 +1299,20 @@ def main(argv: list[str] | None = None) -> int:
                     retries=args.snmp_retries,
                 )
 
+            def write_web_configuration(key: str, oid: str, value: int):
+                client = SnmpClient(
+                    key,
+                    community=args.snmp_community,
+                    version=args.config_snmp_version,
+                    port=args.snmp_port,
+                    timeout=args.snmp_timeout,
+                    retries=args.snmp_retries,
+                )
+                return client.set_integer(oid, value)
+
             config_workbench = ConfigWorkbench(
                 read_web_configuration,
+                writer=write_web_configuration,
                 transport="snmp",
             )
 
