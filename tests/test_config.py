@@ -30,6 +30,10 @@ from kyocera_monitor.config_snapshot import (
     load_config_snapshot,
     save_config_snapshot,
 )
+from kyocera_monitor.config_write_candidates import (
+    CANDIDATE_REPORT_FORMAT,
+    build_config_candidate_report,
+)
 from kyocera_monitor.config_write_plan import (
     ConfigWritePlanError,
     build_config_write_plan,
@@ -648,6 +652,102 @@ class ConfigWritePlanTests(unittest.TestCase):
                     "ready_for_executor_implementation"
                 ]
             )
+
+
+class ConfigWriteCandidateTests(unittest.TestCase):
+    def setUp(self):
+        self.records = parse_config_response(
+            kgetobj("1.1001.2.1.1.1.14.1", 0, 2, "0")
+        )
+        self.snapshot = build_config_snapshot(
+            self.records,
+            transport="snmp",
+            target="printer",
+        )
+
+    def test_report_selects_quiet_mode_without_authorizing_write(self):
+        report = build_config_candidate_report(self.snapshot)
+        self.assertEqual(report["format"], CANDIDATE_REPORT_FORMAT)
+        self.assertTrue(report["read_only"])
+        self.assertEqual(report["recommendation"]["item_id"], 50)
+        self.assertEqual(
+            report["recommendation"]["status"],
+            "ready_for_authorization_review",
+        )
+        candidate = report["candidates"][0]
+        self.assertEqual(candidate["item_id"], 50)
+        self.assertEqual(candidate["observed"]["value"], 0)
+        self.assertEqual(candidate["observed"]["display"], "OFF")
+        self.assertTrue(candidate["review"]["current_read_valid"])
+        self.assertFalse(candidate["write"]["allowed"])
+        self.assertIn(
+            "field_mapping_inferred",
+            candidate["write"]["blockers"],
+        )
+        self.assertIn(
+            "same_oid_write_readback_unverified",
+            candidate["write"]["blockers"],
+        )
+        self.assertIn(
+            "explicit_user_authorization_required",
+            candidate["write"]["blockers"],
+        )
+
+    def test_unreadable_or_unknown_values_block_the_candidate(self):
+        missing = copy.deepcopy(self.records)
+        record = next(item for item in missing if item["item_id"] == 50)
+        record["status"] = 2
+        record["value"] = None
+        record["value_kind"] = None
+        missing_snapshot = build_config_snapshot(
+            missing,
+            transport="snmp",
+            target="printer",
+        )
+        missing_report = build_config_candidate_report(missing_snapshot)
+        missing_candidate = missing_report["candidates"][0]
+        self.assertFalse(missing_candidate["review"]["current_read_valid"])
+        self.assertIn(
+            "current_object_not_readable",
+            missing_candidate["review"]["read_blockers"],
+        )
+        self.assertEqual(missing_report["recommendation"]["status"], "blocked")
+
+        unexpected = copy.deepcopy(self.records)
+        record = next(item for item in unexpected if item["item_id"] == 50)
+        record["value"] = 2
+        record["raw_value"] = "2"
+        unexpected_snapshot = build_config_snapshot(
+            unexpected,
+            transport="snmp",
+            target="printer",
+        )
+        unexpected_report = build_config_candidate_report(unexpected_snapshot)
+        self.assertIn(
+            "unexpected_current_value",
+            unexpected_report["candidates"][0]["review"]["read_blockers"],
+        )
+
+    def test_cli_reports_candidate_without_writing(self):
+        output = io.StringIO()
+        with patch.object(cli, "collect_config_snmp", return_value=self.records):
+            with redirect_stdout(output):
+                code = cli.main(
+                    [
+                        "--host",
+                        "printer",
+                        "--config",
+                        "--snmp",
+                        "--config-candidates",
+                        "--json",
+                    ]
+                )
+        self.assertEqual(code, 0)
+        payload = json.loads(output.getvalue())
+        report = payload["candidate_report"]
+        self.assertEqual(report["recommendation"]["item_id"], 50)
+        self.assertFalse(report["candidates"][0]["write"]["allowed"])
+        self.assertNotIn("objects", payload)
 
 
 class FakeSnmpWriteClient:

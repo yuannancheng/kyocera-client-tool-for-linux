@@ -16,6 +16,10 @@ from .config_snapshot import (
     load_config_snapshot,
     save_config_snapshot,
 )
+from .config_write_candidates import (
+    ConfigCandidateError,
+    build_config_candidate_report,
+)
 from .config_write_plan import (
     ConfigWritePlanError,
     build_config_write_plan,
@@ -261,6 +265,11 @@ def main(argv: list[str] | None = None) -> int:
         help="compare the current --config read with a saved snapshot",
     )
     parser.add_argument(
+        "--config-candidates",
+        action="store_true",
+        help="review the next configuration write candidate without writing",
+    )
+    parser.add_argument(
         "--config-plan",
         metavar="PATH",
         help="build a dry-run write plan from a saved configuration snapshot",
@@ -390,13 +399,25 @@ def main(argv: list[str] | None = None) -> int:
     config_snapshot_modes = (
         args.config_save
         or args.config_compare
+        or args.config_candidates
         or args.config_plan
         or args.config_apply
     )
     if config_snapshot_modes and not args.config:
         parser.error(
-            "--config-save/--config-compare/--config-plan/--config-apply "
-            "require --config"
+            "--config-save/--config-compare/--config-candidates/"
+            "--config-plan/--config-apply require --config"
+        )
+    if args.config_candidates and any(
+        (
+            args.config_save,
+            args.config_compare,
+            args.config_plan,
+            args.config_apply,
+        )
+    ):
+        parser.error(
+            "--config-candidates cannot be combined with other config modes"
         )
     if args.config_save and args.config_compare:
         parser.error("--config-save and --config-compare are mutually exclusive")
@@ -461,6 +482,7 @@ def main(argv: list[str] | None = None) -> int:
         comparison = None
         write_plan = None
         write_execution = None
+        candidate_report = None
         if config_snapshot_modes:
             try:
                 snapshot = build_config_snapshot(
@@ -481,6 +503,8 @@ def main(argv: list[str] | None = None) -> int:
                         snapshot,
                         allow_target_mismatch=args.config_allow_target_mismatch,
                     )
+                elif args.config_candidates:
+                    candidate_report = build_config_candidate_report(snapshot)
                 elif args.config_plan:
                     baseline = load_config_snapshot(args.config_plan)
                     write_plan = build_config_write_plan(
@@ -514,6 +538,9 @@ def main(argv: list[str] | None = None) -> int:
             except ConfigWritePlanError as exc:
                 print(f"error: {exc}", file=sys.stderr)
                 return 2
+            except ConfigCandidateError as exc:
+                print(f"error: {exc}", file=sys.stderr)
+                return 2
             except (
                 ConfigWriteExecutionError,
                 BerError,
@@ -529,8 +556,9 @@ def main(argv: list[str] | None = None) -> int:
                 "transport": transport,
                 "read": read_count,
                 "total": len(records),
-                "objects": records,
             }
+            if candidate_report is None:
+                payload["objects"] = records
             if comparison is not None:
                 payload["baseline"] = {
                     "created_at": baseline["created_at"],
@@ -542,6 +570,8 @@ def main(argv: list[str] | None = None) -> int:
                 payload["write_plan"] = write_plan
             if write_execution is not None:
                 payload["write_execution"] = write_execution
+            if candidate_report is not None:
+                payload["candidate_report"] = candidate_report
             print(
                 json.dumps(
                     payload,
@@ -613,6 +643,52 @@ def main(argv: list[str] | None = None) -> int:
                 f"{plan['confirmation']['algorithm']}:"
                 f"{plan['confirmation']['token']}"
             )
+        elif candidate_report is not None:
+            print(
+                "configuration write candidates "
+                "(READ ONLY; no commands sent)"
+            )
+            print(
+                f"target: {candidate_report['target']} "
+                f"({candidate_report['transport']})"
+            )
+            for candidate in candidate_report["candidates"]:
+                observed = candidate["observed"]
+                value = observed.get("display")
+                if value is None:
+                    value = observed.get("raw_value")
+                if value is None:
+                    value = "unreadable"
+                print(
+                    f"candidate: {candidate['item_id']} "
+                    f"{candidate['label']} "
+                    f"[{candidate['absolute_oid']}]"
+                )
+                print(f"observed: {value!r}")
+                print(
+                    "mapping: "
+                    f"{candidate['evidence']['mapping_confidence']} "
+                    f"(control {candidate['evidence']['ui_control']}, "
+                    f"offset {candidate['evidence']['model_offset']})"
+                )
+                print(
+                    "current read: "
+                    + (
+                        "valid"
+                        if candidate["review"]["current_read_valid"]
+                        else "blocked"
+                    )
+                )
+                for blocker in candidate["write"]["blockers"]:
+                    print(f"write blocker: {blocker}")
+                print("write: not authorized")
+            recommendation = candidate_report["recommendation"]
+            print(
+                "recommendation: "
+                f"{recommendation['status']} "
+                f"(item {recommendation['item_id']})"
+            )
+            print(recommendation["note"])
         elif comparison is not None:
             for change in (
                 comparison["changes"]

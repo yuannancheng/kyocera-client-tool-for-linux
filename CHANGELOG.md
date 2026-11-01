@@ -2,6 +2,20 @@
 
 ## 2026-11-01
 
+### Added — read-only next configuration write candidate review
+
+- 新增 `--config-candidates`：从一次完整只读配置采集评估 item 50
+  `Quiet mode`（`1001.2.1.1.1.14.1`）是否适合作下一次写入授权评审。
+- 报告核对官方 UI 到模型偏移/OID 映射、对象可读状态、Integer 类型和
+  `OFF/ON` 枚举，并把当前读取有效性与写入许可分开。
+- `write.allowed` 固定为 `false`；字段映射仍为 `inferred`、缺少同 OID
+  写入回读、失败/重启副作用未知和用户授权缺失均保留为 blockers。
+- 该命令不生成写入计划或确认令牌，不发送 `KSETOBJ`、SNMP SET 或设备复位。
+- `--config-candidates --json` 只输出候选摘要，不附带完整 147 项对象表。
+- MA2000w 连续两次只读 SNMPv2c 采集均为 `96/147`，item 50 均为
+  `STATUS=0`、`0/OFF`；仅证明当前读取连续稳定，不证明可写。
+- 验证：新增 3 个候选审查专项测试；全量测试 204/204；公开树检查通过。
+
 ### Added — integrity-checked configuration baselines
 
 - 新增 `--config-save PATH`：把一次完整的 147 项只读配置采集保存为规范化

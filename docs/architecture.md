@@ -20,6 +20,7 @@ kyocera_monitor/
   gui.py       GTK3/WebKit2 原生窗口，内嵌同一个本地 Web 仪表盘
   cli.py       CLI、JSON、监视模式、退出码
   config_snapshot.py  配置基线、完整性校验、目标绑定和只读差异
+  config_write_candidates.py 下一个写入候选的只读资格审查
   config_write_plan.py 单字段 dry-run、回滚字段和确认令牌
   config_write_executor.py 唯一获准字段的 SNMPv2c 写入、回读和回滚
 tools/
@@ -76,6 +77,9 @@ MA2000w（`0482:0d51`），多个候选时要求显式 `--device`。
   SHA-256 确认令牌和 SNMPv2c 下执行。当前唯一授权范围是 item 2
   `Auto error clear` 的 `OFF -> ON -> OFF`。执行器在正向写入或回读失败时仍
   尝试回滚，并要求最终同 OID 回读为 `0`。
+- `--config-candidates` 只评估 item 50 `Quiet mode` 的读取状态、类型和枚举，
+  不生成写入计划或确认令牌；`write.allowed` 固定为 `false`。推断映射、缺少
+  写后回读/副作用证据或缺少用户授权都会保留为 blockers。
 - 不把 KGETOBJ 的数值无标记地解释成未经验证的业务字段；推断字段必须带
   `confidence` 标记，原始键值始终保留。
 - Windows 原工具的网络路径使用 SNMP；Linux 实现优先使用已验证的 PJL 9100

@@ -207,6 +207,20 @@ community、Wi-Fi SSID、系统联系人或位置，不能提交到公开仓库�
 执行 `Auto error clear OFF -> ON -> OFF` 回滚实验。写入边界见
 `docs/reverse-engineering/config-write-safety.md`。
 
+下一个写入候选可先做只读资格审查：
+
+```bash
+kyocera-monitor --host 192.168.0.220 --config --snmp \
+  --config-candidates
+```
+
+报告当前只评估 item 50 `Quiet mode`（`1001.2.1.1.1.14.1`）。它核对对象是否
+可读、类型是否为整数、当前值是否落在已记录的 `OFF/ON` 范围，并把“当前读取
+有效”和“允许写入”分开：字段映射仍为 `inferred`，同 OID 写入回读、失败/重启
+副作用和用户授权都尚未确认，因此报告中的 `write.allowed` 始终为 `false`。
+`--json` 只输出 `candidate_report` 摘要，不附带完整 147 项对象表；该模式不
+生成写入计划，也不发送任何 `KSETOBJ` 或 SNMP SET。
+
 可基于基线生成单字段写入预演。目前只开放已验证为 0/1 整数的
 `Auto error clear`（item 2）：
 
