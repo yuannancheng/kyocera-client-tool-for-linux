@@ -44,6 +44,7 @@ from .pjl import (
     open_channel,
     query_merged,
 )
+from .push_scan import format_push_scan, read_push_scan
 from .snmp_status import collect_snmp_snapshot
 from .snmp import BerError, SnmpClient
 from .scan import (
@@ -350,6 +351,14 @@ def main(argv: list[str] | None = None) -> int:
         help="read status through SNMP instead of PJL (read-only)",
     )
     parser.add_argument(
+        "--push-scan",
+        action="store_true",
+        help=(
+            "inspect network Push Scan destination and readiness "
+            "without receiving or executing a scan"
+        ),
+    )
+    parser.add_argument(
         "--config",
         action="store_true",
         help=(
@@ -500,6 +509,28 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("--snmp cannot be combined with --usb")
     if args.snmp and not args.host:
         parser.error("--snmp requires --host")
+    if args.push_scan:
+        if not args.host:
+            parser.error("--push-scan requires --host")
+        if args.snmp:
+            parser.error("--push-scan cannot be combined with --snmp")
+        if any(
+            (
+                args.device,
+                args.usb,
+                args.config,
+                args.web,
+                args.gui,
+                args.scan,
+                args.scan_output is not None,
+                args.watch is not None,
+                args.count,
+                args.raw,
+            )
+        ):
+            parser.error(
+                "--push-scan cannot be combined with other device modes"
+            )
     if args.config and (
         args.web
         or args.gui
@@ -596,6 +627,31 @@ def main(argv: list[str] | None = None) -> int:
         except UsbError as exc:
             print(f"error: {exc}", file=sys.stderr)
             return 2
+
+    if args.push_scan:
+        try:
+            push_scan_result = read_push_scan(
+                args.host,
+                community=args.snmp_community,
+                version=args.snmp_version,
+                port=args.snmp_port,
+                timeout=args.snmp_timeout,
+                retries=args.snmp_retries,
+            )
+        except (BerError, OSError, TimeoutError, ValueError) as exc:
+            print(f"Push Scan read failed: {exc}", file=sys.stderr)
+            return 2
+        if args.json:
+            print(
+                json.dumps(
+                    push_scan_result,
+                    ensure_ascii=False,
+                    indent=2,
+                )
+            )
+        else:
+            print(format_push_scan(push_scan_result))
+        return 0
 
     if args.scan:
         options = ScanOptions(
@@ -1073,6 +1129,7 @@ def main(argv: list[str] | None = None) -> int:
 
         registry = DeviceRegistry(collect_host, default_key)
         config_workbench = None
+        push_scan_reader = None
         if not (args.device or args.usb):
             def read_web_configuration(key: str):
                 return collect_config_snmp(
@@ -1088,6 +1145,18 @@ def main(argv: list[str] | None = None) -> int:
                 read_web_configuration,
                 transport="snmp",
             )
+
+            def read_web_push_scan(key: str):
+                return read_push_scan(
+                    key,
+                    community=args.snmp_community,
+                    version=args.config_snmp_version,
+                    port=args.snmp_port,
+                    timeout=args.snmp_timeout,
+                    retries=args.snmp_retries,
+                )
+
+            push_scan_reader = read_web_push_scan
         discover_fn = (
             None if (args.device or args.usb) else run_discovery
         )
@@ -1099,6 +1168,7 @@ def main(argv: list[str] | None = None) -> int:
                     registry,
                     discover_fn=discover_fn,
                     config_workbench=config_workbench,
+                    push_scan_reader=push_scan_reader,
                 )
             except GuiUnavailable as exc:
                 print(f"error: {exc}", file=sys.stderr)
@@ -1124,6 +1194,7 @@ def main(argv: list[str] | None = None) -> int:
                 discover_fn=discover_fn,
                 on_listen=announce,
                 config_workbench=config_workbench,
+                push_scan_reader=push_scan_reader,
             )
         except OSError as exc:
             print(f"error: {exc}", file=sys.stderr)

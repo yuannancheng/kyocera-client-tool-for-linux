@@ -11,7 +11,7 @@
 MA2000w。
 
 当前结论：**MA2000w 网络扫描产品闭环已在 Web 端独立打通，并已生成、安装
-`0.2.2-1` Debian 安装包。** 深色状态标签、已保存打印机和正式 GUI 只读配置
+`0.2.3-1` Debian 安装包。** 深色状态标签、已保存打印机和正式 GUI 只读配置
 收口已完成；只读监控、
 设备发现、统一 Web/GUI、配置只读导出、配置安全基线、单页扫描和两项受控配置
 写入均可用；彩色与灰度 RAW、官方扫描参数覆盖和多页状态机处理均已实现。
@@ -19,7 +19,9 @@ MA2000w。
 下载 PNG/PDF/JPEG/TIFF/高压缩 PDF/XPS/BMP/RAW；E2 已加入本地扫描预设、
 用户保存目录、多设备计数 CSV 和可关闭浏览器通知。MA2000w 真机已取得
 2496×3520 PNG、PDF 和 JPEG；最大风险转为其他机型、ADF/双面、USB、复杂色彩
-管理，以及 TIFF/XPS 在真实查看器或其他设备上的验证。
+管理，以及 TIFF/XPS 在真实查看器或其他设备上的验证。E3 已开始：Push Scan
+只读就绪状态已进入 CLI、Web 和 GUI，但设备触发接收、预设执行和结果回写仍未
+实现。
 
 **最高优先级工程约束：** 官方二进制可观察到的行为优先于项目自身推断；
 正式 Linux 功能只复刻行为，不在运行时依赖官方 DLL/EXE。详细规则见
@@ -40,6 +42,9 @@ MA2000w。
 - 已验证写入：MA2000w `Auto error clear` 经 SNMPv2c 从 OFF→ON→OFF，
   SET echo 和同 OID 回读均成功；`Quiet mode` 同样完成回读和恢复；另有 25 个
   无害整数字段完成批量写入、目标回读和自动恢复，最终全表一致。
+- 已验证 Push Scan 状态：MA2000w SNMPv2c 返回接口 `USB`、IPv4 目标
+  `0.0.0.0`、地址类型 `IPv4`、主机名为空、上次结果 `OK`；IPv6 对象
+  `NoSuchObject`。只读探针将其判定为 `usb_destination`，没有网络就绪。
 - 未闭环：物理 USB、其他机型兼容性、完整色彩管理、TIFF/XPS 真实查看器
   验证，以及 ADF/双面/多页硬件验证。MA2000w 本身没有输稿器。
 
@@ -61,7 +66,11 @@ MA2000w。
 `DONE`：阶段 E2 核心设备管理已完成。状态通知、多设备计数导出、扫描预设、
 目录保存、统一配置只读/基线/差异界面和面板/Wi‑Fi 状态均已进入同一设备页，
 并通过自动化测试及 MA2000w 真机验证。配置写入/回滚实验只保留在显式 CLI
-研究工具中，不进入正式 Web/GUI。下一阶段进入 E3。
+研究工具中，不进入正式 Web/GUI。
+
+`IN_PROGRESS`：阶段 E3 已启动。Push Scan 增加只读接口、目标地址类型、目标
+和上次结果探针；MA2000w 当前明确选择 USB 目标，网络目标未配置。官方预设号
+来源、设备触发时序和结果回写尚未确认，因此不能称为完整 Push Scan 工作流。
 
 阶段 D 的核心能力已经可用。当前不再继续扩大协议研究或配置字段覆盖；
 扫描能力已经收束成一个普通用户实际可用的产品闭环：
@@ -104,6 +113,8 @@ MA2000w。
 | P1 | Debian 安装包 | `tools/build_deb.py` 可离线构建架构无关 `.deb`；包内容和解包入口验证通过 | `DONE` |
 | P2 | 集成回归 | 扫描超时、设备忙、解码失败、重复扫描和输出文件错误均有自动测试 | `DONE` |
 | P1 | E2 核心设备管理 | 通知、预设、目录保存、计数导出、配置基线/差异和面板/Wi‑Fi 状态统一进入设备页；写入实验隔离到 CLI；MA2000w 真机闭环 | `DONE` |
+| P2 | Push Scan 只读就绪状态 | CLI/Web/GUI 读取接口、目标、地址类型和上次结果；MA2000w 真机验证 | `DONE` |
+| P2 | Push Scan 触发与执行 | 确认预设号来源、设备触发时序、执行预设并回写结果 | `IN_PROGRESS` |
 | BLOCKED | ADF/双面/其他机型 | 获得对应硬件后验证真实行为 | `BLOCKED` |
 | BLOCKED | USB 物理路径 | 获得可访问的 `usblp` 设备后验证断线、重连和睡眠唤醒 | `BLOCKED` |
 | FROZEN | 配置字段扩展 | 当前 25 字段与写入安全边界足够；仅缺陷或明确需求触发 | `FROZEN` |
@@ -228,6 +239,7 @@ Web/GUI 和 Web API 移除，只保留在显式 CLI 研究工作流。配置字�
 1. **DONE：E2 核心设备管理。** 配置只读/基线、状态、预设、目录和计数已在
    统一页闭环；写入实验隔离在 CLI。
 2. **E3：下一主目标。** 从 Push Scan 或 Print Box 中选一项形成真机闭环。
+   当前已完成 Push Scan 只读状态，下一步确认真实触发和预设选择。
 3. **FROZEN：配置字段扩展。** 当前覆盖已经足够，不再主动扩大。
 4. **BLOCKED：ADF/双面、其他机型和 USB。** 等待对应硬件后单独验证，不进入
    主线排期。
@@ -360,7 +372,53 @@ Web/GUI 和 Web API 移除，只保留在显式 CLI 研究工作流。配置字�
 下一步：安装 `.deb` 后在 MA2000w 上完成“预设灰度 PDF → 自动保存目录 →
 下载/落盘哈希一致”的真机验收，再实现 E2 的统一配置只读/差异/安全写入界面。
 
-## 最近一次工作交接（第四十八轮）
+## 最近一次工作交接（第四十九轮）
+
+日期：2026-11-01。范围：启动 E3，完成 Push Scan 只读状态探针、统一设备页
+入口和 MA2000w 真机验证；没有发送 SNMP SET、PJL 写命令、维护或重置操作。
+
+完成与证据：
+
+- 新增 `kyocera_monitor.push_scan`，通过一次 SNMP GET 读取官方已确认的
+  Push Scan 六个对象：接口、IPv4、上次结果、IPv6、主机名和地址类型。
+- 就绪判断区分 `usb_destination`、`not_configured`、`ready`、`other_host`
+  和 `unavailable`；IPv4/IPv6 目标规范化后与本地接口比较，主机名比较不区分
+  大小写。结果字段明确标为 `last_reported_result`，不作为本次事件时间戳。
+- CLI 新增 `--push-scan`；Web/GUI 详情页新增“Push Scan 就绪状态”和
+  `GET /api/push-scan?host=<地址>`。没有增加执行、触发或结果回写端点。
+- MA2000w 真机只读结果：interface `0/USB`、IPv4 `0.0.0.0`、result `0/OK`、
+  IPv6 `NoSuchObject`、host name 空字符串、address type `1/IPv4`。因此状态
+  为 `usb_destination`、`ready=false`；设备当前没有配置网络 Push Scan 目标。
+- 静态复核确认 `KMSTMNW.exe!FUN_004258c0` 解析 Push Scan 设置后以内部消息
+  `0x472` 调 `OnRecvPushScan`。正式触发还需要预设号，而 `+0x2e810` 的赋值
+  来源尚未在现有导出中定位，完整设备触发时序也未观察。
+- 版本升级为 `0.2.3`；构建并安装
+  `dist/kyocera-monitor_0.2.3-1_all.deb`，SHA-256
+  `f7d8377b0f449071c31f39de6ef62ec9db36e46d8d0c7d8e8214008de550cc53`。
+  已安装的 `/usr/bin/kyocera-monitor` 真机读取成功；安装后的回环 Web
+  `/api/push-scan` 返回相同只读状态，设备页包含新入口。
+
+验证：
+
+- 全量测试 276/276 通过；新增 11 个 Push Scan 专项测试。
+- `python3 tools/check_publication.py`、`compileall`、`git diff --check`
+  和设备页 JavaScript `node --check` 通过。
+- 使用相同 `SOURCE_DATE_EPOCH=1793525334` 在两个目录重复构建 0.2.3 包，
+  `cmp` 逐字节一致。
+- `dpkg-query` 返回 `kyocera-monitor 0.2.3-1`；desktop-file-utils、
+  gnome-menus 和 hicolor 触发器成功。
+
+剩余边界：
+
+- Push Scan 预设号来源、设备触发到客户端的完整时序以及 Linux 结果回写仍未知；
+  F20 只能标记为 `PARTIAL`。
+- 当前 MA2000w 选择 USB 目标。未在本轮通过设备面板切换为网络目标，因为切换
+  配置涉及设备写入，且尚未获得对应授权。
+
+下一步：只读定位 `KMSTMNW.exe` 对象 `+0x2e810` 的预设号赋值路径，或调查设备
+网络 Push Scan 请求的实际传输；在证据齐全前不添加“模拟触发”或盲目 SET。
+
+## 历史交接（第四十八轮）
 
 日期：2026-11-01。范围：从正式 Web/GUI 和 Web API 移除开发阶段的配置写入/
 回滚实验入口；没有发送任何配置写入、维护或重置命令。

@@ -51,6 +51,8 @@ python3 -m kyocera_monitor --host 192.168.0.220 --scan \
 python3 -m kyocera_monitor --host 192.168.0.220 --config
 python3 -m kyocera_monitor --host 192.168.0.220 --config --json
 python3 -m kyocera_monitor --host 192.168.0.220 --config --snmp
+python3 -m kyocera_monitor --host 192.168.0.220 --push-scan \
+  --snmp-version 2c --json
 python3 -m kyocera_monitor --host 192.168.0.220 --web
 python3 -m kyocera_monitor --web --web-open
 python3 -m kyocera_monitor --host 192.168.0.220 --snmp --web --web-port 8080
@@ -166,7 +168,7 @@ python3 -m pip install --user .
 
 ```bash
 python3 tools/build_deb.py
-sudo apt install ./dist/kyocera-monitor_0.2.0-1_all.deb
+sudo apt install ./dist/kyocera-monitor_0.2.3-1_all.deb
 ```
 
 构建过程只使用本地 Python 和 `dpkg-deb`，不联网。包的运行依赖声明为
@@ -257,6 +259,21 @@ kyocera-monitor --host 192.168.0.220 --config --snmp \
 `write.allowed` 仍固定为 `false`，并保留失败恢复和再次明确授权的边界。
 `--json` 只输出 `candidate_report` 摘要，不附带完整 147 项对象表；该模式不
 直接生成写入计划，也不发送任何 `KSETOBJ` 或 SNMP SET。
+
+Push Scan 可通过一次只读 SNMP GET 检查当前接口、地址类型、目标和上次结果：
+
+```bash
+kyocera-monitor --host 192.168.0.220 --push-scan \
+  --snmp-version 2c --json
+```
+
+官方 OID 语义把接口 `0` 定义为 USB、`1` 定义为 NETWORK，地址类型
+`1/2/3` 分别为 IPv4、IPv6 和 HostName，结果 `0/1` 为 OK/NG。Linux 会进一步
+比较目标是否匹配本机接口或主机名，并区分 `usb_destination`、
+`not_configured`、`ready` 和 `other_host`。MA2000w 真机当前返回
+`interface=USB`、IPv4 `0.0.0.0`、IPv4 地址类型和上次结果 `OK`，因此网络
+Push Scan 明确未配置。该探针不接收设备触发器、不执行预设、不回写结果；
+官方预设号选择和完整触发时序仍是待验证项。
 
 可基于基线生成单字段写入预演。计划器支持：
 
@@ -353,7 +370,8 @@ options、Communication、SNMP trap、Wi‑Fi 状态、音量与 FAX notificatio
 `0600` 私有基线并比较差异；SNMP community、Wi‑Fi SSID 等敏感值在页面中
 隐藏。Web/GUI 不提供配置写入、写入计划或回滚实验入口，也不注册
 `/api/config/plan` 和 `/api/config/apply`；受控实验只保留在研究用途的 CLI
-工作流中。
+工作流中。详情页的 Push Scan 区通过 `/api/push-scan` 显示只读就绪状态，
+不会启动扫描或写结果 OID。
 服务没有认证，默认只绑定回环地址；使用 `--web-bind 0.0.0.0` 暴露到局域网时
 需要自行增加访问控制。
 
@@ -375,7 +393,7 @@ python3 -m unittest discover -s tests -v
 python3 tools/check_publication.py
 ```
 
-当前 265 个测试覆盖 PJL 解析/帧格式、分段补发与合并、KGETOBJ 结构化字段、
+当前 276 个测试覆盖 PJL 解析/帧格式、分段补发与合并、KGETOBJ 结构化字段、
 147 项配置对象表与 CLI 配置导出、`KMUTLCFG` UI 控件字符串提取、
 147 项对象→模型偏移映射与首批控件→OID 对照、
 配置 SNMP 后备读取、
@@ -388,6 +406,8 @@ sysfs 发现、PTY 假设备往返、SNMP/WSD 发现与结果合并，以及 Web
 PNG/PDF/JPEG/TIFF/高压缩 PDF/XPS 导出、扫描后台任务与下载、设备忙保护、
 `file_size` 不作为传输长度、截断 chunked 响应处理、扫描预设/保存目录、
 计数 CSV、配置工作台/敏感值脱敏/写入令牌、Debian 包内容和公开树合规检查。
+Push Scan 专项测试覆盖 IPv4/IPv6/主机名匹配、USB 与未配置状态、缺失对象、
+上次结果语义、CLI 只读读取和 Web API。
 
 ## 研究资料
 

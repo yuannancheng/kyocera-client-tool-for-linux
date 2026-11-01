@@ -540,6 +540,9 @@ DEVICE_HTML = """<!doctype html>
   th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid #eceff2;
            font-size: .92rem; }
   .muted { color: #6b747d; font-size: .85rem; margin-top: 14px; }
+  .push-result.ready { color: #145014; }
+  .push-result.warning { color: #7a4d00; }
+  .push-result.failure { color: #751a1a; }
   .error { background: #ffd9d9; color: #6b1111; padding: 10px 12px;
            border-radius: 8px; margin-top: 14px; display: none; }
   button { margin-left: auto; padding: 6px 12px; border-radius: 8px;
@@ -603,6 +606,9 @@ DEVICE_HTML = """<!doctype html>
                         border-color: #74393d; }
     .downloads a { background: #203b50; color: #cce7ff; }
     .config-item { background: #182027; border-color: #2d3842; }
+    .push-result.ready { color: #d3f2d8; }
+    .push-result.warning { color: #f6dfaa; }
+    .push-result.failure { color: #f6c8c8; }
   }
 </style>
 </head>
@@ -750,6 +756,15 @@ DEVICE_HTML = """<!doctype html>
         </table>
       </div>
     </details>
+  </div>
+  <div class="card" style="margin-top:12px">
+    <div class="label">Push Scan 就绪状态</div>
+    <div class="inline">
+      <button id="push-scan-read" type="button">读取 Push Scan 状态</button>
+      <span id="push-scan-status" class="muted">尚未读取</span>
+    </div>
+    <div id="push-scan-grid" class="config-grid"></div>
+    <div id="push-scan-note" class="muted"></div>
   </div>
   <div class="card" style="margin-top:12px">
     <div class="label">设备发现</div>
@@ -1289,6 +1304,58 @@ async function compareConfigurationBaseline() {
   );
 }
 
+function renderPushScan(data) {
+  const grid = byId("push-scan-grid");
+  grid.replaceChildren();
+  const objects = data.objects || {};
+  const entries = [
+    ["接口", objects.interface?.display || "未知"],
+    ["地址类型", objects.address_type?.display || "未知"],
+    ["目标", data.target || "未配置"],
+    ["目标匹配本机", data.target_matches_local === true ? "是"
+      : data.target_matches_local === false ? "否" : "未知"],
+    ["上次报告结果", objects.result?.display || "未知"],
+    ["执行入口", "只读状态（尚未实现）"]
+  ];
+  for (const [name, value] of entries) {
+    const item = document.createElement("div");
+    item.className = "config-item";
+    const label = document.createElement("div");
+    label.className = "name";
+    label.textContent = name;
+    const reading = document.createElement("div");
+    reading.className = "reading";
+    reading.textContent = value;
+    item.append(label, reading);
+    grid.append(item);
+  }
+  const readiness = data.readiness || {};
+  const status = byId("push-scan-status");
+  status.textContent = readiness.summary || readiness.state || "未知状态";
+  status.className = "muted push-result " +
+    (readiness.ready === true ? "ready"
+      : readiness.ready === false ? "warning" : "");
+  const note = byId("push-scan-note");
+  note.textContent = "该功能只检查设备当前目标和上次结果；不会接收设备请求、" +
+    "启动预设或回写结果 OID。官方预设号选择来源仍待验证。";
+}
+
+async function readPushScan() {
+  const button = byId("push-scan-read");
+  const status = byId("push-scan-status");
+  button.disabled = true;
+  status.textContent = "正在通过 SNMP 读取…";
+  try {
+    const data = await configRequest("/api/push-scan");
+    renderPushScan(data);
+  } catch (err) {
+    status.textContent = "读取失败：" + String(err);
+    status.className = "muted push-result failure";
+  } finally {
+    button.disabled = false;
+  }
+}
+
 async function discover() {
   const box = byId("devices");
   box.textContent = "正在搜索…";
@@ -1336,6 +1403,7 @@ byId("preset-delete").addEventListener("click", deletePreset);
 byId("config-read").addEventListener("click", readConfiguration);
 byId("config-baseline-save").addEventListener("click", saveConfigurationBaseline);
 byId("config-baseline-compare").addEventListener("click", compareConfigurationBaseline);
+byId("push-scan-read").addEventListener("click", readPushScan);
 text("current-host", currentHost ? "当前: " + currentHost : "当前: 默认设备");
 setConfigStatus("尚未读取配置");
 loadSettings();
@@ -1353,6 +1421,7 @@ def make_handler(
     scan_manager: ScanJobManager | None = None,
     settings_store: SettingsStore | None = None,
     config_workbench: ConfigWorkbench | None = None,
+    push_scan_reader: Callable[[str], dict] | None = None,
 ) -> type[BaseHTTPRequestHandler]:
     manager = scan_manager or ScanJobManager()
     settings = settings_store or SettingsStore()
@@ -1438,6 +1507,39 @@ def make_handler(
                     return
                 body = json.dumps(
                     payload, ensure_ascii=False
+                ).encode("utf-8")
+                self._respond(200, "application/json; charset=utf-8", body)
+            elif path == "/api/push-scan":
+                requested = (parse_qs(parsed.query).get("host") or [None])[0]
+                try:
+                    host = registry.resolve(requested)
+                except KeyError:
+                    self._json_error(
+                        404 if requested is not None else 400,
+                        (
+                            f"unknown device: {requested}"
+                            if requested is not None
+                            else "no printer selected"
+                        ),
+                    )
+                    return
+                if push_scan_reader is None:
+                    self._json_error(
+                        409,
+                        "Push Scan inspection is unavailable for this connection",
+                    )
+                    return
+                try:
+                    payload = push_scan_reader(host)
+                except Exception as exc:
+                    self._json_error(
+                        502,
+                        f"{type(exc).__name__}: {exc}",
+                    )
+                    return
+                body = json.dumps(
+                    payload,
+                    ensure_ascii=False,
                 ).encode("utf-8")
                 self._respond(200, "application/json; charset=utf-8", body)
             elif path in {"/api/config", "/api/config/baseline", "/api/config/compare"}:
@@ -1763,6 +1865,7 @@ def run_server(
     scan_manager: ScanJobManager | None = None,
     settings_store: SettingsStore | None = None,
     config_workbench: ConfigWorkbench | None = None,
+    push_scan_reader: Callable[[str], dict] | None = None,
 ) -> None:
     server = create_server(
         registry,
@@ -1772,6 +1875,7 @@ def run_server(
         scan_manager=scan_manager,
         settings_store=settings_store,
         config_workbench=config_workbench,
+        push_scan_reader=push_scan_reader,
     )
     if on_listen is not None:
         actual_port = server.server_address[1]
@@ -1794,6 +1898,7 @@ def create_server(
     scan_manager: ScanJobManager | None = None,
     settings_store: SettingsStore | None = None,
     config_workbench: ConfigWorkbench | None = None,
+    push_scan_reader: Callable[[str], dict] | None = None,
 ) -> ThreadingHTTPServer:
     """Create (but do not start) the dashboard HTTP server.
 
@@ -1809,5 +1914,6 @@ def create_server(
             scan_manager=scan_manager,
             settings_store=settings_store,
             config_workbench=config_workbench,
+            push_scan_reader=push_scan_reader,
         ),
     )

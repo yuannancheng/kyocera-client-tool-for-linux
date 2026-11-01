@@ -2,6 +2,24 @@
 
 ## 2026-11-01
 
+### Added — read-only Push Scan readiness
+
+- 新增 `kyocera_monitor.push_scan` 和 `--push-scan`，通过一次 SNMP GET 读取
+  官方已确认的接口、IPv4/IPv6/主机名目标、地址类型及上次结果对象。
+- 就绪判断区分 USB 目标、网络目标未配置、目标匹配本机、目标属于其他主机和
+  无法验证等状态；IPv6 使用 16 字节地址转换，主机名比较不区分大小写。
+- Web/GUI 设备详情页新增“Push Scan 就绪状态”只读区域和
+  `/api/push-scan`；不接收设备触发、不执行预设、不回写结果 OID。
+- MA2000w 真机只读结果：接口 `USB`、IPv4 目标 `0.0.0.0`、地址类型 `IPv4`、
+  主机名为空、上次结果 `OK`，IPv6 对象返回 `NoSuchObject`；页面状态为
+  `usb_destination`，明确不是网络就绪。
+- 官方 `OnRecvPushScan` 的预设号来源（对象偏移 `+0x2e810`）、设备触发时序和
+  Linux 结果回写仍未知；功能状态从 `STATIC_ONLY` 调整为 `PARTIAL`。
+- 新增 11 个 Push Scan 专项测试；版本升级为 `0.2.3`。
+- 构建并安装 `dist/kyocera-monitor_0.2.3-1_all.deb`，SHA-256
+  `f7d8377b0f449071c31f39de6ef62ec9db36e46d8d0c7d8e8214008de550cc53`；
+  已安装入口和回环 Web API 均完成 MA2000w 只读验证。
+
 ### Fixed — remove development configuration experiments from GUI
 
 - 从正式 Web/GUI 移除“安全回滚实验”整块开发测试控件、写权限列、计划/授权/

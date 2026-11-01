@@ -228,6 +228,7 @@ def run_gui(
     *,
     discover_fn: Callable[[], list] | None = None,
     config_workbench: ConfigWorkbench | None = None,
+    push_scan_reader: Callable[[str], dict] | None = None,
     title: str = "KYOCERA 打印机",
 ) -> None:
     """Open the dashboard in a native window and block until it closes."""
@@ -243,6 +244,7 @@ def run_gui(
         discover_fn=discover_fn,
         scan_manager=manager,
         config_workbench=config_workbench,
+        push_scan_reader=push_scan_reader,
     )
     port = server.server_address[1]
     thread = threading.Thread(target=server.serve_forever, daemon=True)

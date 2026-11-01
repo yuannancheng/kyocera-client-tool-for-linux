@@ -62,7 +62,7 @@
 | F17 | Scan to PDF | `KMSCNPDF`、HCPDF、PDF 输出字段 | `REPLICATED` | 已完成 | RAW 解码后生成 PDF/高压缩 PDF，并保留原始 RAW 选项 |
 | F18 | Scan to Email | `KMSCNEML`、本机邮件集成 | `NOT_STARTED` | P2 | 生成附件并调用用户选择的邮件客户端；无凭据内置 |
 | F19 | Quick Scan 预设 | `KMUTLPRE`、`1001.1.*`、`QUICKSCN.ini` | `REPLICATED` | P1 | 可读取、编辑、保存扫描预设并用于新扫描 |
-| F20 | Push Scan | `OnRecvPushScan`、`KMSCNPUS`、结果 OID | `STATIC_ONLY` | P2 | Linux 监听设备请求，执行指定预设并回写结果 |
+| F20 | Push Scan | `OnRecvPushScan`、`KMSCNPUS`、结果 OID | `PARTIAL` | P2 | Linux 监听设备请求，执行指定预设并回写结果 |
 | F21 | Print Box 远程操作 | `1001.3.*`、结果/PIN/地址语义 | `STATIC_ONLY` | P2 | 支持读取和已确认的操作，不暴露未知 PIN 行为 |
 | F22 | Counter Monitor | `CounterMonitor.exe`、打印/扫描计数和导出 | `REPLICATED` | P1 | 多设备计数、CSV/表格导出和失败重试可用 |
 | F23 | 计数器计划发送 | `CounterFileSending`、Quartz、server/folder settings | `STATIC_ONLY` | P3 | 明确本地文件或服务器协议后再实现；先不做后台上传 |
@@ -113,6 +113,11 @@ MA2000w 真机完成预设驱动灰度 HCPDF 自动落盘，HTTP 下载与落盘
 配置写入和回滚实验不进入正式页面。
 
 ### 阶段 E3：设备驱动工作流（P2）
+
+进度（2026-11-01）：Push Scan 已增加只读状态探针和统一设备页入口，读取
+接口、IPv4/IPv6/主机名目标、地址类型及上次结果；MA2000w 实测当前目标为
+USB，明确显示网络未就绪。设备触发接收、预设号来源和结果回写仍未确认，
+因此 F20 只升级为 `PARTIAL`，不能宣称工作流已复刻。
 
 交付：
 
