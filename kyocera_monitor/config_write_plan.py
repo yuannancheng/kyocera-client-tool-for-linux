@@ -18,12 +18,9 @@ from .config import CONFIG
 from .config_snapshot import compare_config_snapshots
 
 WRITE_PLAN_FORMAT = "kyocera-client-config-write-plan"
-WRITE_PLAN_VERSION = 1
+WRITE_PLAN_VERSION = 2
 
-EXECUTION_BLOCKERS = (
-    "write_executor_disabled",
-    "real_device_write_and_rollback_not_verified",
-)
+AUTHORIZATION_SCOPE = "auto-error-clear-off-to-on-then-off-v1"
 
 
 class ConfigWritePlanError(ValueError):
@@ -150,6 +147,12 @@ def build_config_write_plan(
         blockers.append("unstable_configuration_read")
     if current_value == requested_value and current_record.get("status") == 0:
         blockers.append("requested_value_equals_current_value")
+    if not (
+        before_value == 0
+        and current_value == 0
+        and requested_value == 1
+    ):
+        blockers.append("outside_authorized_experiment")
 
     timestamp = created_at or datetime.now(timezone.utc)
     if timestamp.tzinfo is None:
@@ -239,16 +242,33 @@ def build_config_write_plan(
             "blockers": blockers,
         },
         "execution": {
-            "allowed": False,
-            "blockers": list(EXECUTION_BLOCKERS),
+            "allowed": not blockers,
+            "requires_confirmation_token": True,
+            "authorization_scope": AUTHORIZATION_SCOPE,
+            "blockers": blockers,
             "note": (
-                "The public CLI never sends this plan. A future executor must "
-                "require a new explicit confirmation and real-device rollback "
-                "evidence."
+                "Execution is limited to Auto error clear OFF -> ON -> OFF. "
+                "A matching confirmation token is required, and rollback is "
+                "attempted even when the forward write or readback fails."
             ),
         },
     }
-    digest = _plan_digest(payload)
+    confirmation_payload = {
+        "format": payload["format"],
+        "version": payload["version"],
+        "baseline_checksum": payload["baseline"]["checksum"],
+        "target": payload["target"],
+        "transport": payload["transport"],
+        "object": payload["object"],
+        "before": payload["before"],
+        "current": payload["current"],
+        "requested": payload["requested"],
+        "rollback": payload["rollback"],
+        "verification": payload["verification"],
+        "review": payload["review"],
+        "execution": payload["execution"],
+    }
+    digest = _plan_digest(confirmation_payload)
     payload["confirmation"] = {
         "algorithm": "sha256",
         "token": digest,

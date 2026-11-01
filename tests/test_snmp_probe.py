@@ -10,14 +10,19 @@ def _response(
     error_status: int = 0,
     error_index: int = 0,
 ) -> bytes:
-    encoded = b"".join(
-        snmp_probe.encode_tlv(
-            0x30,
-            snmp_probe.encode_oid(varbind.oid)
-            + snmp_probe.encode_tlv(0x05, b""),
+    encoded_parts = []
+    for varbind in varbinds:
+        if varbind.tag == 0x02:
+            value = snmp_probe.encode_integer(int(varbind.value))
+        else:
+            value = snmp_probe.encode_tlv(0x05, b"")
+        encoded_parts.append(
+            snmp_probe.encode_tlv(
+                0x30,
+                snmp_probe.encode_oid(varbind.oid) + value,
+            )
         )
-        for varbind in varbinds
-    )
+    encoded = b"".join(encoded_parts)
     pdu = snmp_probe.encode_tlv(
         0xA2,
         snmp_probe.encode_integer(1)
@@ -210,6 +215,69 @@ class RowWalkTests(unittest.TestCase):
         self.assertEqual(sent.call_count, 3)
         # The last request must be a GET (0xA0), not another GETNEXT.
         self.assertIn(b"\xa0", sent.call_args_list[2].args[2])
+
+
+class SetTests(unittest.TestCase):
+    oid = "1.3.6.1.4.1.1347.43.5.1.1.34.1"
+
+    def test_build_integer_set_request_contains_writable_integer(self):
+        packet = snmp_probe.build_integer_set_request(
+            1, "public", 7, self.oid, 1
+        )
+        self.assertIn(b"\xa3", packet)
+        self.assertIn(snmp_probe.encode_oid(self.oid), packet)
+        self.assertIn(snmp_probe.encode_integer(1), packet)
+
+    def test_set_integer_requires_successful_echo(self):
+        client = snmp_probe.SnmpClient(
+            "192.0.2.1", version="2c", retries=0
+        )
+        response = _response(
+            [snmp_probe.VarBind(self.oid, 0x02, 1)]
+        )
+        with mock.patch.object(
+            snmp_probe, "exchange", return_value=response
+        ) as sent:
+            result = client.set_integer(self.oid, 1)
+        self.assertEqual(result.value, 1)
+        self.assertEqual(sent.call_count, 1)
+        self.assertIn(b"\xa3", sent.call_args.args[2])
+
+    def test_set_integer_rejects_snmp_error(self):
+        client = snmp_probe.SnmpClient(
+            "192.0.2.1", version="2c", retries=0
+        )
+        response = _response(
+            [snmp_probe.VarBind(self.oid, 0x05, None)],
+            error_status=4,
+            error_index=1,
+        )
+        with mock.patch.object(snmp_probe, "exchange", return_value=response):
+            with self.assertRaisesRegex(
+                snmp_probe.BerError, "readOnly"
+            ):
+                client.set_integer(self.oid, 1)
+
+    def test_snmpv1_set_is_rejected_without_transmission(self):
+        client = snmp_probe.SnmpClient(
+            "192.0.2.1", version="1", retries=0
+        )
+        with mock.patch.object(snmp_probe, "exchange") as sent:
+            with self.assertRaisesRegex(
+                snmp_probe.BerError, "require SNMPv2c"
+            ):
+                client.set_integer(self.oid, 1)
+        sent.assert_not_called()
+
+    def test_parse_response_details_retains_error_status(self):
+        response = _response(
+            [snmp_probe.VarBind(self.oid, 0x05, None)],
+            error_status=3,
+            error_index=1,
+        )
+        details = snmp_probe.parse_response_details(response)
+        self.assertEqual(details.error_status, 3)
+        self.assertEqual(details.error_index, 1)
 
 
 if __name__ == "__main__":

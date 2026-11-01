@@ -14,13 +14,14 @@ kyocera_monitor/
   usb.py       /dev/usb/lp* 发现、sysfs VID/PID 读取与设备选择
   parser.py    响应分段、状态/耗材/网络/纸盒/KGETOBJ 解析
   discovery.py SNMP 广播/单播与 WS-Discovery 的只读设备发现
-  snmp.py      SNMP v1/v2c BER 编解码、GET/GETNEXT walk
+  snmp.py      SNMP v1/v2c BER 编解码、GET/GETNEXT walk 与受限 Integer SET
   snmp_status.py  SNMP OID 到 PrinterSnapshot 的只读映射
   web.py       只读 HTTP 状态页、JSON API 与快照缓存
   gui.py       GTK3/WebKit2 原生窗口，内嵌同一个本地 Web 仪表盘
   cli.py       CLI、JSON、监视模式、退出码
   config_snapshot.py  配置基线、完整性校验、目标绑定和只读差异
   config_write_plan.py 单字段 dry-run、回滚字段和确认令牌
+  config_write_executor.py 唯一获准字段的 SNMPv2c 写入、回读和回滚
 tools/
   pjl_probe.py          原始 PJL 探测
   snmp_probe.py         调用 kyocera_monitor.snmp 的 SNMP 命令行
@@ -66,14 +67,15 @@ MA2000w（`0482:0d51`），多个候选时要求显式 `--device`。
 ## 设计边界
 
 - 不实现 Windows 打印后台、mailslot、注册表和 GUI；这些是平台适配层。
-- 只发送只读查询；`KSETOBJ`/`DINQUIRE` 等写入能力未实现，避免误改设备配置。
+- 默认路径只发送只读查询；PJL `KSETOBJ`/`DINQUIRE` 和设备重置未实现。
 - 配置基线以 `0600` 权限原子保存，使用规范化 JSON SHA-256 校验；比较前验证
   传输和目标，避免把一个设备的备份误用于另一个设备。快照可能包含敏感站点
-  配置，因此不进入仓库。写入执行器仍未实现，详见
+  配置，因此不进入仓库。写入边界详见
   `docs/reverse-engineering/config-write-safety.md`。
-- `--config-plan` 只生成审计用 dry-run，不打开写通道。首批仅允许 item 2
-  `Auto error clear` 的 `OFF/ON` 整数转换，并要求持久配置无漂移、读取状态
-  稳定；计划中的 `execution.allowed` 始终为 `false`。
+- `--config-plan` 只生成审计用计划；`--config-apply` 仅在相同计划、匹配的
+  SHA-256 确认令牌和 SNMPv2c 下执行。当前唯一授权范围是 item 2
+  `Auto error clear` 的 `OFF -> ON -> OFF`。执行器在正向写入或回读失败时仍
+  尝试回滚，并要求最终同 OID 回读为 `0`。
 - 不把 KGETOBJ 的数值无标记地解释成未经验证的业务字段；推断字段必须带
   `confidence` 标记，原始键值始终保留。
 - Windows 原工具的网络路径使用 SNMP；Linux 实现优先使用已验证的 PJL 9100

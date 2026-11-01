@@ -35,8 +35,12 @@ from kyocera_monitor.config_write_plan import (
     build_config_write_plan,
     parse_config_assignment,
 )
+from kyocera_monitor.config_write_executor import (
+    ConfigWriteExecutionError,
+    execute_auto_error_clear_experiment,
+)
 from kyocera_monitor.pjl import UEL
-from kyocera_monitor.snmp import VarBind
+from kyocera_monitor.snmp import BerError, VarBind
 
 ROOT = Path(__file__).resolve().parent.parent
 TABLE = ROOT / "docs" / "reverse-engineering" / "data" / "clienttool-config-oids.tsv"
@@ -506,7 +510,7 @@ class ConfigSnapshotTests(unittest.TestCase):
 class ConfigWritePlanTests(unittest.TestCase):
     def setUp(self):
         self.records = parse_config_response(
-            kgetobj("1.43.5.1.1.34.1", 0, 2, "1")
+            kgetobj("1.43.5.1.1.34.1", 0, 2, "0")
             + kgetobj("1.40.10.1.1.4.1", 0, 64, "4330413830304443")
         )
         self.baseline = build_config_snapshot(
@@ -522,7 +526,7 @@ class ConfigWritePlanTests(unittest.TestCase):
             with self.assertRaises(ConfigWritePlanError):
                 parse_config_assignment(text)
 
-    def test_plan_contains_preview_rollback_and_disabled_execution(self):
+    def test_plan_contains_preview_rollback_and_authorized_execution(self):
         current = build_config_snapshot(
             copy.deepcopy(self.records),
             transport="snmp",
@@ -531,37 +535,48 @@ class ConfigWritePlanTests(unittest.TestCase):
         plan = build_config_write_plan(
             self.baseline,
             current,
-            "2=OFF",
+            "2=ON",
             created_at=datetime(2026, 11, 1, tzinfo=timezone.utc),
         )
         self.assertTrue(plan["review"]["ready_for_executor_implementation"])
-        self.assertFalse(plan["execution"]["allowed"])
+        self.assertTrue(plan["execution"]["allowed"])
         self.assertEqual(plan["object"]["item_id"], 2)
         self.assertEqual(plan["object"]["absolute_oid"], "1.3.6.1.4.1.1347.43.5.1.1.34.1")
-        self.assertEqual(plan["before"]["value"], 1)
-        self.assertEqual(plan["requested"]["value"], 0)
-        self.assertEqual(plan["rollback"]["value"], 1)
+        self.assertEqual(plan["before"]["value"], 0)
+        self.assertEqual(plan["requested"]["value"], 1)
+        self.assertEqual(plan["rollback"]["value"], 0)
         self.assertEqual(
             plan["commands"]["pjl_line"],
-            '@PJL KSETOBJ OBJ="1.43.5.1.1.34.1" VALUE =0',
+            '@PJL KSETOBJ OBJ="1.43.5.1.1.34.1" VALUE =1',
         )
         self.assertEqual(
             plan["commands"]["pjl_rollback_line"],
-            '@PJL KSETOBJ OBJ="1.43.5.1.1.34.1" VALUE =1',
+            '@PJL KSETOBJ OBJ="1.43.5.1.1.34.1" VALUE =0',
         )
         self.assertEqual(plan["commands"]["snmp_set"]["syntax"], "Integer")
         self.assertEqual(len(plan["confirmation"]["token"]), 64)
 
+        later = build_config_write_plan(
+            self.baseline,
+            current,
+            "2=ON",
+            created_at=datetime(2026, 11, 1, 1, tzinfo=timezone.utc),
+        )
+        self.assertEqual(
+            plan["confirmation"]["token"],
+            later["confirmation"]["token"],
+        )
+
     def test_plan_blocks_drift_read_failures_and_noop(self):
         drifted_records = copy.deepcopy(self.records)
-        drifted_records[1]["value"] = 0
-        drifted_records[1]["display"] = "OFF"
+        drifted_records[1]["value"] = 1
+        drifted_records[1]["display"] = "ON"
         drifted = build_config_snapshot(
             drifted_records,
             transport="snmp",
             target="printer",
         )
-        plan = build_config_write_plan(self.baseline, drifted, "2=OFF")
+        plan = build_config_write_plan(self.baseline, drifted, "2=ON")
         self.assertIn(
             "unexpected_configuration_drift",
             plan["review"]["blockers"],
@@ -580,7 +595,7 @@ class ConfigWritePlanTests(unittest.TestCase):
             transport="snmp",
             target="printer",
         )
-        plan = build_config_write_plan(self.baseline, missing, "2=OFF")
+        plan = build_config_write_plan(self.baseline, missing, "2=ON")
         self.assertIn("current_object_not_readable", plan["review"]["blockers"])
         self.assertIn("unstable_configuration_read", plan["review"]["blockers"])
 
@@ -589,7 +604,7 @@ class ConfigWritePlanTests(unittest.TestCase):
             transport="snmp",
             target="printer",
         )
-        plan = build_config_write_plan(missing_baseline, missing_baseline, "2=OFF")
+        plan = build_config_write_plan(missing_baseline, missing_baseline, "2=ON")
         self.assertIn("baseline_object_not_readable", plan["review"]["blockers"])
         self.assertIsNone(plan["commands"]["pjl_rollback_line"])
         self.assertIsNone(plan["commands"]["snmp_rollback"]["value"])
@@ -621,18 +636,169 @@ class ConfigWritePlanTests(unittest.TestCase):
                             "--config-plan",
                             str(path),
                             "--config-set",
-                            "2=OFF",
+                            "2=ON",
                             "--json",
                         ]
                     )
             self.assertEqual(code, 0)
             payload = json.loads(output.getvalue())
-            self.assertFalse(payload["write_plan"]["execution"]["allowed"])
+            self.assertTrue(payload["write_plan"]["execution"]["allowed"])
             self.assertTrue(
                 payload["write_plan"]["review"][
                     "ready_for_executor_implementation"
                 ]
             )
+
+
+class FakeSnmpWriteClient:
+    host = "printer"
+    version = 1
+
+    def __init__(
+        self,
+        *,
+        fail_on_call: int | None = None,
+        failure: BaseException | None = None,
+    ):
+        self.oid = "1.3.6.1.4.1.1347.43.5.1.1.34.1"
+        self.value = 0
+        self.fail_on_call = fail_on_call
+        self.failure = failure
+        self.calls: list[int] = []
+
+    def get(self, oids, *, strict=False):
+        if list(oids) != [self.oid]:
+            raise AssertionError("unexpected readback OID")
+        return [VarBind(self.oid, 0x02, self.value)]
+
+    def set_integer(self, oid, value):
+        self.calls.append(value)
+        if self.fail_on_call == len(self.calls):
+            raise self.failure or BerError("synthetic SET failure")
+        self.value = value
+        return VarBind(oid, 0x02, value)
+
+
+class ConfigWriteExecutorTests(unittest.TestCase):
+    def setUp(self):
+        self.records = parse_config_response(
+            kgetobj("1.43.5.1.1.34.1", 0, 2, "0")
+            + kgetobj("1.40.10.1.1.4.1", 0, 64, "4330413830304443")
+        )
+        self.baseline = build_config_snapshot(
+            self.records,
+            transport="snmp",
+            target="printer",
+        )
+        current = build_config_snapshot(
+            copy.deepcopy(self.records),
+            transport="snmp",
+            target="printer",
+        )
+        self.plan = build_config_write_plan(
+            self.baseline,
+            current,
+            "2=ON",
+            created_at=datetime(2026, 11, 1, tzinfo=timezone.utc),
+        )
+
+    def test_successful_forward_and_rollback(self):
+        client = FakeSnmpWriteClient()
+        result = execute_auto_error_clear_experiment(
+            client,
+            self.plan,
+            self.plan["confirmation"]["token"],
+            readback_timeout=0,
+        )
+        self.assertEqual(result["status"], "success")
+        self.assertEqual(client.calls, [1, 0])
+        self.assertEqual(client.value, 0)
+        self.assertTrue(result["verify_on"]["ok"])
+        self.assertTrue(result["verify_off"]["ok"])
+
+    def test_forward_failure_still_verifies_off(self):
+        client = FakeSnmpWriteClient(fail_on_call=1)
+        result = execute_auto_error_clear_experiment(
+            client,
+            self.plan,
+            self.plan["confirmation"]["token"],
+            readback_timeout=0,
+        )
+        self.assertEqual(result["status"], "rolled_back")
+        self.assertEqual(client.calls, [1, 0])
+        self.assertEqual(client.value, 0)
+
+    def test_rollback_failure_is_reported(self):
+        client = FakeSnmpWriteClient(fail_on_call=2)
+        result = execute_auto_error_clear_experiment(
+            client,
+            self.plan,
+            self.plan["confirmation"]["token"],
+            readback_timeout=0,
+        )
+        self.assertEqual(result["status"], "rollback_failed")
+        self.assertEqual(client.value, 1)
+        self.assertFalse(result["verify_off"]["ok"])
+
+    def test_confirmation_mismatch_sends_nothing(self):
+        client = FakeSnmpWriteClient()
+        with self.assertRaisesRegex(
+            ConfigWriteExecutionError, "token"
+        ):
+            execute_auto_error_clear_experiment(
+                client,
+                self.plan,
+                "0" * 64,
+            )
+        self.assertEqual(client.calls, [])
+
+    def test_unexpected_forward_exception_still_attempts_rollback(self):
+        client = FakeSnmpWriteClient(
+            fail_on_call=1,
+            failure=RuntimeError("unexpected synthetic failure"),
+        )
+        with self.assertRaisesRegex(RuntimeError, "unexpected"):
+            execute_auto_error_clear_experiment(
+                client,
+                self.plan,
+                self.plan["confirmation"]["token"],
+                readback_timeout=0,
+            )
+        self.assertEqual(client.calls, [1, 0])
+        self.assertEqual(client.value, 0)
+
+    def test_cli_applies_only_with_matching_token_and_rolls_back(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "baseline.json"
+            save_config_snapshot(path, self.baseline)
+            token = self.plan["confirmation"]["token"]
+            client = FakeSnmpWriteClient()
+            output = io.StringIO()
+            with patch.object(
+                cli, "collect_config_snmp", return_value=self.records
+            ):
+                with patch.object(cli, "SnmpClient", return_value=client):
+                    with redirect_stdout(output):
+                        code = cli.main(
+                            [
+                                "--host",
+                                "printer",
+                                "--config",
+                                "--snmp",
+                                "--config-apply",
+                                str(path),
+                                "--config-set",
+                                "2=ON",
+                                "--config-confirm",
+                                token,
+                                "--json",
+                            ]
+                        )
+        self.assertEqual(code, 0)
+        self.assertEqual(client.calls, [1, 0])
+        self.assertEqual(client.value, 0)
+        payload = json.loads(output.getvalue())
+        self.assertEqual(payload["write_execution"]["status"], "success")
 
 
 if __name__ == "__main__":

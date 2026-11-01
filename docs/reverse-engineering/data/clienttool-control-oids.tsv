@@ -1,5 +1,5 @@
 dialog	control_id	label	companion_controls	model_offset	item_id	oid	confidence	note
-0x006b	0x03ea	Auto error clear		0x0004	2	43.5.1.1.34.1	inferred	
+0x006b	0x03ea	Auto error clear		0x0004	2	43.5.1.1.34.1	verified	SNMPv2c Integer write/readback 1 then 0 on MA2000w; full configuration restored
 0x006b	0x03f4	Auto error clear timeout	0x03f3	0x0008	3	43.5.1.1.35.1	inferred	UI seconds = model * 5
 0x006b	0x03f2	Sleep time	0x03f1	0x0010	1	43.5.1.1.23.1	inferred	
 0x006b	0x0463	Power off timer		0x0014	4	42.5.1.1.43.1	inferred	Combo bucket, not a linear scale

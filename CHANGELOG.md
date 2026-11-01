@@ -18,7 +18,7 @@
   示例不同；`KMUTLPRE.exe` 仍需单独核对，不能直接复用。
 - 新增 `docs/reverse-engineering/config-write-safety.md`，记录官方静态证据、
   快照格式、未来单字段写入/回读/回滚条件以及未知项。
-- 未发送 `KSETOBJ`、SNMP SET、设备重置或其他写命令；配置写入执行器仍未实现。
+- 该阶段未发送 `KSETOBJ`、SNMP SET、设备重置或其他写命令。
 - 验证：配置专项 17/17；全量测试 185/185；公开树检查通过。MA2000w 只读
   基线保存和后续比较均为 96/147；最终比较为 0 个配置变化、0 个易变观测、
   0 个读取状态变化。
@@ -31,8 +31,20 @@
   `1/ON`；其他对象或值直接拒绝。
 - 计划包含当前值、目标值、回滚值、官方 `KMUTLCFG.exe` PJL 命令预览、
   SNMP Integer 参数、回读条件、漂移 blockers 和 SHA-256 确认令牌。
-- `execution.allowed` 固定为 `false`，公开 CLI 仍不提供写入执行路径。
+- 初始计划器不提供写入执行路径；后续获准真机实验后增加严格受限的
+  `--config-apply`。
 - 验证：新增 5 个计划专项测试；全量测试 190/190 通过；公开树检查通过。
+
+### Verified — Auto error clear write and rollback
+
+- 新增 SNMPv2c Integer SET BER 编码、error-status/error-index 解析和同 OID
+  回读校验。
+- 新增 `--config-apply`，仅接受匹配的 confirmation token、同一基线、
+  SNMPv2c 和 `Auto error clear OFF -> ON -> OFF`；正向失败也会尝试回滚。
+- MA2000w 真机写入 `1` 后回读为 `ON`，立即写回 `0` 并回读为 `OFF`；
+  随后全表比较 147/147 一致，未观察到重启或断网。
+- `clienttool-control-oids.tsv` 中 `Auto error clear` 映射升级为已验证。
+- 验证：新增 11 个 SET/executor/CLI 测试；全量测试 201/201；公开树检查通过。
 
 ## 2026-10-31
 

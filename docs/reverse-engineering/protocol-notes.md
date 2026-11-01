@@ -349,7 +349,7 @@ KGETOBJ 返回值做分支处理。结合该函数的比较字符串、日志标
 | --- | --- | --- | --- |
 | `1.43.5.1.1.29.1` | 厂商 OID 表名为 `kcprtAssetNumber`；设备返回空字符串 | NetViewer `snmp-oid.xml` + 设备实测；旧“Operation Panel Language”标签证据不足 | 名称较高可信度，语义未确认 |
 | `1.43.5.1.1.33.1` | Sleep mode（`kcprtsleepMode`） | 代码显式映射 ON/OFF；NetViewer `snmp-oid.xml` 同名 OID；设备实测 `1`（ON）且处于睡眠 | 较高可信度 |
-| `1.43.5.1.1.34.1` | Auto error clear（`kcprtAutoErrorClearSwitch`） | 代码显式映射 ON/OFF；NetViewer OID 名称匹配；设备实测 `0` | 较高可信度 |
+| `1.43.5.1.1.34.1` | Auto error clear（`kcprtAutoErrorClearSwitch`） | 代码显式映射 ON/OFF；NetViewer OID 名称匹配；MA2000w SNMPv2c 写入 `1` 后回读 `1`，再写回 `0` 后回读 `0` | 已验证（成功写入与回滚） |
 | `1.43.5.1.1.35.1` | Auto error clear timeout（`kcprtAutoErrorClearTimeout`） | OID 名称匹配；代码乘 5；设备实测 `6`→`30 s` | 较高可信度 |
 | `1.43.5.1.1.22.1` | Form feed timeout（`kcprtFormFeedTimeout`） | OID 名称匹配；代码乘 5；SNMP `60`→`300 s` 且与 PJL `INQUIRE TIMEOUT=300` 一致 | 已验证（换算与语义） |
 | `2.10.2.1.4.1.1` | 累计打印页数（lifetime counter） | 资源含 `Lifetime counter`/`pages`；PJL `129`；SNMP `prtMarkerLifeCount = 129` | 已验证 |

@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
-"""Minimal SNMP v1/v2c client used for read-only device queries.
+"""Minimal SNMP v1/v2c client for device queries and one guarded write.
 
-This deliberately depends only on the Python standard library so that protocol
-experiments remain reproducible on a fresh Linux system.
+Reads remain the default.  The only SET helper is the Integer primitive used by
+the explicitly authorized Auto error clear experiment.  This deliberately
+depends only on the Python standard library so that protocol experiments remain
+reproducible on a fresh Linux system.
 """
 
 from __future__ import annotations
@@ -137,6 +139,28 @@ VALUE_NAMES = {
     END_OF_MIB_VIEW: "EndOfMibView",
 }
 
+ERROR_NAMES = {
+    0: "noError",
+    1: "tooBig",
+    2: "noSuchName",
+    3: "badValue",
+    4: "readOnly",
+    5: "genErr",
+    6: "noAccess",
+    7: "wrongType",
+    8: "wrongLength",
+    9: "wrongEncoding",
+    10: "wrongValue",
+    11: "noCreation",
+    12: "inconsistentValue",
+    13: "resourceUnavailable",
+    14: "commitFailed",
+    15: "undoFailed",
+    16: "authorizationError",
+    17: "notWritable",
+    18: "inconsistentName",
+}
+
 
 def decode_value(tag: int, value: bytes) -> object:
     if tag == 0x02:
@@ -182,8 +206,20 @@ class VarBind:
         return f"{self.oid} = {self.type_name}: {format_value(self.tag, self.value)}"
 
 
+@dataclass(frozen=True)
+class SnmpResponse:
+    pdu_tag: int
+    error_status: int
+    error_index: int
+    varbinds: list[VarBind]
+
+
 def encode_varbind(oid: str) -> bytes:
     return encode_tlv(0x30, encode_oid(oid) + encode_tlv(0x05, b""))
+
+
+def encode_integer_varbind(oid: str, value: int) -> bytes:
+    return encode_tlv(0x30, encode_oid(oid) + encode_integer(value))
 
 
 def build_request(
@@ -214,7 +250,30 @@ def build_request(
     )
 
 
-def parse_response(data: bytes) -> tuple[int, int, list[VarBind]]:
+def build_integer_set_request(
+    version: int,
+    community: str,
+    request_id: int,
+    oid: str,
+    value: int,
+) -> bytes:
+    """Build one SNMP SET request containing one INTEGER varbind."""
+    prefix = (
+        encode_integer(request_id)
+        + encode_integer(0)
+        + encode_integer(0)
+    )
+    varbinds = encode_integer_varbind(oid, value)
+    pdu = encode_tlv(0xA3, prefix + encode_tlv(0x30, varbinds))
+    return encode_tlv(
+        0x30,
+        encode_integer(version)
+        + encode_tlv(0x04, community.encode("utf-8"))
+        + pdu,
+    )
+
+
+def parse_response_details(data: bytes) -> SnmpResponse:
     tag, message, end = decode_tlv(data)
     if tag != 0x30 or end != len(data):
         raise BerError("unexpected SNMP message framing")
@@ -234,8 +293,13 @@ def parse_response(data: bytes) -> tuple[int, int, list[VarBind]]:
         raise BerError("trailing SNMP message bytes")
 
     pdu_offset = 0
-    for _ in range(2):
-        _, _, pdu_offset = decode_tlv(pdu, pdu_offset)
+    request_tag, _, pdu_offset = decode_tlv(pdu, pdu_offset)
+    if request_tag != 0x02:
+        raise BerError("missing SNMP request id")
+    error_tag, error_raw, pdu_offset = decode_tlv(pdu, pdu_offset)
+    if error_tag != 0x02:
+        raise BerError("missing SNMP error status")
+    error_status = decode_integer(error_raw)
     _, error_index_raw, pdu_offset = decode_tlv(pdu, pdu_offset)
     error_index = decode_integer(error_index_raw)
 
@@ -257,7 +321,13 @@ def parse_response(data: bytes) -> tuple[int, int, list[VarBind]]:
             VarBind(decode_oid(oid_raw), value_tag, decode_value(value_tag, value_raw))
         )
 
-    return pdu_tag, error_index, varbinds
+    return SnmpResponse(pdu_tag, error_status, error_index, varbinds)
+
+
+def parse_response(data: bytes) -> tuple[int, int, list[VarBind]]:
+    """Compatibility wrapper returning PDU tag, error index and varbinds."""
+    response = parse_response_details(data)
+    return response.pdu_tag, response.error_index, response.varbinds
 
 
 def exchange(host: str, port: int, packet: bytes, timeout: float, retries: int) -> bytes:
@@ -430,14 +500,28 @@ class SnmpClient:
             response = exchange(
                 self.host, self.port, packet, self.timeout, self.retries
             )
-            _, error_index, varbinds = parse_response(response)
-            if error_index:
+            details = parse_response_details(response)
+            if details.error_status or details.error_index:
                 if strict:
-                    raise BerError(f"SNMP error-index {error_index}")
-                index = min(max(error_index, 1), len(remaining)) - 1
+                    name = ERROR_NAMES.get(
+                        details.error_status,
+                        f"errorStatus{details.error_status}",
+                    )
+                    raise BerError(
+                        f"SNMP {name} at error-index {details.error_index}"
+                    )
+                if details.error_status != 2:
+                    name = ERROR_NAMES.get(
+                        details.error_status,
+                        f"errorStatus{details.error_status}",
+                    )
+                    raise BerError(
+                        f"SNMP {name} at error-index {details.error_index}"
+                    )
+                index = min(max(details.error_index, 1), len(remaining)) - 1
                 remaining.pop(index)
                 continue
-            for varbind in varbinds:
+            for varbind in details.varbinds:
                 if varbind.tag in (
                     NO_SUCH_OBJECT,
                     NO_SUCH_INSTANCE,
@@ -447,6 +531,43 @@ class SnmpClient:
                 values[varbind.oid] = varbind
             break
         return list(values.values())
+
+    def set_integer(self, oid: str, value: int) -> VarBind:
+        """Set one SNMPv2c INTEGER object and require a successful echo."""
+        if self.version != 1:
+            raise BerError("configuration writes require SNMPv2c")
+        packet = build_integer_set_request(
+            self.version,
+            self.community,
+            self.request_id,
+            oid,
+            value,
+        )
+        self.request_id += 1
+        response = exchange(
+            self.host, self.port, packet, self.timeout, self.retries
+        )
+        details = parse_response_details(response)
+        if details.pdu_tag != 0xA2:
+            raise BerError(
+                f"SNMP SET returned unexpected PDU 0x{details.pdu_tag:02x}"
+            )
+        if details.error_status or details.error_index:
+            name = ERROR_NAMES.get(
+                details.error_status,
+                f"errorStatus{details.error_status}",
+            )
+            raise BerError(
+                f"SNMP SET failed: {name} at error-index {details.error_index}"
+            )
+        if len(details.varbinds) != 1:
+            raise BerError("SNMP SET response must contain exactly one varbind")
+        returned = details.varbinds[0]
+        if returned.oid != oid:
+            raise BerError("SNMP SET response OID does not match the request")
+        if returned.tag != 0x02 or int(returned.value) != value:
+            raise BerError("SNMP SET response value does not match the request")
+        return returned
 
     def walk(self, root: str, *, max_rows: int = 200) -> list[VarBind]:
         return walk(

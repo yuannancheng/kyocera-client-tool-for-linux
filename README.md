@@ -203,7 +203,8 @@ kyocera-monitor --host 192.168.0.220 --config --snmp \
 community、Wi-Fi SSID、系统联系人或位置，不能提交到公开仓库。比较发现差异时
 退出码为 `1`，一致时为 `0`。Wi-Fi 连接状态、RSSI 和信道作为只读易变观测
 单独列出，不把自然变化计为配置差异；配置值变化和读取状态变化仍返回 `1`。
-当前仍不发送 `KSETOBJ` 或 SNMP SET；写入前置条件见
+当前不发送 PJL `KSETOBJ`；唯一的写入能力是用户显式确认后，通过 SNMPv2c
+执行 `Auto error clear OFF -> ON -> OFF` 回滚实验。写入边界见
 `docs/reverse-engineering/config-write-safety.md`。
 
 可基于基线生成单字段写入预演。目前只开放已验证为 0/1 整数的
@@ -216,8 +217,19 @@ kyocera-monitor --host 192.168.0.220 --config --snmp \
 
 计划会检查目标、传输、全表配置漂移和读取状态变化，并给出当前值、目标值、
 回滚值、官方 `KMUTLCFG.exe` 命令预览、SNMP 参数预览和 SHA-256 确认令牌。
-`--json` 输出完整的 `write_plan`。该命令仍属于 dry run，`execution.allowed`
-固定为 `false`，不会发送任何写请求。
+`--json` 输出完整的 `write_plan`。
+
+获准的真机实验使用同一基线、同一赋值和计划返回的令牌：
+
+```bash
+kyocera-monitor --host 192.168.0.220 --config --snmp \
+  --config-apply kyocera-config-baseline.json \
+  --config-set 2=ON --config-confirm sha256:<token>
+```
+
+执行器仅支持 SNMPv2c 和 `Auto error clear OFF -> ON -> OFF`。SET 后必须读到
+`1`，随后立即写回 `0` 并再次读到 `0`；即使正向写入或回读失败也会尝试回滚。
+其他对象、反向操作、PJL 写入和设备重置均被拒绝。
 
 `tools/clienttool_ui_strings.py` 只提取控件 ID、字符串资源 ID、文本是否存在
 及其长度，不输出本地化标签或组合框选项，生成

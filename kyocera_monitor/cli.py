@@ -20,6 +20,10 @@ from .config_write_plan import (
     ConfigWritePlanError,
     build_config_write_plan,
 )
+from .config_write_executor import (
+    ConfigWriteExecutionError,
+    execute_auto_error_clear_experiment,
+)
 from .discovery import discover
 from .parser import PrinterSnapshot, parse_response
 from .pjl import (
@@ -30,6 +34,7 @@ from .pjl import (
     query_merged,
 )
 from .snmp_status import collect_snmp_snapshot
+from .snmp import BerError, SnmpClient
 from .usb import UsbError, discover_usb_printers, select_usb_printer
 from .web import DeviceRegistry, run_server
 
@@ -158,7 +163,8 @@ def collect_snmp(args) -> tuple[bytes, PrinterSnapshot]:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description=(
-            "Read Kyocera printer status through PJL or read-only SNMP"
+            "Read Kyocera printer status and run explicitly authorized "
+            "configuration experiments"
         )
     )
     target = parser.add_mutually_exclusive_group()
@@ -262,7 +268,17 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--config-set",
         metavar="ITEM_ID=VALUE",
-        help="requested item value for --config-plan; never sent to the device",
+        help="requested value for --config-plan or --config-apply",
+    )
+    parser.add_argument(
+        "--config-apply",
+        metavar="PATH",
+        help="execute the explicitly authorized Auto error clear experiment",
+    )
+    parser.add_argument(
+        "--config-confirm",
+        metavar="TOKEN",
+        help="confirmation token emitted by --config-plan for --config-apply",
     )
     parser.add_argument(
         "--config-force",
@@ -371,14 +387,33 @@ def main(argv: list[str] | None = None) -> int:
         )
     if args.config and args.snmp and (args.device or args.usb):
         parser.error("--config --snmp requires --host")
-    if (args.config_save or args.config_compare or args.config_plan) and not args.config:
-        parser.error("--config-save/--config-compare/--config-plan require --config")
+    config_snapshot_modes = (
+        args.config_save
+        or args.config_compare
+        or args.config_plan
+        or args.config_apply
+    )
+    if config_snapshot_modes and not args.config:
+        parser.error(
+            "--config-save/--config-compare/--config-plan/--config-apply "
+            "require --config"
+        )
     if args.config_save and args.config_compare:
         parser.error("--config-save and --config-compare are mutually exclusive")
     if args.config_plan and (args.config_save or args.config_compare):
         parser.error("--config-plan cannot be combined with save/compare")
-    if bool(args.config_plan) != bool(args.config_set):
-        parser.error("--config-plan and --config-set must be used together")
+    if args.config_apply and (
+        args.config_save or args.config_compare or args.config_plan
+    ):
+        parser.error("--config-apply cannot be combined with other config modes")
+    if bool(args.config_plan or args.config_apply) != bool(args.config_set):
+        parser.error("--config-plan/--config-apply require --config-set")
+    if bool(args.config_apply) != bool(args.config_confirm):
+        parser.error("--config-apply and --config-confirm must be used together")
+    if args.config_apply and not args.snmp:
+        parser.error("--config-apply currently requires --snmp")
+    if args.config_apply and args.config_snmp_version != "2c":
+        parser.error("--config-apply requires --config-snmp-version 2c")
     if args.config_force and not args.config_save:
         parser.error("--config-force requires --config-save")
     if args.config_allow_target_mismatch and not args.config_compare:
@@ -425,7 +460,8 @@ def main(argv: list[str] | None = None) -> int:
         saved_path = None
         comparison = None
         write_plan = None
-        if args.config_save or args.config_compare or args.config_plan:
+        write_execution = None
+        if config_snapshot_modes:
             try:
                 snapshot = build_config_snapshot(
                     records,
@@ -445,17 +481,46 @@ def main(argv: list[str] | None = None) -> int:
                         snapshot,
                         allow_target_mismatch=args.config_allow_target_mismatch,
                     )
-                else:
+                elif args.config_plan:
                     baseline = load_config_snapshot(args.config_plan)
                     write_plan = build_config_write_plan(
                         baseline,
                         snapshot,
                         args.config_set,
                     )
+                else:
+                    baseline = load_config_snapshot(args.config_apply)
+                    write_plan = build_config_write_plan(
+                        baseline,
+                        snapshot,
+                        args.config_set,
+                    )
+                    client = SnmpClient(
+                        args.host,
+                        community=args.snmp_community,
+                        version="2c",
+                        port=args.snmp_port,
+                        timeout=args.snmp_timeout,
+                        retries=args.snmp_retries,
+                    )
+                    write_execution = execute_auto_error_clear_experiment(
+                        client,
+                        write_plan,
+                        args.config_confirm,
+                    )
             except ConfigSnapshotError as exc:
                 print(f"error: {exc}", file=sys.stderr)
                 return 2
             except ConfigWritePlanError as exc:
+                print(f"error: {exc}", file=sys.stderr)
+                return 2
+            except (
+                ConfigWriteExecutionError,
+                BerError,
+                OSError,
+                TimeoutError,
+                ValueError,
+            ) as exc:
                 print(f"error: {exc}", file=sys.stderr)
                 return 2
         if args.json:
@@ -475,6 +540,8 @@ def main(argv: list[str] | None = None) -> int:
                 payload["comparison"] = comparison
             if write_plan is not None:
                 payload["write_plan"] = write_plan
+            if write_execution is not None:
+                payload["write_execution"] = write_execution
             print(
                 json.dumps(
                     payload,
@@ -482,6 +549,24 @@ def main(argv: list[str] | None = None) -> int:
                     indent=2,
                 )
             )
+        elif write_execution is not None:
+            print("configuration write execution: Auto error clear OFF -> ON -> OFF")
+            print(f"target: {write_execution['target']} (snmp)")
+            print(f"object OID: {write_execution['oid']}")
+            print(f"status: {write_execution['status']}")
+            for label, key in (
+                ("set ON", "set_on"),
+                ("verify ON", "verify_on"),
+                ("set OFF", "set_off"),
+                ("verify OFF", "verify_off"),
+            ):
+                step = write_execution[key]
+                details = ", ".join(
+                    f"{name}={value!r}"
+                    for name, value in step.items()
+                    if value is not None
+                )
+                print(f"{label}: {details}")
         elif write_plan is not None:
             plan = write_plan
             print("configuration write plan (DRY RUN; no commands sent)")
@@ -513,10 +598,16 @@ def main(argv: list[str] | None = None) -> int:
             )
             for blocker in blockers:
                 print(f"blocker: {blocker}")
-            print(
-                "execution: disabled "
-                f"({', '.join(plan['execution']['blockers'])})"
-            )
+            if plan["execution"]["allowed"]:
+                print(
+                    "execution: authorized with confirmation token "
+                    f"({plan['execution']['authorization_scope']})"
+                )
+            else:
+                print(
+                    "execution: blocked "
+                    f"({', '.join(plan['execution']['blockers'])})"
+                )
             print(
                 "confirmation token: "
                 f"{plan['confirmation']['algorithm']}:"
@@ -583,12 +674,18 @@ def main(argv: list[str] | None = None) -> int:
                 if comparison["changed"] or comparison["read_status_changed"]
                 else 0
             )
-        if write_plan is not None:
+        if write_plan is not None and write_execution is None:
             print(
                 "write plan generated; no write command was sent",
                 file=sys.stderr,
             )
             return 0 if write_plan["review"]["ready_for_executor_implementation"] else 1
+        if write_execution is not None:
+            print(
+                f"write execution finished: {write_execution['status']}",
+                file=sys.stderr,
+            )
+            return 0 if write_execution["status"] == "success" else 1
         return 0 if read_count else 1
 
     if args.web or args.gui:
