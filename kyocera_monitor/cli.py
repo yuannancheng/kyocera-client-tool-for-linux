@@ -20,6 +20,11 @@ from .config_write_candidates import (
     ConfigCandidateError,
     build_config_candidate_report,
 )
+from .config_write_audit import (
+    ConfigWriteAuditError,
+    build_safe_audit_plan,
+    execute_safe_audit,
+)
 from .config_write_plan import (
     ConfigWritePlanError,
     build_config_write_plan,
@@ -270,6 +275,14 @@ def main(argv: list[str] | None = None) -> int:
         help="review the next configuration write candidate without writing",
     )
     parser.add_argument(
+        "--config-audit-safe",
+        metavar="PATH",
+        help=(
+            "exercise a bounded whitelist of harmless integer fields and "
+            "restore each value"
+        ),
+    )
+    parser.add_argument(
         "--config-plan",
         metavar="PATH",
         help="build a dry-run write plan from a saved configuration snapshot",
@@ -400,13 +413,14 @@ def main(argv: list[str] | None = None) -> int:
         args.config_save
         or args.config_compare
         or args.config_candidates
+        or args.config_audit_safe
         or args.config_plan
         or args.config_apply
     )
     if config_snapshot_modes and not args.config:
         parser.error(
             "--config-save/--config-compare/--config-candidates/"
-            "--config-plan/--config-apply require --config"
+            "--config-audit-safe/--config-plan/--config-apply require --config"
         )
     if args.config_candidates and any(
         (
@@ -414,6 +428,7 @@ def main(argv: list[str] | None = None) -> int:
             args.config_compare,
             args.config_plan,
             args.config_apply,
+            args.config_audit_safe,
         )
     ):
         parser.error(
@@ -421,6 +436,16 @@ def main(argv: list[str] | None = None) -> int:
         )
     if args.config_save and args.config_compare:
         parser.error("--config-save and --config-compare are mutually exclusive")
+    if args.config_audit_safe and any(
+        (
+            args.config_save,
+            args.config_compare,
+            args.config_candidates,
+            args.config_plan,
+            args.config_apply,
+        )
+    ):
+        parser.error("--config-audit-safe cannot be combined with other config modes")
     if args.config_plan and (args.config_save or args.config_compare):
         parser.error("--config-plan cannot be combined with save/compare")
     if args.config_apply and (
@@ -435,6 +460,10 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("--config-apply currently requires --snmp")
     if args.config_apply and args.config_snmp_version != "2c":
         parser.error("--config-apply requires --config-snmp-version 2c")
+    if args.config_audit_safe and not args.snmp:
+        parser.error("--config-audit-safe requires --snmp")
+    if args.config_audit_safe and args.config_snmp_version != "2c":
+        parser.error("--config-audit-safe requires --config-snmp-version 2c")
     if args.config_force and not args.config_save:
         parser.error("--config-force requires --config-save")
     if args.config_allow_target_mismatch and not args.config_compare:
@@ -482,6 +511,8 @@ def main(argv: list[str] | None = None) -> int:
         comparison = None
         write_plan = None
         write_execution = None
+        safe_audit_plan = None
+        safe_audit = None
         candidate_report = None
         if config_snapshot_modes:
             try:
@@ -505,6 +536,18 @@ def main(argv: list[str] | None = None) -> int:
                     )
                 elif args.config_candidates:
                     candidate_report = build_config_candidate_report(snapshot)
+                elif args.config_audit_safe:
+                    baseline = load_config_snapshot(args.config_audit_safe)
+                    safe_audit_plan = build_safe_audit_plan(baseline, snapshot)
+                    client = SnmpClient(
+                        args.host,
+                        community=args.snmp_community,
+                        version="2c",
+                        port=args.snmp_port,
+                        timeout=args.snmp_timeout,
+                        retries=args.snmp_retries,
+                    )
+                    safe_audit = execute_safe_audit(client, safe_audit_plan)
                 elif args.config_plan:
                     baseline = load_config_snapshot(args.config_plan)
                     write_plan = build_config_write_plan(
@@ -541,6 +584,9 @@ def main(argv: list[str] | None = None) -> int:
             except ConfigCandidateError as exc:
                 print(f"error: {exc}", file=sys.stderr)
                 return 2
+            except ConfigWriteAuditError as exc:
+                print(f"error: {exc}", file=sys.stderr)
+                return 2
             except (
                 ConfigWriteExecutionError,
                 BerError,
@@ -570,6 +616,10 @@ def main(argv: list[str] | None = None) -> int:
                 payload["write_plan"] = write_plan
             if write_execution is not None:
                 payload["write_execution"] = write_execution
+            if safe_audit_plan is not None:
+                payload["safe_audit_plan"] = safe_audit_plan
+            if safe_audit is not None:
+                payload["safe_audit"] = safe_audit
             if candidate_report is not None:
                 payload["candidate_report"] = candidate_report
             print(
@@ -579,6 +629,32 @@ def main(argv: list[str] | None = None) -> int:
                     indent=2,
                 )
             )
+        elif safe_audit is not None:
+            print("safe configuration write audit")
+            print(f"target: {safe_audit['target']} (snmp)")
+            print(
+                f"planned: {safe_audit['planned']}; "
+                f"attempted: {safe_audit['attempted']}; "
+                f"successful: {safe_audit['successful']}; "
+                f"restored: {safe_audit['restored']}"
+            )
+            for result in safe_audit["results"]:
+                if result["status"] in (
+                    "success",
+                    "target_rejected_or_unverified",
+                ):
+                    print(
+                        f"{result['item_id']:3d}\t{result['label']}\t"
+                        f"{result['before']} -> {result['target']} -> "
+                        f"{result['verify_restore']['observed']}\t"
+                        f"{result['status']}"
+                    )
+                else:
+                    print(
+                        f"{result['item_id']:3d}\t{result['label']}\t"
+                        f"{result['status']}"
+                    )
+            print(f"status: {safe_audit['status']}")
         elif write_execution is not None:
             print(
                 "configuration write execution: "
@@ -770,6 +846,12 @@ def main(argv: list[str] | None = None) -> int:
                 if write_plan["review"]["plan_preconditions_valid"]
                 else 1
             )
+        if safe_audit is not None:
+            print(
+                f"safe configuration audit finished: {safe_audit['status']}",
+                file=sys.stderr,
+            )
+            return 0 if safe_audit["status"] == "completed" else 1
         if write_execution is not None:
             print(
                 f"write execution finished: {write_execution['status']}",

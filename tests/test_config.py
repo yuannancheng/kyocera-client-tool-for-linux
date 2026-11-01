@@ -44,6 +44,12 @@ from kyocera_monitor.config_write_executor import (
     execute_auto_error_clear_experiment,
     execute_quiet_mode_experiment,
 )
+from kyocera_monitor.config_write_audit import (
+    ConfigWriteAuditError,
+    SAFE_AUDIT_FORMAT,
+    build_safe_audit_plan,
+    execute_safe_audit,
+)
 from kyocera_monitor.pjl import UEL
 from kyocera_monitor.snmp import BerError, VarBind
 
@@ -859,6 +865,170 @@ class ConfigWriteCandidateTests(unittest.TestCase):
         self.assertEqual(report["recommendation"]["item_id"], 50)
         self.assertFalse(report["candidates"][0]["write"]["allowed"])
         self.assertNotIn("objects", payload)
+
+
+class MultiSnmpAuditClient:
+    host = "printer"
+
+    def __init__(
+        self,
+        values: dict[str, int],
+        *,
+        reject: dict[str, int] | None = None,
+    ):
+        self.values = dict(values)
+        self.reject = reject or {}
+        self.calls: list[tuple[str, int]] = []
+
+    def get(self, oids, *, strict=False):
+        return [VarBind(oid, 0x02, self.values[oid]) for oid in oids]
+
+    def set_integer(self, oid, value):
+        self.calls.append((oid, value))
+        if self.reject.get(oid) == value:
+            raise BerError("synthetic SET rejection")
+        self.values[oid] = value
+        return VarBind(oid, 0x02, value)
+
+
+class ConfigWriteAuditTests(unittest.TestCase):
+    def setUp(self):
+        values = {
+            1: 1,
+            3: 6,
+            10: 0,
+            11: 11,
+            49: 3,
+            51: 4,
+            52: 60,
+            84: 1,
+            85: 18,
+        }
+        self.records = parse_config_response(
+            "".join(
+                kgetobj(
+                    f"1.{CONFIG[item_id - 1].oid}",
+                    0,
+                    2,
+                    str(value),
+                )
+                for item_id, value in values.items()
+            )
+        )
+        self.baseline = build_config_snapshot(
+            self.records,
+            transport="snmp",
+            target="printer",
+        )
+        self.current = build_config_snapshot(
+            copy.deepcopy(self.records),
+            transport="snmp",
+            target="printer",
+        )
+
+    def test_plan_covers_bounded_harmless_fields(self):
+        plan = build_safe_audit_plan(self.baseline, self.current)
+        self.assertEqual(plan["format"], SAFE_AUDIT_FORMAT)
+        self.assertEqual(plan["reviewed"], 25)
+        self.assertEqual(plan["planned"], 9)
+        fields = {field["item_id"]: field for field in plan["fields"]}
+        self.assertEqual(fields[1]["target"], 2)
+        self.assertEqual(fields[3]["target"], 5)
+        self.assertEqual(fields[10]["target"], 1)
+        self.assertEqual(fields[11]["target"], 12)
+        self.assertEqual(fields[49]["target"], 2)
+        self.assertEqual(fields[51]["target"], 3)
+        self.assertEqual(fields[52]["target"], 59)
+        self.assertEqual(fields[84]["target"], 0)
+        self.assertEqual(fields[85]["target"], 17)
+
+    def test_drift_blocks_before_any_write(self):
+        changed = copy.deepcopy(self.records)
+        changed[0]["value"] = 2
+        changed[0]["display"] = "2 min"
+        changed_snapshot = build_config_snapshot(
+            changed,
+            transport="snmp",
+            target="printer",
+        )
+        with self.assertRaisesRegex(ConfigWriteAuditError, "changed"):
+            build_safe_audit_plan(self.baseline, changed_snapshot)
+
+    def test_every_successful_forward_is_restored(self):
+        plan = build_safe_audit_plan(self.baseline, self.current)
+        values = {field["oid"]: field["before"] for field in plan["fields"]}
+        client = MultiSnmpAuditClient(values)
+        result = execute_safe_audit(client, plan, readback_timeout=0)
+        self.assertEqual(result["status"], "completed")
+        self.assertEqual(result["attempted"], 9)
+        self.assertEqual(result["successful"], 9)
+        self.assertEqual(result["restored"], 9)
+        self.assertEqual(client.values, values)
+
+    def test_rejected_target_still_restores_and_continues(self):
+        plan = build_safe_audit_plan(self.baseline, self.current)
+        values = {field["oid"]: field["before"] for field in plan["fields"]}
+        rejected_oid = next(
+            field["oid"] for field in plan["fields"] if field["item_id"] == 11
+        )
+        client = MultiSnmpAuditClient(values, reject={rejected_oid: 12})
+        result = execute_safe_audit(client, plan, readback_timeout=0)
+        self.assertEqual(result["status"], "completed")
+        self.assertEqual(result["successful"], 8)
+        self.assertEqual(result["restored"], 9)
+        rejected = next(
+            item for item in result["results"] if item["item_id"] == 11
+        )
+        self.assertEqual(
+            rejected["status"],
+            "target_rejected_or_unverified",
+        )
+        self.assertEqual(client.values[rejected_oid], 11)
+
+    def test_restore_failure_stops_remaining_fields(self):
+        plan = build_safe_audit_plan(self.baseline, self.current)
+        values = {field["oid"]: field["before"] for field in plan["fields"]}
+        rejected_oid = next(
+            field["oid"] for field in plan["fields"] if field["item_id"] == 11
+        )
+        client = MultiSnmpAuditClient(values, reject={rejected_oid: 11})
+        result = execute_safe_audit(client, plan, readback_timeout=0)
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(result["restored"], 3)
+        self.assertEqual(
+            result["results"][-1]["status"],
+            "not_attempted_after_failure",
+        )
+
+    def test_cli_runs_bounded_audit_and_restores(self):
+        plan = build_safe_audit_plan(self.baseline, self.current)
+        values = {field["oid"]: field["before"] for field in plan["fields"]}
+        client = MultiSnmpAuditClient(values)
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "baseline.json"
+            save_config_snapshot(path, self.baseline)
+            output = io.StringIO()
+            with patch.object(
+                cli, "collect_config_snmp", return_value=self.records
+            ):
+                with patch.object(cli, "SnmpClient", return_value=client):
+                    with redirect_stdout(output):
+                        code = cli.main(
+                            [
+                                "--host",
+                                "printer",
+                                "--config",
+                                "--snmp",
+                                "--config-audit-safe",
+                                str(path),
+                                "--json",
+                            ]
+                        )
+        self.assertEqual(code, 0)
+        payload = json.loads(output.getvalue())
+        self.assertEqual(payload["safe_audit"]["status"], "completed")
+        self.assertEqual(payload["safe_audit"]["restored"], 9)
+        self.assertEqual(client.values, values)
 
 
 class FakeSnmpWriteClient:

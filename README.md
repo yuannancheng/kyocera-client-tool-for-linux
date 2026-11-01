@@ -258,6 +258,17 @@ kyocera-monitor --host 192.168.0.220 --config --snmp \
 `0`；即使正向写入或回读失败也会尝试回滚。其他对象、反向操作、PJL 写入和
 设备重置均被拒绝。
 
+无害整数字段可用固定白名单做可恢复批量审计：
+
+```bash
+kyocera-monitor --host 192.168.0.220 --config --snmp \
+  --config-audit-safe kyocera-config-baseline.json
+```
+
+该模式覆盖睡眠、超时、纸张重量、打印浓度、单位和面板自动清除等 25 个字段，
+逐项执行“改值、回读、恢复、回读”。网络、Wi-Fi、SNMP 凭据、传真、重置触发、
+字符串及未知语义字段均排除。任一恢复失败会停止后续字段，命令返回非零。
+
 `tools/clienttool_ui_strings.py` 只提取控件 ID、字符串资源 ID、文本是否存在
 及其长度，不输出本地化标签或组合框选项，生成
 `docs/reverse-engineering/data/clienttool-ui-controls.tsv`。结合模型偏移后，

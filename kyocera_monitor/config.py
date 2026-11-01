@@ -205,7 +205,7 @@ CONFIG_KNOWN: dict[str, dict[str, object]] = {
     "43.5.1.1.23.1": {
         "label": "Sleep time",
         "unit": "min",
-        "confidence": "inferred",
+        "confidence": "verified",
     },
     "42.5.1.1.43.1": {
         "label": "Power off timer",
@@ -214,6 +214,28 @@ CONFIG_KNOWN: dict[str, dict[str, object]] = {
     "1001.2.1.1.1.14.1": {
         "label": "Quiet mode",
         "choices": {0: "OFF", 1: "ON"},
+        "confidence": "verified",
+    },
+    "1001.2.1.1.1.15.1": {
+        "label": "Ignore paper size mismatch",
+        "confidence": "verified",
+    },
+    "43.10.1.1.13.1.1": {
+        "label": "Print density",
+        "confidence": "verified",
+    },
+    "42.5.1.1.13.1": {
+        "label": "Units",
+        "confidence": "verified",
+    },
+    "42.5.1.1.4.1": {
+        "label": "Auto clear panel",
+        "confidence": "verified",
+    },
+    "42.5.1.1.5.1": {
+        "label": "Auto clear panel time",
+        "scale": 5,
+        "unit": "s",
         "confidence": "verified",
     },
     # Wi-Fi status page (KMUTLCFG dialog 0x00f3): each object is read

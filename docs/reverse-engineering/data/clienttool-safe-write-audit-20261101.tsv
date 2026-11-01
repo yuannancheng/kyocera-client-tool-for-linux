@@ -1,0 +1,26 @@
+item_id	label	before	target	restored	status
+1	Sleep time	1	2	1	success
+3	Auto error clear timeout	6	5	6	success
+10	Ignore paper size mismatch	0	1	0	success
+11	Media weight row 1	11	12	11	success
+12	Media weight row 2	12	11	12	success
+14	Media weight row 4	13	11	13	success
+15	Media weight row 5	11	12	11	success
+17	Media weight row 7	13	11	13	success
+18	Media weight row 8	12	11	12	success
+19	Media weight row 9	11	12	11	success
+20	Media weight row 10	11	12	11	success
+24	Media weight row 14	11	12	11	success
+25	Custom paper 1 weight/type index	11	12	11	success
+26	Media weight row 16	11	12	11	success
+27	Media weight row 17	11	12	11	success
+28	Media weight row 18	11	12	11	success
+29	Media weight row 19	11	12	11	success
+30	Media weight row 20	11	12	11	success
+31	Media weight row 21	11	12	11	success
+32	Media weight row 22	11	12	11	success
+49	Print density	3	2	3	success
+51	Units	4	3	4	success
+52	Form feed timeout	60	59	60	success
+84	Auto clear panel	1	0	1	success
+85	Auto clear panel time	18	17	18	success

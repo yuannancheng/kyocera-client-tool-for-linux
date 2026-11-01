@@ -23,6 +23,7 @@ kyocera_monitor/
   config_write_candidates.py 下一个写入候选的只读资格审查
   config_write_plan.py 单字段 dry-run、回滚字段和确认令牌
   config_write_executor.py 获准字段的 SNMPv2c 写入、回读和回滚
+  config_write_audit.py 无害整数字段白名单、逐项写入、回读和恢复
 tools/
   pjl_probe.py          原始 PJL 探测
   snmp_probe.py         调用 kyocera_monitor.snmp 的 SNMP 命令行
@@ -83,6 +84,10 @@ MA2000w（`0482:0d51`），多个候选时要求显式 `--device`。
   记录已核对的 `BM_GETCHECK → model +0x18 → OID → integer 0/1` 数据流、
   网络/USB 失败处理、未设置原厂重启请求标志，以及 MA2000w 的
   `OFF -> ON -> OFF` 写入回读结果；设备失败恢复和再次授权仍保留为 blockers。
+- `--config-audit-safe` 只处理静态映射已审查的无害整数字段。每个字段都从
+  同一私密基线和当前全表读取生成计划，执行改值、目标回读、恢复和原值回读；
+  恢复失败立即停止。网络可达性、SNMP/Wi-Fi 凭据、传真身份、重置触发、字符串
+  和未知语义对象不在白名单中。
 - 不把 KGETOBJ 的数值无标记地解释成未经验证的业务字段；推断字段必须带
   `confidence` 标记，原始键值始终保留。
 - Windows 原工具的网络路径使用 SNMP；Linux 实现优先使用已验证的 PJL 9100

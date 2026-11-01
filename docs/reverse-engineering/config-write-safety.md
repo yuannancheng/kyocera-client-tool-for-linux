@@ -14,6 +14,7 @@
 - `Quiet mode` 的 dry-run 计划、命令预览、回滚预演和确认令牌。
 - 仅限 SNMPv2c、相同计划与匹配确认令牌的 item 2/item 50
   `OFF -> ON -> OFF` 执行器。
+- `--config-audit-safe` 的无害整数字段白名单、逐项目标回读和自动恢复。
 
 其他对象、PJL `KSETOBJ`、SNMPv1 SET、密码/网络字段和设备重置仍不可写。
 
@@ -135,6 +136,38 @@ readback: 0
 - 该结果确认 MA2000w 上 item 50 的整数 `0/1` 写入、同 OID 回读和恢复路径。
 
 尚未实测设备拒绝 SET、写后超时、USB `KSETOBJ` 失败或回滚失败时的行为。
+
+### 无害整数字段批量审计
+
+日期：2026-11-01。环境与 item 50 实验相同。2026-11-01 使用同一私密基线执行：
+
+```bash
+kyocera-monitor --host 192.168.0.220 --config --snmp \
+  --config-audit-safe kyocera-config-baseline.json
+```
+
+白名单固定为 25 个当前可读、可恢复的整数字段：
+
+- item 1 `Sleep time`；
+- item 3 `Auto error clear timeout`；
+- item 10 `Ignore paper size mismatch`；
+- item 11/12/14/15/17/18/19/20/24-32 媒体重量/类型行；
+- item 49 `Print density`；
+- item 51 `Units`；
+- item 52 `Form feed timeout`；
+- item 84 `Auto clear panel`；
+- item 85 `Auto clear panel time`。
+
+执行器从同一完整性基线建立计划，逐项执行 `SET target -> verify target ->
+SET original -> verify original`。设备结果为 25/25 成功，目标值和恢复值均
+回读正确；逐项证据见
+[`clienttool-safe-write-audit-20261101.tsv`](data/clienttool-safe-write-audit-20261101.tsv)。
+随后完整 147 项比较为 0 个配置变化、0 个易变观测变化、0 个读取状态变化，
+147 项全部不变。
+
+明确排除：网络可达性、IPv4/DHCP/协议开关、SNMP community/trap、Wi-Fi 设置、
+传真身份/通知、重置触发、计数器、字符串字段、未知语义和当前不可读对象。
+该白名单覆盖当前可安全恢复的代表性大部分整数字段，不代表其他对象可写。
 
 ## Dry-run 计划
 

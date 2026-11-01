@@ -1,26 +1,26 @@
 dialog	control_id	label	companion_controls	model_offset	item_id	oid	confidence	note
 0x006b	0x03ea	Auto error clear		0x0004	2	43.5.1.1.34.1	verified	SNMPv2c Integer write/readback 1 then 0 on MA2000w; full configuration restored
-0x006b	0x03f4	Auto error clear timeout	0x03f3	0x0008	3	43.5.1.1.35.1	inferred	UI seconds = model * 5
-0x006b	0x03f2	Sleep time	0x03f1	0x0010	1	43.5.1.1.23.1	inferred	
+0x006b	0x03f4	Auto error clear timeout	0x03f3	0x0008	3	43.5.1.1.35.1	verified	UI seconds = model * 5; MA2000w 6 -> 5 -> 6
+0x006b	0x03f2	Sleep time	0x03f1	0x0010	1	43.5.1.1.23.1	verified	MA2000w 1 -> 2 -> 1
 0x006b	0x0463	Power off timer		0x0014	4	42.5.1.1.43.1	inferred	Combo bucket, not a linear scale
 0x006b	0x0455	Quiet mode		0x0018	50	1001.2.1.1.1.14.1	verified	BM_GETCHECK 0x455 -> model +0x18 -> diff case 0x31 -> integer 0/1; MA2000w SNMPv2c write/readback 1 then 0; full configuration restored
-0x006b	0x0411	Form feed timeout	0x0410	0x2ffc	52	43.5.1.1.22.1	inferred	UI seconds = model * 5; current device value 60 -> 300 s
+0x006b	0x0411	Form feed timeout	0x0410	0x2ffc	52	43.5.1.1.22.1	verified	UI seconds = model * 5; MA2000w 60 -> 59 -> 60
 0x006b	0x03f5	Media type	0x0402	0x300c	9	43.8.1.1.4.1.1	inferred	
 0x006b	0x03f8	Paper size	0x0403	0x3000	6	43.8.1.1.11.1.1	inferred	
-0x006b	0x03f7	Print density	0x0408	0x2ff8	49	43.10.1.1.13.1.1	inferred	Combo index = model - 1
+0x006b	0x03f7	Print density	0x0408	0x2ff8	49	43.10.1.1.13.1.1	verified	Combo index = model - 1; MA2000w 3 -> 2 -> 3
 0x006b	0x04ab	Original image	0x04aa	0x3014	83	1001.2.1.1.1.10.1	inferred	Model 1/4/8 -> combo 2/1/3
 0x006b	0x0474	Original size	0x04d1	0x3c5c	87	46.8.1.1.6.3.1	inferred	Vendor OID name kcscnInputCurrentSize
-0x006b	0x048c	Ignore paper size mismatch		0x3010	10	1001.2.1.1.1.15.1	inferred	Value 2 hides/disables the checkbox
+0x006b	0x048c	Ignore paper size mismatch		0x3010	10	1001.2.1.1.1.15.1	verified	Value 2 hides/disables the checkbox; MA2000w 0 -> 1 -> 0
 0x006b	0x0466	USB is connected		0x001c	5	42.5.9.1.3.2	inferred	Power off when group
 0x006b	0x0467	Network is connected		0x0020	55	42.5.9.1.3.1	inferred	Power off when group
 0x006b	0x0468	FAX is installed		0x0024	107	42.5.9.1.3.3	inferred	Power off when group; MA2000w returns no value
-0x006b	0x0456	Inches		0x0028	51	42.5.1.1.13.1	inferred	Shares the units model field with 0x0457
-0x006b	0x0457	Millimeters		0x0028	51	42.5.1.1.13.1	inferred	Shares the units model field with 0x0456
+0x006b	0x0456	Inches		0x0028	51	42.5.1.1.13.1	verified	Shares the units model field with 0x0457; MA2000w 4 -> 3 -> 4
+0x006b	0x0457	Millimeters		0x0028	51	42.5.1.1.13.1	verified	Shares the units model field with 0x0456; MA2000w 4 -> 3 -> 4
 0x00d0	0x04d0	Default screen		0x3c58	86	42.5.1.1.3.1	inferred	Panel options dialog
 0x00d0	0x04d2	Language		0x3020	79	1.3.6.1.2.1.43.5.1.1.10.1	inferred	Combo index = model - 1
-0x00d0	0x04d3	Reset panel		0x3018	84	42.5.1.1.4.1	inferred	Button enable state follows the panel auto-clear switch
-0x00d0	0x04d4	Auto clear panel time	0x04d5	0x301c	85	42.5.1.1.5.1	inferred	UI seconds = model * 5
-0x00d0	0x04d5	Auto clear panel time spin	0x04d4	0x301c	85	42.5.1.1.5.1	inferred	Spin companion of 0x04d4
+0x00d0	0x04d3	Reset panel		0x3018	84	42.5.1.1.4.1	verified	Button enable state follows the panel auto-clear switch; MA2000w 1 -> 0 -> 1
+0x00d0	0x04d4	Auto clear panel time	0x04d5	0x301c	85	42.5.1.1.5.1	verified	UI seconds = model * 5; MA2000w 18 -> 17 -> 18
+0x00d0	0x04d5	Auto clear panel time spin	0x04d4	0x301c	85	42.5.1.1.5.1	verified	Spin companion of 0x04d4; MA2000w 18 -> 17 -> 18
 0x008d	0x041d	Lan Interface		0x4444	58	40.1.1.1.9.1	inferred	Communication dialog
 0x008d	0x041e	Hostname		0x444c	54	40.10.1.1.5.1	inferred	Vendor OID name kmHostName
 0x008d	0x0420	DHCP		0x485c	57	40.10.1.1.2.1	inferred	Vendor OID name kmAddressSource

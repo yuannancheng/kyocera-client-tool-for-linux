@@ -2,6 +2,19 @@
 
 ## 2026-11-01
 
+### Added — reversible harmless-field write audit
+
+- 新增 `--config-audit-safe PATH`，从完整性基线生成固定白名单，逐项执行
+  目标 SET、目标回读、原值 SET 和原值回读。
+- MA2000w 上 25/25 个字段成功完成写入、回读和恢复，覆盖睡眠、自动清除超时、
+  纸张不匹配策略、17 个媒体重量/类型行、打印浓度、单位、送纸超时和面板清除。
+- 恢复失败会立即停止后续字段；设备拒绝目标值但恢复成功时继续下一项。
+- 完整 147 项比较最终为 0 个持久配置变化、0 个易变观测、0 个读取状态变化。
+- 网络/Wi-Fi、SNMP 凭据/trap、传真、重置、计数器、字符串和未知语义对象不在
+  白名单中。逐项结果见
+  `docs/reverse-engineering/data/clienttool-safe-write-audit-20261101.tsv`。
+- 新增 6 个专项测试；全量测试 216/216；公开树检查通过。
+
 ### Added — verified Quiet mode write and rollback
 
 - 扩展 `--config-plan` 和 `--config-apply`，item 50 `Quiet mode` 可生成
