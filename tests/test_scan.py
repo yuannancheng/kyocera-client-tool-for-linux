@@ -288,6 +288,31 @@ class ExportTests(unittest.TestCase):
             self.assertEqual(written, (target,))
             self.assertEqual(target.read_bytes(), b"png")
 
+    def test_write_output_failure_removes_temporary_file(self):
+        artifact = scan.ScanArtifact(
+            filename="scan.png",
+            media_type="image/png",
+            kind="png",
+            width=1,
+            height=1,
+            data=b"png",
+        )
+        result = scan.ScanResult(
+            device="192.0.2.1",
+            endpoint="http://192.0.2.1:9090/scan",
+            operation_id="17",
+            pages=1,
+            requested_device_format="RAW",
+            effective_device_format="RAW",
+            outputs=(artifact,),
+            close_result="SUCCESS",
+            close_error=None,
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            with self.assertRaises(OSError):
+                scan.write_outputs(result, Path(tmp))
+            self.assertEqual(list(Path(tmp).iterdir()), [])
+
 
 class WorkflowTests(unittest.TestCase):
     def test_scan_applies_overrides_exports_and_closes_session(self):
@@ -379,6 +404,24 @@ class WorkflowTests(unittest.TestCase):
         self.assertGreater(len(raw), 4)
         self.assertTrue(protocol.closed)
 
+    def test_poll_timeout_is_actionable_and_closes_session(self):
+        protocol = FakeProtocol(
+            [
+                response("retrieve_image", "IMAGE_CREATING_NOW"),
+                response("retrieve_image", "IMAGE_CREATING_NOW"),
+            ]
+        )
+        with self.assertRaises(scan.ScanError) as caught:
+            scan.scan_device(
+                "192.0.2.1",
+                scan.ScanOptions(max_polls=2, poll_interval=0),
+                protocol=protocol,
+                sleep=lambda _seconds: None,
+            )
+        self.assertEqual(caught.exception.stage, "retrieve_image")
+        self.assertIn("2", caught.exception.message)
+        self.assertTrue(protocol.closed)
+
     def test_adf_scan_handles_two_pages_and_completion(self):
         raw = raw_rgb_stream()
         protocol = FakeProtocol(
@@ -434,6 +477,25 @@ class WorkflowTests(unittest.TestCase):
             manager.start("192.0.2.1", scan.ScanOptions())
         release.set()
         manager.wait(first.job_id)
+
+    def test_device_can_scan_again_after_completion(self):
+        result = scan.ScanResult(
+            device="192.0.2.1",
+            endpoint="http://192.0.2.1:9090/scan",
+            operation_id="17",
+            pages=1,
+            requested_device_format="RAW",
+            effective_device_format="RAW",
+            outputs=(),
+            close_result="SUCCESS",
+            close_error=None,
+        )
+        manager = scan.ScanJobManager(lambda *_args, **_kwargs: result)
+        first = manager.start("192.0.2.1", scan.ScanOptions())
+        manager.wait(first.job_id)
+        second = manager.start("192.0.2.1", scan.ScanOptions())
+        manager.wait(second.job_id)
+        self.assertNotEqual(first.job_id, second.job_id)
 
 
 if __name__ == "__main__":

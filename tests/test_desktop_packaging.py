@@ -16,6 +16,8 @@ class DesktopPackagingTests(unittest.TestCase):
             self.assertIn("[Desktop Entry]", text)
             self.assertIn("Type=Application", text)
             self.assertIn("Name=KYOCERA Client Tool for Linux", text)
+            self.assertIn("KYOCERA printer status and scanning dashboard", text)
+            self.assertIn("scan;", text)
             self.assertIn("Exec=kyocera-gui", text)
             self.assertIn("TryExec=kyocera-gui", text)
             self.assertIn("Icon=kyocera-monitor", text)

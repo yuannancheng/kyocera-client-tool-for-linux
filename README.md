@@ -155,6 +155,9 @@ python3 tools/install_desktop.py --uninstall
 python3 -m pip install --user .
 ```
 
+安装会从 Python 包索引取得 Pillow，并生成 `kyocera-monitor`、
+`kyocera-gui` 和 `kyocera-kmscn-probe` 三个入口。
+
 已经存在且内容不同的文件默认不会被覆盖；确认要替换时加 `--force`。
 
 JSON 输出同时保留原始 `kgetobj`，并在 `kgetobj_known` 中提供已确认的结构化
@@ -347,7 +350,7 @@ python3 -m unittest discover -s tests -v
 python3 tools/check_publication.py
 ```
 
-当前 234 个测试覆盖 PJL 解析/帧格式、分段补发与合并、KGETOBJ 结构化字段、
+当前 237 个测试覆盖 PJL 解析/帧格式、分段补发与合并、KGETOBJ 结构化字段、
 147 项配置对象表与 CLI 配置导出、`KMUTLCFG` UI 控件字符串提取、
 147 项对象→模型偏移映射与首批控件→OID 对照、
 配置 SNMP 后备读取、

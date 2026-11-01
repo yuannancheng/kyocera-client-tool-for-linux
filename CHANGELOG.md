@@ -27,6 +27,14 @@
   CLI 测试。
 - TIFF、高压缩 PDF、XPS 最小样本分别通过 ImageMagick 多页读取、
   Poppler `pdfinfo` 和 ZIP 完整性检查；尚未在 Windows XPS 查看器验证。
+- 在 `/tmp` 的全新安装目标执行 `pip install .`，自动安装 Pillow 13.0.0，
+  构建出包含扫描服务的 wheel；三个 console entry 均可启动。安装后的
+  `kyocera-monitor` 在 MA2000w 上完成一次灰度 JPEG 扫描，
+  2,148,644 字节、2496×3520、`close_session=SUCCESS`。
+- 桌面菜单文案移除“只读”限制并加入扫描关键词；安装到临时 prefix 的正常、
+  冲突保护和卸载路径继续通过测试。
+- 补齐扫描轮询超时、完成后再次扫描、设备忙和输出写入失败临时文件清理测试；
+  安装后的 Web 页面/状态 API 和 GTK 进程启动也完成验证。
 
 ### Added — official feature parity plan
 
