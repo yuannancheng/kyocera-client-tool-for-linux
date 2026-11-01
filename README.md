@@ -206,6 +206,19 @@ community、Wi-Fi SSID、系统联系人或位置，不能提交到公开仓库�
 当前仍不发送 `KSETOBJ` 或 SNMP SET；写入前置条件见
 `docs/reverse-engineering/config-write-safety.md`。
 
+可基于基线生成单字段写入预演。目前只开放已验证为 0/1 整数的
+`Auto error clear`（item 2）：
+
+```bash
+kyocera-monitor --host 192.168.0.220 --config --snmp \
+  --config-plan kyocera-config-baseline.json --config-set 2=OFF
+```
+
+计划会检查目标、传输、全表配置漂移和读取状态变化，并给出当前值、目标值、
+回滚值、官方 `KMUTLCFG.exe` 命令预览、SNMP 参数预览和 SHA-256 确认令牌。
+`--json` 输出完整的 `write_plan`。该命令仍属于 dry run，`execution.allowed`
+固定为 `false`，不会发送任何写请求。
+
 `tools/clienttool_ui_strings.py` 只提取控件 ID、字符串资源 ID、文本是否存在
 及其长度，不输出本地化标签或组合框选项，生成
 `docs/reverse-engineering/data/clienttool-ui-controls.tsv`。结合模型偏移后，

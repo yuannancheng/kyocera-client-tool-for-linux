@@ -23,6 +23,17 @@
   基线保存和后续比较均为 96/147；最终比较为 0 个配置变化、0 个易变观测、
   0 个读取状态变化。
 
+### Added — reviewed single-field write plans
+
+- 新增 `--config-plan PATH --config-set ITEM_ID=VALUE`，把基线与当前只读采集
+  合成为可审计的 dry-run 写入计划。
+- 首个且唯一开放的候选是 item 2 `Auto error clear`，只接受 `0/OFF` 和
+  `1/ON`；其他对象或值直接拒绝。
+- 计划包含当前值、目标值、回滚值、官方 `KMUTLCFG.exe` PJL 命令预览、
+  SNMP Integer 参数、回读条件、漂移 blockers 和 SHA-256 确认令牌。
+- `execution.allowed` 固定为 `false`，公开 CLI 仍不提供写入执行路径。
+- 验证：新增 5 个计划专项测试；全量测试 190/190 通过；公开树检查通过。
+
 ## 2026-10-31
 
 ### Added — scan option parity, multipage handling, and grayscale RAW

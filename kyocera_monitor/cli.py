@@ -16,6 +16,10 @@ from .config_snapshot import (
     load_config_snapshot,
     save_config_snapshot,
 )
+from .config_write_plan import (
+    ConfigWritePlanError,
+    build_config_write_plan,
+)
 from .discovery import discover
 from .parser import PrinterSnapshot, parse_response
 from .pjl import (
@@ -251,6 +255,16 @@ def main(argv: list[str] | None = None) -> int:
         help="compare the current --config read with a saved snapshot",
     )
     parser.add_argument(
+        "--config-plan",
+        metavar="PATH",
+        help="build a dry-run write plan from a saved configuration snapshot",
+    )
+    parser.add_argument(
+        "--config-set",
+        metavar="ITEM_ID=VALUE",
+        help="requested item value for --config-plan; never sent to the device",
+    )
+    parser.add_argument(
         "--config-force",
         action="store_true",
         help="allow --config-save to replace an existing file",
@@ -357,10 +371,14 @@ def main(argv: list[str] | None = None) -> int:
         )
     if args.config and args.snmp and (args.device or args.usb):
         parser.error("--config --snmp requires --host")
-    if (args.config_save or args.config_compare) and not args.config:
-        parser.error("--config-save/--config-compare require --config")
+    if (args.config_save or args.config_compare or args.config_plan) and not args.config:
+        parser.error("--config-save/--config-compare/--config-plan require --config")
     if args.config_save and args.config_compare:
         parser.error("--config-save and --config-compare are mutually exclusive")
+    if args.config_plan and (args.config_save or args.config_compare):
+        parser.error("--config-plan cannot be combined with save/compare")
+    if bool(args.config_plan) != bool(args.config_set):
+        parser.error("--config-plan and --config-set must be used together")
     if args.config_force and not args.config_save:
         parser.error("--config-force requires --config-save")
     if args.config_allow_target_mismatch and not args.config_compare:
@@ -406,7 +424,8 @@ def main(argv: list[str] | None = None) -> int:
         target = args.host or args.device
         saved_path = None
         comparison = None
-        if args.config_save or args.config_compare:
+        write_plan = None
+        if args.config_save or args.config_compare or args.config_plan:
             try:
                 snapshot = build_config_snapshot(
                     records,
@@ -419,14 +438,24 @@ def main(argv: list[str] | None = None) -> int:
                         snapshot,
                         overwrite=args.config_force,
                     )
-                else:
+                elif args.config_compare:
                     baseline = load_config_snapshot(args.config_compare)
                     comparison = compare_config_snapshots(
                         baseline,
                         snapshot,
                         allow_target_mismatch=args.config_allow_target_mismatch,
                     )
+                else:
+                    baseline = load_config_snapshot(args.config_plan)
+                    write_plan = build_config_write_plan(
+                        baseline,
+                        snapshot,
+                        args.config_set,
+                    )
             except ConfigSnapshotError as exc:
+                print(f"error: {exc}", file=sys.stderr)
+                return 2
+            except ConfigWritePlanError as exc:
                 print(f"error: {exc}", file=sys.stderr)
                 return 2
         if args.json:
@@ -444,12 +473,54 @@ def main(argv: list[str] | None = None) -> int:
                     "transport": baseline["transport"],
                 }
                 payload["comparison"] = comparison
+            if write_plan is not None:
+                payload["write_plan"] = write_plan
             print(
                 json.dumps(
                     payload,
                     ensure_ascii=False,
                     indent=2,
                 )
+            )
+        elif write_plan is not None:
+            plan = write_plan
+            print("configuration write plan (DRY RUN; no commands sent)")
+            print(
+                f"target: {plan['target']} ({plan['transport']})\n"
+                f"object: {plan['object']['item_id']} "
+                f"{plan['object']['label']} "
+                f"[{plan['object']['absolute_oid']}]"
+            )
+            print(
+                "transition: "
+                f"{plan['before']['display']} -> "
+                f"{plan['requested']['display']}"
+            )
+            print(
+                f"rollback: {plan['rollback']['display']} "
+                f"({plan['rollback']['value']})"
+            )
+            print(f"PJL preview: {plan['commands']['pjl_line']}")
+            print(
+                "SNMP preview: SET "
+                f"{plan['commands']['snmp_set']['oid']} "
+                f"Integer {plan['commands']['snmp_set']['value']}"
+            )
+            blockers = plan["review"]["blockers"]
+            print(
+                "review: "
+                + ("ready for executor implementation" if not blockers else "blocked")
+            )
+            for blocker in blockers:
+                print(f"blocker: {blocker}")
+            print(
+                "execution: disabled "
+                f"({', '.join(plan['execution']['blockers'])})"
+            )
+            print(
+                "confirmation token: "
+                f"{plan['confirmation']['algorithm']}:"
+                f"{plan['confirmation']['token']}"
             )
         elif comparison is not None:
             for change in (
@@ -512,6 +583,12 @@ def main(argv: list[str] | None = None) -> int:
                 if comparison["changed"] or comparison["read_status_changed"]
                 else 0
             )
+        if write_plan is not None:
+            print(
+                "write plan generated; no write command was sent",
+                file=sys.stderr,
+            )
+            return 0 if write_plan["review"]["ready_for_executor_implementation"] else 1
         return 0 if read_count else 1
 
     if args.web or args.gui:

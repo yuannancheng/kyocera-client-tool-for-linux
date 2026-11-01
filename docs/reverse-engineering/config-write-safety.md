@@ -8,8 +8,45 @@
 - 带 SHA-256 完整性校验的本地快照；
 - 传输通道和目标绑定；
 - 基线/当前值的只读差异检查。
+- `Auto error clear` 单字段 dry-run 写入计划、命令预览、回滚预演和确认令牌。
 
 任何 `KSETOBJ`、SNMP SET 或设备重置请求都不会由公开 CLI 发送。
+
+## 首个候选字段
+
+当前只允许 item 2 `Auto error clear`：
+
+| 属性 | 值 |
+| --- | --- |
+| 相对 OID | `43.5.1.1.34.1` |
+| 绝对 OID | `1.3.6.1.4.1.1347.43.5.1.1.34.1` |
+| PJL 对象 | `1.43.5.1.1.34.1` |
+| 类型 | Integer |
+| 枚举 | `0=OFF`、`1=ON` |
+| UI 证据 | 主对话框控件 `0x03ea` → 模型偏移 `0x0004` |
+
+选择它的原因是状态空间小、不改变 IP/Wi-Fi/SNMP 认证等网络可达性，且当前值
+可直接作为回滚值。它仍需真实写入回读后才能标记为写入兼容。
+
+## Dry-run 计划
+
+```bash
+kyocera-monitor --host 192.168.0.220 --config --snmp \
+  --config-plan kyocera-config-baseline.json --config-set 2=OFF
+```
+
+计划器会读取当前 147 项并执行：
+
+- 快照完整性、目标、传输和 item/OID 校验；
+- 全表持久配置漂移检查；
+- 所有对象的读取状态变化检查；
+- Wi-Fi RSSI 等易变遥测单独记录，不阻断计划；
+- 请求值必须是候选字段的已知枚举；
+- 当前值已经等于请求值时标记为 blocked/no-op。
+
+输出包含 `pjl_line`、`pjl_rollback_line`、SNMP Integer 参数、同 OID 回读目标
+和确定性 SHA-256 确认令牌。`execution.allowed` 始终为 `false`；未来执行器
+必须再次要求用户确认令牌，并具备真实设备回滚样本。
 
 ## 官方证据
 

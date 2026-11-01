@@ -10,6 +10,7 @@ import time
 import tty
 import unittest
 from contextlib import redirect_stdout
+from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import patch
 
@@ -28,6 +29,11 @@ from kyocera_monitor.config_snapshot import (
     compare_config_snapshots,
     load_config_snapshot,
     save_config_snapshot,
+)
+from kyocera_monitor.config_write_plan import (
+    ConfigWritePlanError,
+    build_config_write_plan,
+    parse_config_assignment,
 )
 from kyocera_monitor.pjl import UEL
 from kyocera_monitor.snmp import VarBind
@@ -495,6 +501,138 @@ class ConfigSnapshotTests(unittest.TestCase):
             payload = json.loads(output.getvalue())
             self.assertEqual(payload["comparison"]["changed"], 1)
             self.assertEqual(payload["baseline"]["target"], "printer")
+
+
+class ConfigWritePlanTests(unittest.TestCase):
+    def setUp(self):
+        self.records = parse_config_response(
+            kgetobj("1.43.5.1.1.34.1", 0, 2, "1")
+            + kgetobj("1.40.10.1.1.4.1", 0, 64, "4330413830304443")
+        )
+        self.baseline = build_config_snapshot(
+            self.records,
+            transport="snmp",
+            target="printer",
+        )
+
+    def test_assignment_parser_is_strict(self):
+        self.assertEqual(parse_config_assignment("2=OFF"), (2, "OFF"))
+        self.assertEqual(parse_config_assignment(" 2 = 0 "), (2, "0"))
+        for text in ("2", "2=0=1", "a=1", "2=ON extra"):
+            with self.assertRaises(ConfigWritePlanError):
+                parse_config_assignment(text)
+
+    def test_plan_contains_preview_rollback_and_disabled_execution(self):
+        current = build_config_snapshot(
+            copy.deepcopy(self.records),
+            transport="snmp",
+            target="printer",
+        )
+        plan = build_config_write_plan(
+            self.baseline,
+            current,
+            "2=OFF",
+            created_at=datetime(2026, 11, 1, tzinfo=timezone.utc),
+        )
+        self.assertTrue(plan["review"]["ready_for_executor_implementation"])
+        self.assertFalse(plan["execution"]["allowed"])
+        self.assertEqual(plan["object"]["item_id"], 2)
+        self.assertEqual(plan["object"]["absolute_oid"], "1.3.6.1.4.1.1347.43.5.1.1.34.1")
+        self.assertEqual(plan["before"]["value"], 1)
+        self.assertEqual(plan["requested"]["value"], 0)
+        self.assertEqual(plan["rollback"]["value"], 1)
+        self.assertEqual(
+            plan["commands"]["pjl_line"],
+            '@PJL KSETOBJ OBJ="1.43.5.1.1.34.1" VALUE =0',
+        )
+        self.assertEqual(
+            plan["commands"]["pjl_rollback_line"],
+            '@PJL KSETOBJ OBJ="1.43.5.1.1.34.1" VALUE =1',
+        )
+        self.assertEqual(plan["commands"]["snmp_set"]["syntax"], "Integer")
+        self.assertEqual(len(plan["confirmation"]["token"]), 64)
+
+    def test_plan_blocks_drift_read_failures_and_noop(self):
+        drifted_records = copy.deepcopy(self.records)
+        drifted_records[1]["value"] = 0
+        drifted_records[1]["display"] = "OFF"
+        drifted = build_config_snapshot(
+            drifted_records,
+            transport="snmp",
+            target="printer",
+        )
+        plan = build_config_write_plan(self.baseline, drifted, "2=OFF")
+        self.assertIn(
+            "unexpected_configuration_drift",
+            plan["review"]["blockers"],
+        )
+        self.assertIn(
+            "requested_value_equals_current_value",
+            plan["review"]["blockers"],
+        )
+
+        missing_records = copy.deepcopy(self.records)
+        missing_records[1]["status"] = 2
+        missing_records[1]["value"] = None
+        missing_records[1]["display"] = None
+        missing = build_config_snapshot(
+            missing_records,
+            transport="snmp",
+            target="printer",
+        )
+        plan = build_config_write_plan(self.baseline, missing, "2=OFF")
+        self.assertIn("current_object_not_readable", plan["review"]["blockers"])
+        self.assertIn("unstable_configuration_read", plan["review"]["blockers"])
+
+        missing_baseline = build_config_snapshot(
+            missing_records,
+            transport="snmp",
+            target="printer",
+        )
+        plan = build_config_write_plan(missing_baseline, missing_baseline, "2=OFF")
+        self.assertIn("baseline_object_not_readable", plan["review"]["blockers"])
+        self.assertIsNone(plan["commands"]["pjl_rollback_line"])
+        self.assertIsNone(plan["commands"]["snmp_rollback"]["value"])
+
+    def test_plan_rejects_unknown_items_and_values(self):
+        current = build_config_snapshot(
+            copy.deepcopy(self.records),
+            transport="snmp",
+            target="printer",
+        )
+        with self.assertRaisesRegex(ConfigWritePlanError, "not an approved"):
+            build_config_write_plan(self.baseline, current, "1=2")
+        with self.assertRaisesRegex(ConfigWritePlanError, "accepts only"):
+            build_config_write_plan(self.baseline, current, "2=2")
+
+    def test_cli_generates_plan_without_writing(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "baseline.json"
+            save_config_snapshot(path, self.baseline)
+            output = io.StringIO()
+            with patch.object(cli, "collect_config_snmp", return_value=self.records):
+                with redirect_stdout(output):
+                    code = cli.main(
+                        [
+                            "--host",
+                            "printer",
+                            "--config",
+                            "--snmp",
+                            "--config-plan",
+                            str(path),
+                            "--config-set",
+                            "2=OFF",
+                            "--json",
+                        ]
+                    )
+            self.assertEqual(code, 0)
+            payload = json.loads(output.getvalue())
+            self.assertFalse(payload["write_plan"]["execution"]["allowed"])
+            self.assertTrue(
+                payload["write_plan"]["review"][
+                    "ready_for_executor_implementation"
+                ]
+            )
 
 
 if __name__ == "__main__":
