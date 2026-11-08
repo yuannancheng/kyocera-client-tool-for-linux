@@ -2,12 +2,16 @@ import io
 import json
 import os
 import tempfile
+import threading
+import time
 import unittest
 from contextlib import redirect_stderr
 from pathlib import Path
 from unittest import mock
 
 from kyocera_monitor import cli
+from kyocera_monitor.config import CONFIG, absolute_config_oid
+from kyocera_monitor.config_web import ConfigWorkbenchError
 from kyocera_monitor.discovery import DiscoveredPrinter
 from kyocera_monitor.parser import PrinterSnapshot, Tray
 from kyocera_monitor.preferences import SettingsStore
@@ -198,6 +202,14 @@ class PageTests(unittest.TestCase):
         self.assertIn("/api/status", DEVICE_HTML)
         self.assertIn("fetch(statusUrl()", DEVICE_HTML)
 
+    def test_pages_use_toast_not_a_top_error_bar(self):
+        for page in (OVERVIEW_HTML, DEVICE_HTML):
+            self.assertIn('id="toasts"', page)
+            self.assertIn("function showToast(", page)
+            self.assertIn('role="status" aria-live="polite"', page)
+            self.assertNotIn('id="error"', page)
+            self.assertNotIn('class="error"', page)
+
     def test_device_page_shows_counters_and_settings(self):
         for element_id in ("lifetime", "scan", "drum", "settings"):
             self.assertIn(f'id="{element_id}"', DEVICE_HTML)
@@ -295,9 +307,21 @@ class PageTests(unittest.TestCase):
             "config-edit-items",
             "config-edit-status",
             "config-objects",
+            "config-categories",
+            "config-category-title",
+            "config-category-description",
         ):
             self.assertIn(f'id="{element_id}"', DEVICE_HTML)
         self.assertIn("/api/config/apply", DEVICE_HTML)
+        self.assertIn("/api/config/categories", DEVICE_HTML)
+        self.assertIn("category: selectedConfigCategory", DEVICE_HTML)
+        self.assertIn("只访问当前分区", DEVICE_HTML)
+        self.assertIn(
+            "grid-template-columns: minmax(0, 1fr) max-content",
+            DEVICE_HTML,
+        )
+        self.assertIn("justify-self: end; align-self: start", DEVICE_HTML)
+        self.assertIn("无法连接本机后台服务", DEVICE_HTML)
         for removed in (
             "安全回滚实验",
             "OFF → ON → OFF",
@@ -372,6 +396,151 @@ class CliTests(unittest.TestCase):
         self.assertEqual(registry.hosts(), ["libusb:001:007"])
         self.assertEqual(registry.default, "libusb:001:007")
         self.assertIsNotNone(gui.call_args.kwargs["config_workbench"])
+
+    def test_gui_configuration_uses_pjl_for_automatic_usb_printer(self):
+        printer = UsbPrinter(
+            device="libusb:001:007",
+            vendor_id=0x0482,
+            product_id=0x0D51,
+            manufacturer="KYOCERA",
+            product="MA2000w",
+            serial="USB123",
+        )
+        records = [
+            {
+                "item_id": obj.item_id,
+                "oid": obj.oid,
+                "absolute_oid": absolute_config_oid(obj.oid),
+                "status": 0,
+                "value": 0,
+                "display": "0",
+            }
+            for obj in CONFIG
+            if 142 <= obj.item_id <= 147
+        ]
+        channel = mock.MagicMock()
+        channel.__enter__.return_value = channel
+        with (
+            mock.patch.object(
+                cli, "discover_usb_printers", return_value=[]
+            ),
+            mock.patch.object(
+                cli, "discover_libusb_printers", return_value=[printer]
+            ),
+            mock.patch.object(
+                cli, "open_channel", return_value=channel
+            ) as open_channel,
+            mock.patch.object(
+                cli,
+                "collect_config",
+                return_value=records,
+            ) as collect_config,
+            mock.patch.object(cli, "collect_config_snmp") as snmp_reader,
+            mock.patch("kyocera_monitor.gui.run_gui") as gui,
+            redirect_stderr(io.StringIO()),
+        ):
+            self.assertEqual(cli.main(["--gui"]), 0)
+            workbench = gui.call_args.kwargs["config_workbench"]
+            result = workbench.overview(printer.device, category="wifi")
+        self.assertEqual(result["transport"], "pjl")
+        self.assertFalse(result["editing"]["available"])
+        open_channel.assert_called_once_with(device=printer.device, port=9100)
+        self.assertEqual(
+            collect_config.call_args.kwargs["item_ids"],
+            tuple(range(142, 148)),
+        )
+        snmp_reader.assert_not_called()
+
+    def test_usb_status_and_configuration_reads_are_serialized(self):
+        printer = UsbPrinter(
+            device="libusb:001:007",
+            vendor_id=0x0482,
+            product_id=0x0D51,
+            manufacturer="KYOCERA",
+            product="MA2000w",
+            serial="USB123",
+        )
+        config_records = [
+            {
+                "item_id": obj.item_id,
+                "oid": obj.oid,
+                "absolute_oid": absolute_config_oid(obj.oid),
+                "status": 0,
+                "value": 0,
+                "display": "0",
+            }
+            for obj in CONFIG
+            if 142 <= obj.item_id <= 147
+        ]
+        channel = mock.MagicMock()
+        channel.__enter__.return_value = channel
+        status_started = threading.Event()
+        release_status = threading.Event()
+        config_called = threading.Event()
+        failures = []
+
+        def collect_status(*_args, **_kwargs):
+            status_started.set()
+            release_status.wait(2)
+            return b"", snapshot()
+
+        def collect_configuration(*_args, **_kwargs):
+            config_called.set()
+            return config_records
+
+        def run(target):
+            try:
+                target()
+            except Exception as exc:
+                failures.append(exc)
+
+        with (
+            mock.patch.object(
+                cli, "discover_usb_printers", return_value=[]
+            ),
+            mock.patch.object(
+                cli, "discover_libusb_printers", return_value=[printer]
+            ),
+            mock.patch.object(
+                cli, "collect", side_effect=collect_status
+            ),
+            mock.patch.object(cli, "open_channel", return_value=channel),
+            mock.patch.object(
+                cli,
+                "collect_config",
+                side_effect=collect_configuration,
+            ),
+            mock.patch("kyocera_monitor.gui.run_gui") as gui,
+            redirect_stderr(io.StringIO()),
+        ):
+            self.assertEqual(cli.main(["--gui"]), 0)
+            registry = gui.call_args.args[0]
+            workbench = gui.call_args.kwargs["config_workbench"]
+            status_thread = threading.Thread(
+                target=run,
+                args=(lambda: registry.read(printer.device),),
+            )
+            config_thread = threading.Thread(
+                target=run,
+                args=(
+                    lambda: workbench.overview(
+                        printer.device,
+                        category="wifi",
+                    ),
+                ),
+            )
+            status_thread.start()
+            self.assertTrue(status_started.wait(1))
+            config_thread.start()
+            time.sleep(0.05)
+            self.assertFalse(config_called.is_set())
+            release_status.set()
+            status_thread.join(2)
+            config_thread.join(2)
+        self.assertFalse(status_thread.is_alive())
+        self.assertFalse(config_thread.is_alive())
+        self.assertEqual(failures, [])
+        self.assertTrue(config_called.is_set())
 
     def test_gui_reports_missing_gtk(self):
         from kyocera_monitor.gui import GuiUnavailable
@@ -765,13 +934,82 @@ class ConfigApiTests(unittest.TestCase):
         )
         self.assertEqual(status, 200)
         self.assertEqual(json.loads(body)["read"], 96)
-        self.workbench.overview.assert_called_once_with("192.0.2.1")
+        self.workbench.overview.assert_called_once_with(
+            "192.0.2.1",
+            category="general",
+        )
 
         status, _, body = self.request(
             "GET", "/api/config/baseline?host=192.0.2.1"
         )
         self.assertEqual(status, 200)
         self.assertFalse(json.loads(body)["baseline"]["available"])
+
+    def test_config_categories_and_scoped_read(self):
+        self.workbench.category_catalog.return_value = [
+            {
+                "key": "wifi",
+                "label": "Wi-Fi",
+                "description": "wifi",
+                "item_count": 6,
+                "editable_count": 0,
+            }
+        ]
+        status, _, body = self.request(
+            "GET",
+            "/api/config/categories?host=192.0.2.1",
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(body)["total"], 6)
+
+        self.workbench.overview.return_value = {
+            "host": "192.0.2.1",
+            "read": 5,
+            "total": 6,
+            "status_objects": [],
+            "objects": [],
+        }
+        status, _, body = self.request(
+            "GET",
+            "/api/config?host=192.0.2.1&category=wifi",
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(body)["total"], 6)
+        self.workbench.overview.assert_called_once_with(
+            "192.0.2.1",
+            category="wifi",
+        )
+
+    def test_config_transport_failure_returns_json_error(self):
+        self.workbench.overview.side_effect = ConfigWorkbenchError(
+            "TimeoutError: device did not answer"
+        )
+        status, headers, body = self.request(
+            "GET",
+            "/api/config?host=192.0.2.1&category=general",
+        )
+        self.assertEqual(status, 502)
+        self.assertEqual(
+            headers["Content-Type"],
+            "application/json; charset=utf-8",
+        )
+        self.assertIn(
+            "device did not answer",
+            json.loads(body)["error"],
+        )
+
+    def test_unexpected_config_failure_keeps_http_connection_alive(self):
+        self.workbench.overview.side_effect = RuntimeError("malformed result")
+        status, headers, body = self.request(
+            "GET",
+            "/api/config?host=192.0.2.1&category=general",
+        )
+        self.assertEqual(status, 502)
+        self.assertEqual(
+            headers["Content-Type"],
+            "application/json; charset=utf-8",
+        )
+        self.assertIn("malformed result", json.loads(body)["error"])
 
     def test_baseline_and_reviewed_write_dispatch(self):
         self.workbench.save_baseline.return_value = {"saved": True}

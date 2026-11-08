@@ -57,18 +57,18 @@ _OPTIONAL_RECORD_FIELDS = (
     "vendor_name",
     "confidence",
 )
-_SENSITIVE_OIDS = {
-    "1.3.6.1.2.1.1.4.0",  # sysContact
-    "1.3.6.1.2.1.1.6.0",  # sysLocation
-    absolute_config_oid("40.26.2.1.3.1"),  # SNMP read community
-    absolute_config_oid("40.26.2.1.4.1"),  # SNMP write community
-    absolute_config_oid("40.42.1.1.4.1"),  # Wi-Fi SSID
-}
-_VOLATILE_ITEMS = {
+SENSITIVE_ITEM_IDS = frozenset({
+    65,  # SNMP read community
+    66,  # SNMP write community
+    67,  # sysContact
+    69,  # sysLocation
+    144,  # Wi-Fi SSID
+})
+VOLATILE_ITEM_IDS = frozenset({
     142,  # Wi-Fi connection state
     146,  # Wi-Fi RSSI
     147,  # Wi-Fi channel
-}
+})
 
 
 class ConfigSnapshotError(ValueError):
@@ -153,8 +153,8 @@ def _normalize_record(record: dict[str, Any]) -> dict[str, Any]:
         "pjl_object": expected.pjl_object,
         "type_code": expected.type_code,
         "status": status,
-        "sensitive": absolute_oid in _SENSITIVE_OIDS,
-        "volatile": item_id in _VOLATILE_ITEMS,
+        "sensitive": item_id in SENSITIVE_ITEM_IDS,
+        "volatile": item_id in VOLATILE_ITEM_IDS,
     }
     for field in _OPTIONAL_RECORD_FIELDS:
         if field in record:

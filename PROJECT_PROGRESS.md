@@ -22,7 +22,9 @@ Windows mailslot 或官方 DLL 即可完成完整 PJL 状态查询；Wi-Fi 状�
 2496×3520 PNG、PDF 和 JPEG；最大风险转为其他机型、ADF/双面、USB、复杂色彩
 管理，以及 TIFF/XPS 在真实查看器或其他设备上的验证。Web/GUI 现已可设置
 睡眠、错误处理、打印浓度、单位、超时、面板自动清除和静音模式九个已审核
-整数属性；设置采用旧值校验、确认、SET 后回读和失败恢复。E3 已开始：Push Scan
+整数属性；设置采用旧值校验、确认、SET 后回读和失败恢复。配置页已按官方
+主默认值、通信、Trap、面板、传真和 Wi‑Fi 分区，单分区读取与单字段回读
+不再扫描整表；完整基线操作单独保留。E3 已开始：Push Scan
 只读状态与 `89xxx` 触发监听已进入 CLI/Web/GUI；本地预设可绑定设备槽位
 `0–30`，CLI 监听器可在显式开启后自动执行匹配预设。真实网络触发、扫描完成
 判定和官方结果回写仍未闭环。
@@ -398,6 +400,149 @@ Print Box 和 SNMPv3 等工作流。
 
 下一步：安装 `.deb` 后在 MA2000w 上完成“预设灰度 PDF → 自动保存目录 →
 下载/落盘哈希一致”的真机验收，再实现 E2 的统一配置只读/差异/安全写入界面。
+
+## 最近一次工作交接（第五十七轮）
+
+日期：2026-11-08。范围：修复 USB 配置首次读取 busy 和后续
+`KeyError: 'absolute_oid'`；未执行写入、扫描、Wi-Fi 写入或重置。
+
+完成与证据：
+
+- `busy` 根因是设备页 `/api/status` 异步刷新与配置分区读取同时打开同一
+  libusb Printer interface。CLI Web/GUI 运行期现在为每个 USB selector 维护
+  独立 `RLock`；状态查询、配置读取和 Wi-Fi 通道打开必须串行执行，网络设备
+  不需要该锁。
+- `KeyError` 根因是 SNMP 记录包含 `absolute_oid`，而 PJL/USB 解析记录只含
+  相对 `oid`。`parse_config_response()` 现在同时写入展开后的
+  `absolute_oid`；配置视图和写入保护遇到旧记录也会从相对 OID 回退计算。
+- USB 分区读取仍只请求当前分区；busy 修复只改变互斥范围，不改变官方
+  `KGETOBJ` 顺序或字段格式。
+
+验证：
+
+- 新增并发测试：保持 USB 状态读取不结束，确认配置读取不会进入
+  `collect_config()`，状态释放后才继续。
+- 新增 PJL 记录 OID 完整性测试和缺少 `absolute_oid` 的兼容渲染测试。
+- `python3 -m unittest discover -s tests` → 339/339 通过。
+- `py_compile`、公开树检查和 `git diff --check` 通过。
+
+剩余问题：
+
+- 当前环境仍无法枚举物理 USB 设备，未完成 MA2000w 真机点击验收。
+- 如设备被其他独立进程独占，libusb 仍可能返回 busy；本项目进程内部的并发
+  busy 已消除。
+
+下一步：重启 GUI 后在 USB 设备页立即进入配置分区；预期读取会等待状态请求
+结束，但不再报 claim busy，也不再出现 `absolute_oid` KeyError。
+
+## 历史工作交接（第五十六轮）
+
+日期：2026-11-08。范围：修复 Web/GUI 读取 USB 配置时的
+`gaierror: [Errno -2] 名称或服务未知`；未执行写入、扫描、Wi-Fi 或重置。
+
+完成与证据：
+
+- 根因已确认：自动发现的 USB 打印机地址为 `libusb:001:007`，旧配置工作台
+  无条件调用 `collect_config_snmp()`，SNMP 客户端把该 selector 交给
+  `getaddrinfo`，因此报名称解析失败。这不是设备返回的业务错误。
+- Web/GUI 配置读取改为按目标分派：`libusb:`/`/dev/` 使用已验证的
+  `open_channel(device=...) + collect_config()` PJL 路径；TCP 主机使用
+  `collect_config_snmp()`。USB 分区读取仍只请求当前分区的 item。
+- `--usb` 和自动 USB 选择现在都会创建配置工作台。USB 页面只开放配置读取；
+  已审核属性写入仍明确标记为不可用，未擅自启用 PJL 写路径。
+- `collect_config_snmp()` 对 USB selector 在执行任何 DNS/socket 操作前 fail
+  closed，防止未来调用方再次产生 `gaierror`。
+- 动态 transport 选择使 USB 快照/页面标记为 `pjl`，网络目标标记为 `snmp`。
+
+验证：
+
+- 新增 USB/PJL 分派、SNMP/USB selector 拒绝、scoped PJL 命令顺序、动态
+  transport 和 USB 写入不可用测试。
+- `python3 -m unittest discover -s tests` → 337/337 通过。
+- `py_compile`、页面 JavaScript 解析和 `git diff --check` 通过。
+
+剩余问题：
+
+- 当前没有重新插拔物理 USB，未在 MA2000w 上实际点击一次 USB 分区读取。
+- USB 配置写入仍未验证，因此页面保持只读；不得据读取修复推断写能力。
+
+下一步：重启 GUI 后在 USB 设备页读取“设备默认值”和 Wi-Fi 分区，确认请求经
+USB/PJL 完成；如仍失败，应记录具体 PjlError/超时，而不是名称解析错误。
+
+## 历史工作交接（第五十五轮）
+
+日期：2026-11-08。范围：修复 GUI 分区配置读取的 `TypeError: Load failed`
+和“读取此分区”按钮换行；未连接设备，未发送写入或扫描命令。
+
+完成与证据：
+
+- 复现路径对应 `ConfigWorkbench.overview()` 改为 scoped read 后，reader 的
+  `TimeoutError`/`OSError` 未再经过旧全表路径的 `ConfigWorkbenchError` 包装。
+  异常逃出 HTTP handler 后连接被关闭，WebKit fetch 表现为
+  `TypeError: Load failed`。
+- `_read_records()` 现在统一包装读取层异常；配置 GET 路由增加最终异常保护，
+  所有配置读取失败都返回带原因的 JSON 502，不再静默断开连接。
+- `configRequest()` 区分本机后台连接失败、非 JSON 响应和 JSON 业务错误，
+  后台不可用时显示可操作中文提示。
+- 配置区标题改为两列网格：左列 `minmax(0, 1fr)`，右侧按钮列
+  `max-content`；按钮使用 `justify-self: end` 和 `white-space: nowrap`，
+  长文本不会再把它挤到下一行。
+
+验证：
+
+- 新增 scoped transport 异常、已知配置错误 JSON、未知配置异常连接保持和
+  按钮布局断言。
+- `python3 -m unittest discover -s tests` → 333/333 通过。
+- Node 解析概览页和设备页 JavaScript 通过；公开树检查和
+  `git diff --check` 通过。
+
+剩余问题：
+
+- 当前环境没有可用浏览器宿主，未在真实 GTK/WebKit 窗口做截图验收。
+- 需要重新启动正在运行的 GUI/Web 进程才会加载本次 Python 与页面修改。
+
+下一步：重启 GUI，打开设备配置区并点击“读取此分区”；若设备仍超时，应确认
+toast 中显示具体 SNMP 错误，而不是 `Load failed`。
+
+## 历史工作交接（第五十四轮）
+
+日期：2026-11-08。范围：GUI/Web 配置交互重构和错误提示改造；未连接设备，
+未发送 SNMP SET、扫描、Wi-Fi 或重置命令。
+
+完成与证据：
+
+- 概览页与设备页移除顶部常驻错误栏，改为右上角 toast 栈；错误、成功和
+  普通提示分色，相同错误在自动刷新时去重，并保留 `aria-live`。
+- 依据 `clienttool-control-oids.tsv` 和协议文档中的官方主要页面，把 147 个
+  配置对象划成 7 个互斥分区：设备默认值、纸张与介质、通信设置、SNMP Trap、
+  面板与扫描、传真设置、Wi‑Fi。测试断言所有 `1..147` 恰好出现一次。
+- `/api/config/categories` 返回无设备通信的导航元数据；`GET /api/config`
+  增加 `category` 参数。`collect_config_snmp(item_ids=...)` 只对被选分区生成
+  SNMP GET，分区读取不再附带其余 130 项。
+- 正式 Web/GUI 单字段写入的当前值校验与 SET 后回读改为只读取该 item；
+  完整 147 项仍用于用户显式执行的基线保存和比较，避免安全边界退化。
+- 九个可写属性改为独立卡片，显示当前值、说明、单位和枚举。5 秒缩放字段
+  允许直接输入秒数并转换为设备整数；按钮只在值变化后启用。
+- 新增响应式窄屏布局、分类计数和配置说明；敏感 item 65/66/67/69/144 在
+  分区读取路径仍强制脱敏。
+
+验证：
+
+- `python3 -m unittest discover -s tests -v` → 330/330 通过。
+- 全包 `py_compile`、`git diff --check` 通过。
+- 从 `OVERVIEW_HTML` / `DEVICE_HTML` 提取两个 `<script>`，经 Node
+  `new Function` 语法解析通过。
+- 当前环境 CUA 报告浏览器访问宿主不可用，无法完成实际浏览器截图；页面
+  视觉仍建议在下次图形桌面会话中检查。
+
+剩余问题：
+
+- 尚未在图形桌面实际点击七个分区、写入一项已审核属性并观察 toast 动画。
+- 分区基于官方对话框和模型范围映射；未命名对象仍只显示厂商 OID 名称，
+  不应据此补写业务语义。
+
+下一步：在可用 GTK/WebKit 桌面上打开设备页，依次切换七个分区，检查窄窗口
+布局，并对 item 50 做一次用户明确授权的写入/回读/恢复视觉验收。
 
 ## 最近一次工作交接（第五十三轮）
 

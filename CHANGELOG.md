@@ -2,6 +2,51 @@
 
 ## 2026-11-08
 
+### Fixed — configuration read errors and section action layout
+
+- 修复 USB 配置读取与页面状态刷新并发占用同一 Printer interface 导致的
+  `PjlError: claim USB printer interface: busy`。Web/GUI 现在为每个 USB
+  设备共享一把访问锁，状态、分区配置和 Wi-Fi 操作都必须串行打开 USB 通道。
+- 修复 USB/PJL 配置记录缺少 `absolute_oid` 导致的
+  `KeyError: 'absolute_oid'`。PJL 解析记录现在直接包含由相对 OID 展开的
+  absolute OID，配置视图和写入保护也保留兼容回退。
+- 修复 USB 设备配置读取被错误发送到 SNMP 的根本原因：自动发现的设备使用
+  `libusb:bus:address` 标识，SNMP 名称解析因此返回
+  `gaierror: [Errno -2]`。Web/GUI 配置读取现按目标分派，USB/PJL 设备通过
+  `open_channel(device=...) + collect_config()` 读取，TCP 主机才使用 SNMP。
+- 显式 `--usb` 或自动 USB 设备也会创建配置工作台；USB 分区读取只发送所选项的
+  `KGETOBJ`，完整基线仍可按需读取 147 项。USB 配置写入在页面明确标记为
+  不可用，不会切换到未验证通道。
+- `collect_config_snmp()` 在任何名称解析前拒绝 `libusb:` 和 `/dev/` selector，
+  防止其他调用方再次把 USB 标识交给 `getaddrinfo`。
+- 修复分区配置读取在 SNMP 超时、socket 异常或结果异常时直接中断 HTTP
+  连接的问题。工作台现在统一包装读取错误，配置路由也会返回 JSON 502，
+  WebKit 不再只显示底层 `TypeError: Load failed`。
+- 前端配置请求区分后台连接失败、非 JSON 响应和设备错误；连接失败提示
+  “无法连接本机后台服务”，合法 JSON 错误则保留具体原因。
+- “读取此分区”所在标题区改为 `minmax(0, 1fr) max-content` 两列网格，
+  按钮固定右对齐且不换行，长标题和说明只会挤压左侧文本列。
+- 验证：全量测试 339/339 通过；页面 JavaScript、公开树检查和
+  `git diff --check` 通过。
+
+### Changed — GUI configuration workflow and toast feedback
+
+- Web/GUI 顶部的常驻错误栏改为固定定位的 toast 弹出层，错误、成功和普通
+  提示使用不同对比度；相同错误不会在自动刷新时连续堆叠。概览页和设备页同步。
+- 147 项配置按官方主默认值、Communication、SNMP Trap、Panel options、
+  Wi‑Fi 及传真相关页面拆成七个分区。切换分区时只读取该分区的对象，不再默认
+  读取整表。
+- 九个已审核写入属性改为分区内的独立设置卡片，显示说明、当前值、单位和
+  枚举选项；只有值发生变化时才能提交。带 5 秒缩放的时间属性直接在界面输入
+  秒数，提交时还原为设备整数。
+- 单字段写入的旧值校验、SET 后回读和失败恢复现在只读取目标 item；完整
+  147 项读取只保留在用户明确展开的基线保存、基线比较等维护操作中。
+- 新增 `/api/config/categories` 和 `GET /api/config?category=<key>`；分区
+  覆盖 147 项且每项只属于一个分区，非法分区 fail closed。
+- 验证：全量测试 330/330 通过；Python 编译、页面 JavaScript 语法和
+  `git diff --check` 通过。当前环境没有可用浏览器宿主或图形桌面，因此未完成
+  人工浏览器截图验收。
+
 ### Added — physical USB, Wi-Fi setup and Linux driver integration
 
 - USB 状态路径完成 MA2000w 真机验证。用户无 `lp` 组权限时，新增纯 `ctypes`

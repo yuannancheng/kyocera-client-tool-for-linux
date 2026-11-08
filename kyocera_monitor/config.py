@@ -12,6 +12,7 @@ from __future__ import annotations
 import re
 import struct
 from dataclasses import dataclass
+from typing import Iterable
 
 from .config_vendor_names import VENDOR_NAMES
 from .pjl import Channel, normalize_command, query_merged, split_segments
@@ -330,9 +331,32 @@ CONFIG: tuple[ConfigObject, ...] = tuple(
 )
 
 
-def build_config_commands() -> tuple[str, ...]:
+def _select_config_objects(
+    item_ids: Iterable[int] | None = None,
+) -> tuple[ConfigObject, ...]:
+    if item_ids is None:
+        return CONFIG
+    requested = tuple(dict.fromkeys(item_ids))
+    if any(
+        isinstance(item_id, bool) or not isinstance(item_id, int)
+        for item_id in requested
+    ):
+        raise ValueError("configuration item IDs must be integers")
+    by_id = {obj.item_id: obj for obj in CONFIG}
+    unknown = [item_id for item_id in requested if item_id not in by_id]
+    if unknown:
+        raise ValueError(
+            "unknown configuration item IDs: "
+            + ", ".join(str(item_id) for item_id in unknown)
+        )
+    return tuple(by_id[item_id] for item_id in requested)
+
+
+def build_config_commands(
+    item_ids: Iterable[int] | None = None,
+) -> tuple[str, ...]:
     """Return the exact read-only KGETOBJ batch used by KMUTLCFG.exe."""
-    return tuple(obj.command for obj in CONFIG)
+    return tuple(obj.command for obj in _select_config_objects(item_ids))
 
 
 def absolute_config_oid(oid: str) -> str:
@@ -447,16 +471,20 @@ def _parse_fields(body: str) -> dict[str, str]:
     return fields
 
 
-def parse_config_response(data: bytes | str) -> list[dict]:
+def parse_config_response(
+    data: bytes | str,
+    item_ids: Iterable[int] | None = None,
+) -> list[dict]:
     """Parse a merged PJL response into one record per configuration object."""
     raw = data.encode("ascii", "replace") if isinstance(data, str) else data
     segments = split_segments(raw)
     records: list[dict] = []
-    for obj in CONFIG:
+    for obj in _select_config_objects(item_ids):
         segment = segments.get(normalize_command(obj.command))
         record: dict[str, object] = {
             "item_id": obj.item_id,
             "oid": obj.oid,
+            "absolute_oid": absolute_config_oid(obj.oid),
             "pjl_object": obj.pjl_object,
             "source": "pjl",
             "vendor_name": VENDOR_NAMES.get(obj.oid),
@@ -506,15 +534,16 @@ def collect_config(
     *,
     timeout: float = 8.0,
     idle: float = 1.5,
+    item_ids: Iterable[int] | None = None,
 ) -> list[dict]:
-    """Query all configuration objects over an already-open PJL channel."""
+    """Query configuration objects over an already-open PJL channel."""
     response = query_merged(
         channel,
-        build_config_commands(),
+        build_config_commands(item_ids),
         timeout=timeout,
         idle=idle,
     )
-    return parse_config_response(response)
+    return parse_config_response(response, item_ids)
 
 
 def collect_config_snmp(
@@ -527,8 +556,20 @@ def collect_config_snmp(
     retries: int = 1,
     batch_size: int = 16,
     client: SnmpClient | None = None,
+    item_ids: Iterable[int] | None = None,
 ) -> list[dict]:
-    """Read the same 147 objects over read-only SNMP, including while asleep."""
+    """Read configuration objects over read-only SNMP, including while asleep.
+
+    Passing ``item_ids`` limits both the SNMP GETs and returned records to the
+    requested Client Tool item IDs.  Keeping this scope small lets the Web/GUI
+    read one official settings page without querying the complete 147-object
+    table.
+    """
+    if host.startswith("libusb:") or host.startswith("/dev/"):
+        raise ValueError(
+            "SNMP configuration read requires a network host; "
+            f"use PJL for USB target {host!r}"
+        )
     client = client or SnmpClient(
         host,
         community=community,
@@ -537,7 +578,9 @@ def collect_config_snmp(
         timeout=timeout,
         retries=retries,
     )
-    oids = [absolute_config_oid(obj.oid) for obj in CONFIG]
+    objects = _select_config_objects(item_ids)
+
+    oids = [absolute_config_oid(obj.oid) for obj in objects]
     found: dict[str, VarBind] = {}
     for start in range(0, len(oids), batch_size):
         requested = oids[start : start + batch_size]
@@ -545,7 +588,7 @@ def collect_config_snmp(
             found[varbind.oid] = varbind
 
     records: list[dict] = []
-    for obj in CONFIG:
+    for obj in objects:
         absolute = absolute_config_oid(obj.oid)
         varbind = found.get(absolute)
         record: dict[str, object] = {

@@ -122,6 +122,17 @@ class ConfigTableTests(unittest.TestCase):
         ]
         self.assertEqual(len(absolute), 1)
 
+    def test_scoped_pjl_commands_preserve_requested_order(self):
+        commands = build_config_commands((144, 50, 59))
+        self.assertEqual(
+            commands,
+            (
+                '@PJL KGETOBJ OBJ="1.40.42.1.1.4.1"',
+                '@PJL KGETOBJ OBJ="1.1001.2.1.1.1.14.1"',
+                '@PJL KGETOBJ OBJ="1.40.10.1.1.4.1"',
+            ),
+        )
+
 
 class DecodeTests(unittest.TestCase):
     def test_integer_string_ipv4_and_hex(self):
@@ -228,6 +239,43 @@ class SnmpConfigTests(unittest.TestCase):
         self.assertTrue(all(len(batch) <= 16 for batch in client.calls))
         self.assertEqual(sum(len(batch) for batch in client.calls), 147)
 
+    def test_snmp_reader_can_limit_requests_to_one_settings_page(self):
+        client = FakeSnmpClient()
+        records = collect_config_snmp(
+            "printer",
+            client=client,
+            item_ids=(50, 59, 144),
+        )
+        self.assertEqual(
+            [record["item_id"] for record in records],
+            [50, 59, 144],
+        )
+        self.assertEqual(
+            client.calls,
+            [[
+                absolute_config_oid("1001.2.1.1.1.14.1"),
+                absolute_config_oid("40.10.1.1.4.1"),
+                absolute_config_oid("40.42.1.1.4.1"),
+            ]],
+        )
+
+    def test_snmp_reader_rejects_unknown_item_ids(self):
+        with self.assertRaisesRegex(ValueError, "unknown configuration item"):
+            collect_config_snmp(
+                "printer",
+                client=FakeSnmpClient(),
+                item_ids=(999,),
+            )
+
+    def test_snmp_reader_rejects_usb_selector_before_name_resolution(self):
+        client = FakeSnmpClient()
+        with self.assertRaisesRegex(ValueError, "use PJL for USB target"):
+            collect_config_snmp(
+                "libusb:001:007",
+                client=client,
+            )
+        self.assertEqual(client.calls, [])
+
 
 class ResponseTests(unittest.TestCase):
     def test_known_rows_are_decoded_and_labelled(self):
@@ -245,6 +293,10 @@ class ResponseTests(unittest.TestCase):
         self.assertEqual(len(records), 147)
         self.assertEqual(by_id[1]["label"], "Sleep time")
         self.assertEqual(by_id[1]["display"], "1 min")
+        self.assertEqual(
+            by_id[1]["absolute_oid"],
+            absolute_config_oid("43.5.1.1.23.1"),
+        )
         self.assertEqual(by_id[2]["display"], "ON")
         self.assertEqual(by_id[3]["display"], "150 s")
         self.assertEqual(by_id[4]["label"], "Power off timer")

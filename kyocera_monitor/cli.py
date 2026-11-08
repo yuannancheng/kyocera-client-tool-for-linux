@@ -7,8 +7,10 @@ import getpass
 import json
 import os
 import sys
+import threading
 import time
 import webbrowser
+from contextlib import contextmanager
 from pathlib import Path
 
 from .config import collect_config, collect_config_snmp
@@ -1719,6 +1721,13 @@ def main(argv: list[str] | None = None) -> int:
         )
         default_key = args.host or args.device or automatic_usb_key
 
+        usb_access_guard = threading.Lock()
+        usb_access_locks: dict[str, threading.RLock] = {}
+
+        def usb_access_lock(key: str):
+            with usb_access_guard:
+                return usb_access_locks.setdefault(key, threading.RLock())
+
         def collect_host(key: str) -> PrinterSnapshot:
             if args.snmp:
                 return collect_snmp_snapshot(
@@ -1730,14 +1739,15 @@ def main(argv: list[str] | None = None) -> int:
                     retries=args.snmp_retries,
                 )
             if key.startswith("libusb:") or key.startswith("/dev/"):
-                _, snapshot = collect(
-                    None,
-                    key,
-                    args.port,
-                    args.timeout,
-                    args.idle,
-                    USB_QUERY_SEQUENCE,
-                )
+                with usb_access_lock(key):
+                    _, snapshot = collect(
+                        None,
+                        key,
+                        args.port,
+                        args.timeout,
+                        args.idle,
+                        USB_QUERY_SEQUENCE,
+                    )
                 return snapshot
             _, snapshot = collect(
                 key,
@@ -1754,10 +1764,16 @@ def main(argv: list[str] | None = None) -> int:
             registry.allow(printer.device)
         config_workbench = None
         push_scan_reader = None
+
+        @contextmanager
         def open_web_wifi_channel(target: str):
             if target.startswith("libusb:") or target.startswith("/dev/"):
-                return open_channel(device=target, port=args.port)
-            return open_channel(host=target, port=args.port)
+                with usb_access_lock(target):
+                    with open_channel(device=target, port=args.port) as channel:
+                        yield channel
+                return
+            with open_channel(host=target, port=args.port) as channel:
+                yield channel
 
         wifi_workbench = WifiWorkbench(
             open_web_wifi_channel,
@@ -1766,35 +1782,60 @@ def main(argv: list[str] | None = None) -> int:
             scan_timeout=20.0,
             connect_timeout=25.0,
         )
-        if not explicit_usb_only:
-            def read_web_configuration(key: str):
-                return collect_config_snmp(
-                    key,
-                    community=args.snmp_community,
-                    version=args.config_snmp_version,
-                    port=args.snmp_port,
-                    timeout=args.snmp_timeout,
-                    retries=args.snmp_retries,
-                )
 
-            def write_web_configuration(key: str, oid: str, value: int):
-                client = SnmpClient(
-                    key,
-                    community=args.snmp_community,
-                    version=args.config_snmp_version,
-                    port=args.snmp_port,
-                    timeout=args.snmp_timeout,
-                    retries=args.snmp_retries,
-                )
-                return client.set_integer(oid, value)
+        def is_usb_target(key: str) -> bool:
+            return key.startswith("libusb:") or key.startswith("/dev/")
 
-            config_workbench = ConfigWorkbench(
-                read_web_configuration,
-                writer=write_web_configuration,
-                transport="snmp",
+        def read_web_configuration(
+            key: str,
+            item_ids: tuple[int, ...] | None = None,
+        ):
+            if is_usb_target(key):
+                with usb_access_lock(key):
+                    with open_channel(device=key, port=args.port) as channel:
+                        return collect_config(
+                            channel,
+                            timeout=args.timeout,
+                            idle=args.idle,
+                            item_ids=item_ids,
+                        )
+            return collect_config_snmp(
+                key,
+                community=args.snmp_community,
+                version=args.config_snmp_version,
+                port=args.snmp_port,
+                timeout=args.snmp_timeout,
+                retries=args.snmp_retries,
+                item_ids=item_ids,
             )
 
+        def write_web_configuration(key: str, oid: str, value: int):
+            client = SnmpClient(
+                key,
+                community=args.snmp_community,
+                version=args.config_snmp_version,
+                port=args.snmp_port,
+                timeout=args.snmp_timeout,
+                retries=args.snmp_retries,
+            )
+            return client.set_integer(oid, value)
+
+        config_workbench = ConfigWorkbench(
+            read_web_configuration,
+            scoped_reader=read_web_configuration,
+            writer=write_web_configuration,
+            writer_available=lambda key: not is_usb_target(key),
+            transport=lambda key: (
+                "pjl" if is_usb_target(key) else "snmp"
+            ),
+        )
+
+        if not explicit_usb_only:
             def read_web_push_scan(key: str):
+                if is_usb_target(key):
+                    raise ValueError(
+                        "Push Scan status requires a network connection"
+                    )
                 return read_push_scan(
                     key,
                     community=args.snmp_community,

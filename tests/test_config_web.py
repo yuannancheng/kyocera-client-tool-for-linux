@@ -5,7 +5,12 @@ from pathlib import Path
 from unittest import mock
 
 from kyocera_monitor.config import CONFIG, absolute_config_oid
-from kyocera_monitor.config_web import ConfigWorkbench, ConfigWorkbenchError
+from kyocera_monitor.config_web import (
+    CONFIG_SECTIONS,
+    ConfigCategoryError,
+    ConfigWorkbench,
+    ConfigWorkbenchError,
+)
 
 
 def records(*, quiet_mode=0, connected=True, wifi_changes=False):
@@ -55,30 +60,157 @@ def records(*, quiet_mode=0, connected=True, wifi_changes=False):
 
 
 class ConfigWorkbenchTests(unittest.TestCase):
-    def test_overview_redacts_sensitive_values_and_exposes_wifi_status(self):
+    def test_categories_match_official_pages_and_cover_every_item_once(self):
+        item_ids = [
+            item_id
+            for section in CONFIG_SECTIONS
+            for item_id in section.item_ids
+        ]
+        self.assertEqual(len(item_ids), 147)
+        self.assertEqual(sorted(item_ids), list(range(1, 148)))
+        self.assertEqual(
+            [section.key for section in CONFIG_SECTIONS],
+            [
+                "general",
+                "paper",
+                "communication",
+                "snmp_traps",
+                "panel",
+                "fax",
+                "wifi",
+            ],
+        )
+
+    def test_overview_is_scoped_and_redacts_sensitive_values(self):
         with tempfile.TemporaryDirectory() as tmp:
             workbench = ConfigWorkbench(
                 lambda _host: records(),
                 baseline_directory=Path(tmp),
             )
-            result = workbench.overview("printer")
-        self.assertEqual(result["read"], 147)
-        by_id = {item["item_id"]: item for item in result["status_objects"]}
+            general = workbench.overview("printer", category="general")
+            wifi = workbench.overview("printer", category="wifi")
+        self.assertEqual(general["read"], 17)
+        self.assertEqual(general["total"], 17)
+        self.assertEqual(general["full_total"], 147)
+        self.assertIn(
+            50,
+            {item["item_id"] for item in general["editing"]["items"]},
+        )
+        self.assertEqual(wifi["read"], 6)
+        by_id = {item["item_id"]: item for item in wifi["status_objects"]}
         self.assertEqual(by_id[142]["display"], "Connected")
         self.assertEqual(by_id[146]["display"], "-70 dBm")
         self.assertEqual(by_id[144]["display"], "<redacted>")
         self.assertTrue(by_id[144]["sensitive"])
-        all_by_id = {item["item_id"]: item for item in result["objects"]}
+        all_by_id = {item["item_id"]: item for item in wifi["objects"]}
         self.assertEqual(all_by_id[144]["display"], "<redacted>")
-        self.assertNotIn("write_policy", all_by_id[50])
-        self.assertNotIn("candidates", result)
-        self.assertNotIn("write_execution_available", result)
-        self.assertNotIn("warning", result)
-        self.assertFalse(result["editing"]["available"])
-        self.assertIn(
-            50,
-            {item["item_id"] for item in result["editing"]["items"]},
+        general_by_id = {
+            item["item_id"]: item for item in general["objects"]
+        }
+        self.assertNotIn("write_policy", general_by_id[50])
+        self.assertNotIn("candidates", general)
+        self.assertNotIn("write_execution_available", general)
+        self.assertFalse(general["editing"]["available"])
+
+    def test_unknown_category_fails_closed(self):
+        workbench = ConfigWorkbench(
+            lambda _host: records(),
+            baseline_directory=Path("/tmp/unused-kyocera-baseline"),
         )
+        with self.assertRaises(ConfigCategoryError):
+            workbench.overview("printer", category="not-a-page")
+
+    def test_scoped_transport_errors_become_workbench_errors(self):
+        def timed_out(_host, _item_ids):
+            raise TimeoutError("device did not answer")
+
+        workbench = ConfigWorkbench(
+            mock.Mock(side_effect=AssertionError("full read must not be used")),
+            scoped_reader=timed_out,
+            baseline_directory=Path("/tmp/unused-kyocera-baseline"),
+        )
+        with self.assertRaisesRegex(
+            ConfigWorkbenchError,
+            "TimeoutError: device did not answer",
+        ):
+            workbench.overview("printer", category="general")
+
+    def test_transport_and_write_availability_can_depend_on_target(self):
+        workbench = ConfigWorkbench(
+            lambda _host: records(),
+            scoped_reader=lambda _host, item_ids: [
+                record for record in records()
+                if record["item_id"] in set(item_ids)
+            ],
+            writer=mock.Mock(),
+            writer_available=lambda host: not host.startswith("libusb:"),
+            baseline_directory=Path("/tmp/unused-kyocera-baseline"),
+            transport=lambda host: (
+                "pjl" if host.startswith("libusb:") else "snmp"
+            ),
+        )
+        usb = workbench.overview("libusb:001:007", category="wifi")
+        network = workbench.overview("printer", category="wifi")
+        self.assertEqual(usb["transport"], "pjl")
+        self.assertFalse(usb["editing"]["available"])
+        self.assertEqual(network["transport"], "snmp")
+        self.assertTrue(network["editing"]["available"])
+
+    def test_pjl_records_without_absolute_oid_still_render(self):
+        pjl_records = []
+        for record in records():
+            record = copy.deepcopy(record)
+            record.pop("absolute_oid", None)
+            pjl_records.append(record)
+        workbench = ConfigWorkbench(
+            lambda _host: pjl_records,
+            scoped_reader=lambda _host, item_ids: [
+                record for record in pjl_records
+                if record["item_id"] in set(item_ids)
+            ],
+            baseline_directory=Path("/tmp/unused-kyocera-baseline"),
+            transport="pjl",
+        )
+        result = workbench.overview(
+            "libusb:001:007",
+            category="wifi",
+        )
+        by_id = {item["item_id"]: item for item in result["objects"]}
+        self.assertEqual(
+            by_id[142]["absolute_oid"],
+            absolute_config_oid(
+                next(obj.oid for obj in CONFIG if obj.item_id == 142)
+            ),
+        )
+
+    def test_scoped_reader_limits_page_and_write_readback_to_requested_items(self):
+        current = {"value": records(quiet_mode=0)}
+        calls = []
+
+        def scoped_reader(_host, item_ids):
+            calls.append(item_ids)
+            selected = set(item_ids)
+            return [
+                copy.deepcopy(record)
+                for record in current["value"]
+                if record["item_id"] in selected
+            ]
+
+        def writer(_host, _oid, value):
+            current["value"] = records(quiet_mode=value)
+
+        workbench = ConfigWorkbench(
+            mock.Mock(side_effect=AssertionError("full read must not be used")),
+            scoped_reader=scoped_reader,
+            writer=writer,
+            baseline_directory=Path("/tmp/unused-kyocera-baseline"),
+        )
+        page = workbench.overview("printer", category="wifi")
+        self.assertEqual(page["total"], 6)
+        result = workbench.apply_integer("printer", 50, 1, 0)
+        self.assertEqual(result["status"], "applied")
+        self.assertEqual(tuple(range(142, 148)), calls[0])
+        self.assertEqual([(50,), (50,)], calls[1:])
 
     def test_baseline_compare_and_private_storage(self):
         current = {"value": records()}

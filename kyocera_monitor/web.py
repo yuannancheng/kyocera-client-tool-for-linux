@@ -20,7 +20,11 @@ from typing import Callable
 from urllib.parse import parse_qs, quote, urlsplit
 
 from .config_snapshot import ConfigSnapshotError
-from .config_web import ConfigWorkbench, ConfigWorkbenchError
+from .config_web import (
+    ConfigCategoryError,
+    ConfigWorkbench,
+    ConfigWorkbenchError,
+)
 from .parser import PrinterSnapshot
 from .preferences import (
     SettingsError,
@@ -281,8 +285,22 @@ OVERVIEW_HTML = """<!doctype html>
   .addr { color: #5c6670; font-size: .9rem; }
   .line { margin-top: 8px; font-size: .92rem; }
   .label { color: #5c6670; }
-  .error { background: #ffd9d9; color: #6b1111; padding: 10px 12px;
-           border-radius: 8px; margin-top: 14px; display: none; }
+  .toast-stack { position: fixed; top: 18px; right: 18px; z-index: 1000;
+                 display: grid; gap: 10px; width: min(390px, calc(100vw - 36px));
+                 pointer-events: none; }
+  .toast { pointer-events: auto; padding: 12px 14px; border-radius: 10px;
+           border: 1px solid #d99b9b; border-left: 5px solid #b73535;
+           background: #fff1f1; color: #681515;
+           box-shadow: 0 10px 30px rgba(25, 31, 36, .18);
+           overflow-wrap: anywhere; animation: toast-in .18s ease-out; }
+  .toast.success { border-color: #9bc6a1; border-left-color: #2f7d32;
+                   background: #edf8ef; color: #194d20; }
+  .toast.info { border-color: #a7bfd3; border-left-color: #356f9f;
+                background: #edf5fb; color: #174b74; }
+  @keyframes toast-in {
+    from { opacity: 0; transform: translateY(-8px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
   .muted { color: #6b747d; font-size: .85rem; margin-top: 14px; }
   button { margin-left: auto; padding: 6px 12px; border-radius: 8px;
            border: 1px solid #b9c1c9; background: #fff; cursor: pointer; }
@@ -302,6 +320,12 @@ OVERVIEW_HTML = """<!doctype html>
     .pill { background: #303842; color: #e7ebef; }
     .pill.ok { background: #1d3f22; color: #d3f2d8; }
     .pill.warn { background: #4a2326; color: #f6c8c8; }
+    .toast { background: #3c2022; color: #f6c8c8; border-color: #74393d;
+             border-left-color: #db6868; }
+    .toast.success { background: #1d3523; color: #d3f2d8;
+                     border-color: #356943; border-left-color: #64b56f; }
+    .toast.info { background: #1b3042; color: #cce7ff;
+                  border-color: #35566f; border-left-color: #5c9bd1; }
     button, a.button, form.add input { background: #1c2228; color: inherit;
                                         border-color: #3a444e; }
   }
@@ -321,15 +345,30 @@ OVERVIEW_HTML = """<!doctype html>
            placeholder="手动添加打印机 IP，例如 192.168.0.220" required>
     <button type="submit">添加设备</button>
   </form>
-  <div id="error" class="error"></div>
   <div id="devices" class="grid"></div>
   <div id="meta" class="muted"></div>
 </main>
+<div id="toasts" class="toast-stack" role="status" aria-live="polite"></div>
 <script>
 const byId = (id) => document.getElementById(id);
 const statusClass = (normal) => normal === true ? "pill ok"
   : normal === false ? "pill warn" : "pill";
 let previousStates = {};
+
+function showToast(message, kind = "error") {
+  const stack = byId("toasts");
+  const text = message == null || message === "" ? "发生未知错误" : String(message);
+  const duplicate = Array.from(stack.children).some(
+    (item) => item.dataset.message === text
+  );
+  if (duplicate) return;
+  const toast = document.createElement("div");
+  toast.className = "toast " + kind;
+  toast.dataset.message = text;
+  toast.textContent = text;
+  stack.append(toast);
+  window.setTimeout(() => toast.remove(), kind === "error" ? 8000 : 4500);
+}
 
 function line(label, value) {
   const div = document.createElement("div");
@@ -439,24 +478,19 @@ async function load() {
     const response = await fetch("/api/devices", { cache: "no-store" });
     render(await response.json());
   } catch (err) {
-    const error = byId("error");
-    error.textContent = String(err);
-    error.style.display = "block";
+    showToast(String(err));
   }
 }
 
 async function discover() {
   const button = byId("discover");
-  const error = byId("error");
   button.disabled = true;
   button.textContent = "正在搜索…";
-  error.style.display = "none";
   try {
     const response = await fetch("/api/discover", { cache: "no-store" });
     const data = await response.json();
     if (data.error) {
-      error.textContent = data.error;
-      error.style.display = "block";
+      showToast(data.error);
       return;
     }
     await load();
@@ -464,8 +498,7 @@ async function discover() {
       ? data.warning
       : `发现 ${data.printers?.length || 0} 台打印机，结果已保存`;
   } catch (err) {
-    error.textContent = String(err);
-    error.style.display = "block";
+    showToast(String(err));
   } finally {
     button.disabled = false;
     button.textContent = "发现打印机";
@@ -475,7 +508,6 @@ async function discover() {
 async function addDevice(event) {
   event.preventDefault();
   const input = byId("host");
-  const error = byId("error");
   const host = input.value.trim();
   if (!host) return;
   try {
@@ -487,12 +519,11 @@ async function addDevice(event) {
     const data = await response.json();
     if (!response.ok) throw new Error(data.error || response.status);
     input.value = "";
-    error.style.display = "none";
     await load();
     byId("meta").textContent = `已添加并保存打印机 ${host}`;
+    showToast(`已添加打印机 ${host}`, "success");
   } catch (err) {
-    error.textContent = String(err);
-    error.style.display = "block";
+    showToast(String(err));
   }
 }
 
@@ -549,8 +580,22 @@ DEVICE_HTML = """<!doctype html>
   .push-result.ready { color: #145014; }
   .push-result.warning { color: #7a4d00; }
   .push-result.failure { color: #751a1a; }
-  .error { background: #ffd9d9; color: #6b1111; padding: 10px 12px;
-           border-radius: 8px; margin-top: 14px; display: none; }
+  .toast-stack { position: fixed; top: 18px; right: 18px; z-index: 1000;
+                 display: grid; gap: 10px; width: min(410px, calc(100vw - 36px));
+                 pointer-events: none; }
+  .toast { pointer-events: auto; padding: 12px 14px; border-radius: 10px;
+           border: 1px solid #d99b9b; border-left: 5px solid #b73535;
+           background: #fff1f1; color: #681515;
+           box-shadow: 0 10px 30px rgba(25, 31, 36, .18);
+           overflow-wrap: anywhere; animation: toast-in .18s ease-out; }
+  .toast.success { border-color: #9bc6a1; border-left-color: #2f7d32;
+                   background: #edf8ef; color: #194d20; }
+  .toast.info { border-color: #a7bfd3; border-left-color: #356f9f;
+                background: #edf5fb; color: #174b74; }
+  @keyframes toast-in {
+    from { opacity: 0; transform: translateY(-8px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
   button { margin-left: auto; padding: 6px 12px; border-radius: 8px;
            border: 1px solid #b9c1c9; background: #fff; cursor: pointer; }
   button:disabled { cursor: wait; opacity: .65; }
@@ -574,6 +619,45 @@ DEVICE_HTML = """<!doctype html>
                  border: 1px solid #e1e5e9; }
   .config-item .name { font-size: .9rem; font-weight: 600; }
   .config-item .reading { margin-top: 5px; }
+  .config-layout { display: grid; grid-template-columns: 190px minmax(0, 1fr);
+                   gap: 16px; margin-top: 14px; align-items: start; }
+  .config-nav { display: grid; gap: 6px; position: sticky; top: 12px; }
+  .config-tab { margin: 0; text-align: left; padding: 9px 11px; border: 1px solid transparent;
+                background: transparent; color: inherit; border-radius: 8px; }
+  .config-tab:hover { background: #eef2f5; }
+  .config-tab.active { background: #e2edf7; border-color: #b8cee0;
+                       color: #174b74; font-weight: 650; }
+  .config-tab small { display: block; margin-top: 2px; color: #6b747d;
+                      font-size: .74rem; font-weight: 400; }
+  .config-pane { min-width: 0; border: 1px solid #dfe3e8; border-radius: 10px;
+                 padding: 14px; background: #fbfcfd; }
+  .config-pane-head { display: grid; grid-template-columns: minmax(0, 1fr) max-content;
+                      gap: 12px; align-items: start; }
+  .config-pane-head > div { min-width: 0; }
+  .config-pane-head h2 { font-size: 1.08rem; margin: 0 0 4px; }
+  .config-pane-head p { margin: 0; color: #6b747d; font-size: .84rem; }
+  .config-pane-head button { margin: 0; white-space: nowrap;
+                             justify-self: end; align-self: start; }
+  .config-setting-grid { display: grid; gap: 10px; margin-top: 12px; }
+  .config-setting { display: grid; grid-template-columns: minmax(0, 1fr) auto;
+                    gap: 12px; padding: 12px; border-radius: 9px;
+                    border: 1px solid #e1e5e9; background: #fff; }
+  .config-setting .description { margin-top: 4px; color: #6b747d;
+                                 font-size: .82rem; }
+  .config-setting .current { margin-top: 8px; font-size: .9rem; }
+  .config-setting .current strong { font-size: 1rem; }
+  .config-setting-actions { display: flex; align-items: end; gap: 8px; }
+  .config-setting-actions select, .config-setting-actions input {
+    min-width: 118px; padding: 8px 10px; border-radius: 8px;
+    border: 1px solid #b9c1c9; background: #fff; color: inherit; font: inherit;
+  }
+  .config-setting-actions button { margin: 0; white-space: nowrap; }
+  .config-setting-actions button:not(:disabled) { border-color: #83a9c9;
+                                                   background: #edf5fb; color: #174b74; }
+  .config-maintenance { margin-top: 14px; padding-top: 12px;
+                        border-top: 1px solid #e5e9ed; }
+  .config-maintenance summary { cursor: pointer; color: #4c5964; font-weight: 600; }
+  .config-maintenance .inline { margin-top: 10px; }
   .warning-box { margin-top: 12px; padding: 10px 12px; border-radius: 8px;
                  background: #fff3cf; color: #624600; border: 1px solid #e6cc82; }
   .config-table-wrap { max-height: 360px; overflow: auto; margin-top: 10px; }
@@ -592,12 +676,30 @@ DEVICE_HTML = """<!doctype html>
   .downloads { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
   .downloads a { padding: 7px 10px; border-radius: 8px; background: #dfeefa;
                  color: #174b74; text-decoration: none; cursor: pointer; }
+  @media (max-width: 720px) {
+    body { padding: 14px; }
+    .config-layout { grid-template-columns: 1fr; }
+    .config-nav { position: static; display: flex; overflow-x: auto;
+                  padding-bottom: 4px; }
+    .config-tab { min-width: 132px; white-space: nowrap; }
+    .config-setting { grid-template-columns: 1fr; }
+    .config-setting-actions { flex-wrap: wrap; }
+    .config-setting-actions select, .config-setting-actions input {
+      flex: 1 1 140px;
+    }
+  }
   @media (prefers-color-scheme: dark) {
     body { background: #14181c; color: #e7ebef; }
     .card { background: #1c2228; border-color: #2b333b; }
     .pill { background: #303842; color: #e7ebef; }
     .pill.ok { background: #1d3f22; color: #d3f2d8; }
     .pill.warn { background: #4a2326; color: #f6c8c8; }
+    .toast { background: #3c2022; color: #f6c8c8; border-color: #74393d;
+             border-left-color: #db6868; }
+    .toast.success { background: #1d3523; color: #d3f2d8;
+                     border-color: #356943; border-left-color: #64b56f; }
+    .toast.info { background: #1b3042; color: #cce7ff;
+                  border-color: #35566f; border-left-color: #5c9bd1; }
     .bar { background: #2b333b; }
     th, td { border-color: #2b333b; }
     button, form.scan select, .settings input { background: #1c2228; color: inherit;
@@ -612,6 +714,21 @@ DEVICE_HTML = """<!doctype html>
                         border-color: #74393d; }
     .downloads a { background: #203b50; color: #cce7ff; }
     .config-item { background: #182027; border-color: #2d3842; }
+    .config-pane { background: #181e24; border-color: #2d3842; }
+    .config-tab:hover { background: #202a32; }
+    .config-tab.active { background: #20384b; border-color: #355a78; color: #cce7ff; }
+    .config-tab small, .config-pane-head p, .config-setting .description {
+      color: #9aa4ae;
+    }
+    .config-setting { background: #1c2228; border-color: #2d3842; }
+    .config-setting-actions select, .config-setting-actions input {
+      background: #14191e; border-color: #3a444e;
+    }
+    .config-setting-actions button:not(:disabled) {
+      background: #203b50; color: #cce7ff; border-color: #456b86;
+    }
+    .config-maintenance { border-color: #2d3842; }
+    .config-maintenance summary { color: #b8c2cc; }
     .push-result.ready { color: #d3f2d8; }
     .push-result.warning { color: #f6dfaa; }
     .push-result.failure { color: #f6c8c8; }
@@ -626,7 +743,6 @@ DEVICE_HTML = """<!doctype html>
     <a href="/">返回总览</a>
     <button id="refresh" type="button">刷新</button>
   </header>
-  <div id="error" class="error"></div>
   <div class="grid">
     <div class="card"><div class="label">序列号</div><div id="serial" class="value">-</div></div>
     <div class="card"><div class="label">固件</div><div id="firmware" class="value">-</div></div>
@@ -788,34 +904,46 @@ DEVICE_HTML = """<!doctype html>
     </div>
   </div>
   <div class="card" style="margin-top:12px">
-    <div class="label">设备属性配置、面板与 Wi-Fi</div>
-    <p class="muted">
-      仅开放已由官方控件映射和真机写入验证的整数属性。提交后会重新读取设备；
-      回读失败时自动尝试恢复原值。
+    <div class="label">设备配置</div>
+    <p class="muted" style="margin-top:6px">
+      按官方工具的分类逐页读取和修改。读取或应用设置时只访问当前分区；
+      提交单个属性后会回读该属性，失败时自动尝试恢复原值。
     </p>
-    <div class="inline">
-      <button id="config-read" type="button">读取 147 项配置</button>
-      <button id="config-baseline-save" type="button">保存当前为基线</button>
-      <button id="config-baseline-compare" type="button">与基线比较</button>
-      <span id="config-status" class="muted"></span>
+    <div class="config-layout">
+      <nav id="config-categories" class="config-nav" aria-label="设备配置分类"></nav>
+      <section class="config-pane" aria-live="polite">
+        <div class="config-pane-head">
+          <div>
+            <h2 id="config-category-title">设备默认值</h2>
+            <p id="config-category-description">选择分类后读取。</p>
+          </div>
+          <button id="config-read" type="button">读取此分区</button>
+        </div>
+        <div id="config-status" class="muted">尚未读取当前分区</div>
+        <div id="config-status-grid" class="config-grid"></div>
+        <div id="config-edit-status" class="muted"></div>
+        <div id="config-edit-items" class="config-setting-grid"></div>
+        <div id="config-changes"></div>
+        <details style="margin-top:12px">
+          <summary>查看当前分区全部对象 <span id="config-object-count" class="muted"></span></summary>
+          <div class="config-table-wrap">
+            <table>
+              <thead><tr><th>ID</th><th>名称</th><th>状态</th><th>值</th></tr></thead>
+              <tbody id="config-objects"></tbody>
+            </table>
+          </div>
+        </details>
+      </section>
     </div>
-    <div id="config-baseline-info" class="muted"></div>
-    <div id="config-status-grid" class="config-grid"></div>
-    <div id="config-edit-status" class="muted"></div>
-    <div class="config-table-wrap">
-      <table>
-        <thead><tr><th>属性</th><th>当前值</th><th>新值</th><th>操作</th></tr></thead>
-        <tbody id="config-edit-items"></tbody>
-      </table>
-    </div>
-    <div id="config-changes"></div>
-    <details style="margin-top:12px">
-      <summary>查看已读取的配置对象</summary>
-      <div class="config-table-wrap">
-        <table>
-          <thead><tr><th>ID</th><th>名称</th><th>状态</th><th>值</th></tr></thead>
-          <tbody id="config-objects"></tbody>
-        </table>
+    <details class="config-maintenance">
+      <summary>配置基线与全量维护</summary>
+      <p class="muted">
+        基线和差异检查需要完整读取 147 项配置，因此只在明确执行这些维护操作时使用。
+      </p>
+      <div class="inline">
+        <button id="config-baseline-save" type="button">保存完整配置为基线</button>
+        <button id="config-baseline-compare" type="button">与完整基线比较</button>
+        <span id="config-baseline-info" class="muted"></span>
       </div>
     </details>
   </div>
@@ -838,11 +966,31 @@ DEVICE_HTML = """<!doctype html>
   </div>
   <div id="meta" class="muted"></div>
 </main>
+<div id="toasts" class="toast-stack" role="status" aria-live="polite"></div>
 <script>
 const byId = (id) => document.getElementById(id);
 const text = (id, value) => { byId(id).textContent = value == null || value === "" ? "-" : String(value); };
 const currentHost = new URLSearchParams(location.search).get("host");
 let userSettings = null;
+let configCategories = [];
+let selectedConfigCategory = "general";
+let configLoadSequence = 0;
+let lastStatusError = null;
+
+function showToast(message, kind = "error") {
+  const stack = byId("toasts");
+  const text = message == null || message === "" ? "发生未知错误" : String(message);
+  const duplicate = Array.from(stack.children).some(
+    (item) => item.dataset.message === text
+  );
+  if (duplicate) return;
+  const toast = document.createElement("div");
+  toast.className = "toast " + kind;
+  toast.dataset.message = text;
+  toast.textContent = text;
+  stack.append(toast);
+  window.setTimeout(() => toast.remove(), kind === "error" ? 8000 : 4500);
+}
 
 function trayRows(trays) {
   const body = byId("trays");
@@ -865,12 +1013,13 @@ function trayRows(trays) {
 }
 
 function render(payload) {
-  const error = byId("error");
   if (payload.error) {
-    error.textContent = payload.error;
-    error.style.display = "block";
+    if (payload.error !== lastStatusError) {
+      showToast(payload.error);
+      lastStatusError = payload.error;
+    }
   } else {
-    error.style.display = "none";
+    lastStatusError = null;
   }
   const snapshot = payload.snapshot;
   if (!snapshot) {
@@ -963,9 +1112,7 @@ async function load() {
     const response = await fetch(statusUrl(), { cache: "no-store" });
     render(await response.json());
   } catch (err) {
-    const error = byId("error");
-    error.textContent = String(err);
-    error.style.display = "block";
+    showToast(String(err));
   }
 }
 
@@ -1240,18 +1387,116 @@ function setConfigStatus(message, error = false) {
   status.style.color = error ? "#a12222" : "";
 }
 
-function configUrl(path) {
-  return path + (currentHost ? "?host=" + encodeURIComponent(currentHost) : "");
+function configUrl(path, params = {}) {
+  const query = new URLSearchParams();
+  if (currentHost) query.set("host", currentHost);
+  for (const [key, value] of Object.entries(params)) {
+    if (value != null && value !== "") query.set(key, String(value));
+  }
+  const suffix = query.toString();
+  return path + (suffix ? "?" + suffix : "");
 }
 
-async function configRequest(path, options = {}) {
-  const response = await fetch(configUrl(path), {
-    cache: "no-store",
-    ...options
-  });
-  const payload = await response.json();
+async function configRequest(path, options = {}, params = {}) {
+  let response;
+  try {
+    response = await fetch(configUrl(path, params), {
+      cache: "no-store",
+      ...options
+    });
+  } catch (_err) {
+    throw new Error(
+      "无法连接本机后台服务；请确认 GUI/Web 服务仍在运行后重试。"
+    );
+  }
+  let payload;
+  try {
+    payload = await response.json();
+  } catch (_err) {
+    throw new Error(
+      `本机后台返回了无法解析的响应（HTTP ${response.status}）。`
+    );
+  }
   if (!response.ok) throw new Error(payload.error || String(response.status));
   return payload;
+}
+
+function selectedCategoryInfo() {
+  return configCategories.find(
+    (category) => category.key === selectedConfigCategory
+  ) || null;
+}
+
+function renderConfigCategories() {
+  const nav = byId("config-categories");
+  nav.replaceChildren();
+  for (const category of configCategories) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "config-tab" +
+      (category.key === selectedConfigCategory ? " active" : "");
+    button.dataset.category = category.key;
+    const title = document.createElement("span");
+    title.textContent = category.label;
+    const count = document.createElement("small");
+    count.textContent = category.editable_count
+      ? `${category.editable_count} 项可编辑 · ${category.item_count} 项`
+      : `${category.item_count} 项`;
+    button.append(title, count);
+    button.addEventListener(
+      "click",
+      () => selectConfigCategory(category.key)
+    );
+    nav.append(button);
+  }
+}
+
+function updateConfigCategoryHeading() {
+  const category = selectedCategoryInfo();
+  byId("config-category-title").textContent =
+    category?.label || "设备配置";
+  byId("config-category-description").textContent =
+    category?.description || "选择分类后读取。";
+}
+
+function clearConfigCategoryView() {
+  byId("config-status-grid").replaceChildren();
+  byId("config-edit-items").replaceChildren();
+  byId("config-objects").replaceChildren();
+  byId("config-changes").replaceChildren();
+  byId("config-object-count").textContent = "";
+  setEditConfigStatus("");
+}
+
+async function selectConfigCategory(key) {
+  if (key === selectedConfigCategory &&
+      byId("config-edit-items").childElementCount) {
+    return;
+  }
+  selectedConfigCategory = key;
+  renderConfigCategories();
+  updateConfigCategoryHeading();
+  clearConfigCategoryView();
+  await readConfiguration();
+}
+
+async function loadConfigCategories() {
+  try {
+    const data = await configRequest("/api/config/categories");
+    configCategories = data.categories || [];
+    if (!configCategories.some(
+      (category) => category.key === selectedConfigCategory
+    )) {
+      selectedConfigCategory = configCategories[0]?.key || "general";
+    }
+    renderConfigCategories();
+    updateConfigCategoryHeading();
+    if (configCategories.length) {
+      await selectConfigCategory(selectedConfigCategory);
+    }
+  } catch (err) {
+    setConfigStatus("配置分类不可用：" + String(err), true);
+  }
 }
 
 function renderConfigObjects(objects) {
@@ -1293,21 +1538,39 @@ function renderConfigStatusObjects(objects) {
   }
 }
 
-function applyEditedConfig(itemId) {
-  const row = document.querySelector(
-    `#config-edit-items tr[data-item-id="${itemId}"]`
-  );
-  if (!row) return;
-  const control = row.querySelector("[data-config-control]");
-  const button = row.querySelector("button");
+function controlDeviceValue(control) {
   const value = Number(control.value);
-  const expected = Number(row.dataset.currentValue);
-  if (!Number.isInteger(value)) {
-    setEditConfigStatus("请输入整数", true);
+  if (!Number.isFinite(value)) return null;
+  const scale = Number(control.dataset.configScale || "1");
+  const stored = scale === 1 ? value : value / scale;
+  return Number.isInteger(stored) ? stored : null;
+}
+
+function updateConfigSettingState(card) {
+  const control = card.querySelector("[data-config-control]");
+  const button = card.querySelector("[data-config-apply]");
+  if (!control || !button) return;
+  const value = controlDeviceValue(control);
+  const expected = Number(card.dataset.currentValue);
+  button.disabled = control.disabled || value == null || value === expected;
+}
+
+function applyEditedConfig(itemId) {
+  const card = document.querySelector(
+    `#config-edit-items [data-item-id="${itemId}"]`
+  );
+  if (!card) return;
+  const control = card.querySelector("[data-config-control]");
+  const button = card.querySelector("[data-config-apply]");
+  const value = controlDeviceValue(control);
+  const expected = Number(card.dataset.currentValue);
+  if (value == null) {
+    setEditConfigStatus("请输入设备支持的有效整数值", true);
     return;
   }
+  const unit = control.dataset.configUnit || "";
   if (!window.confirm(
-    `确认把设备属性 ${itemId} 从 ${expected} 改为 ${value}？` +
+    `确认把「${card.dataset.label}」从当前值改为 ${control.value}${unit}？` +
     "提交后会读取设备验证，失败时尝试恢复原值。"
   )) return;
   button.disabled = true;
@@ -1325,15 +1588,17 @@ function applyEditedConfig(itemId) {
   }).then(async response => {
     const payload = await response.json();
     if (!response.ok) throw new Error(payload.error || String(response.status));
-    row.dataset.currentValue = String(payload.requested);
-    const current = row.querySelector("[data-config-current]");
+    card.dataset.currentValue = String(payload.requested);
+    const current = card.querySelector("[data-config-current]");
     current.textContent = payload.observed_display || String(payload.observed);
     control.value = String(payload.observed);
     setEditConfigStatus(`属性 ${itemId} 已写入并回读成功`);
+    showToast(`「${card.dataset.label}」已应用并回读成功`, "success");
   }).catch(err => {
     setEditConfigStatus("写入失败：" + String(err), true);
+    showToast("写入失败：" + String(err));
   }).finally(() => {
-    button.disabled = false;
+    updateConfigSettingState(card);
   });
 }
 
@@ -1356,23 +1621,29 @@ function renderConfigEditing(editing) {
     return;
   }
   for (const item of items) {
-    const row = document.createElement("tr");
-    row.dataset.itemId = String(item.item_id);
-    row.dataset.currentValue = String(item.current_value);
+    const card = document.createElement("div");
+    card.className = "config-setting";
+    card.dataset.itemId = String(item.item_id);
+    card.dataset.currentValue = String(item.current_value);
+    card.dataset.label = item.label;
 
-    const name = document.createElement("td");
+    const identity = document.createElement("div");
     const label = document.createElement("strong");
     label.textContent = item.label;
     const detail = document.createElement("div");
-    detail.className = "muted";
+    detail.className = "description";
     detail.textContent = item.description;
-    name.append(label, detail);
+    const current = document.createElement("div");
+    current.className = "current";
+    current.append(document.createTextNode("当前值："));
+    const currentValue = document.createElement("strong");
+    currentValue.dataset.configCurrent = "";
+    currentValue.textContent = item.current_display || "不可读";
+    current.append(currentValue);
+    identity.append(label, detail, current);
 
-    const current = document.createElement("td");
-    current.dataset.configCurrent = "";
-    current.textContent = item.current_display || "不可读";
-
-    const editor = document.createElement("td");
+    const actions = document.createElement("div");
+    actions.className = "config-setting-actions";
     let control;
     if (item.choices?.length) {
       control = document.createElement("select");
@@ -1386,29 +1657,51 @@ function renderConfigEditing(editing) {
       control = document.createElement("input");
       control.type = "number";
       control.min = "0";
-      control.step = "1";
+      const scale = Number(item.scale || 1);
+      control.step = String(scale);
+      control.value = item.current_value == null
+        ? "" : String(item.current_value * scale);
     }
     control.dataset.configControl = "";
+    control.dataset.configScale = String(item.scale || 1);
+    control.dataset.configUnit = item.choices?.length ? "" : (item.unit || "");
     control.disabled = !item.readable;
-    control.value = item.current_value == null
-      ? "" : String(item.current_value);
-    editor.append(control);
+    if (item.choices?.length) {
+      control.value = item.current_value == null
+        ? "" : String(item.current_value);
+    }
+    control.addEventListener("input", () => updateConfigSettingState(card));
+    control.addEventListener("change", () => updateConfigSettingState(card));
+    actions.append(control);
+    if (control.dataset.configUnit) {
+      const unit = document.createElement("span");
+      unit.className = "muted";
+      unit.textContent = control.dataset.configUnit;
+      actions.append(unit);
+    }
 
-    const action = document.createElement("td");
     const button = document.createElement("button");
     button.type = "button";
-    button.textContent = "写入并回读";
+    button.dataset.configApply = "";
+    button.textContent = "应用此设置";
     button.disabled = !item.readable;
     button.addEventListener("click", () => applyEditedConfig(item.item_id));
-    action.append(button);
+    actions.append(button);
 
-    row.append(name, current, editor, action);
-    body.append(row);
+    card.append(identity, actions);
+    body.append(card);
+    updateConfigSettingState(card);
   }
   setEditConfigStatus("");
 }
 
 function renderConfigOverview(data) {
+  const category = data.category || {};
+  if (category.key) selectedConfigCategory = category.key;
+  byId("config-category-title").textContent = category.label || "设备配置";
+  byId("config-category-description").textContent =
+    category.description || "";
+  renderConfigCategories();
   const baseline = data.baseline || {};
   byId("config-baseline-info").textContent = baseline.available
     ? `基线：${baseline.created_at} · 可读 ${baseline.read}/${baseline.total}`
@@ -1417,7 +1710,11 @@ function renderConfigOverview(data) {
   renderConfigObjects(data.objects);
   renderConfigEditing(data.editing);
   byId("config-changes").replaceChildren();
-  setConfigStatus(`读取完成：${data.read}/${data.total} 项可读`);
+  byId("config-object-count").textContent = `（${data.total} 项）`;
+  setConfigStatus(
+    `“${category.label || selectedConfigCategory}”读取完成：` +
+    `${data.read}/${data.total} 项可读`
+  );
 }
 
 async function runConfigAction(button, message, action) {
@@ -1428,6 +1725,7 @@ async function runConfigAction(button, message, action) {
     await action();
   } catch (err) {
     setConfigStatus(String(err), true);
+    showToast(String(err));
   } finally {
     button.disabled = false;
     button.textContent = original;
@@ -1435,11 +1733,20 @@ async function runConfigAction(button, message, action) {
 }
 
 async function readConfiguration() {
+  const sequence = ++configLoadSequence;
+  const category = selectedCategoryInfo();
+  const label = category?.label || selectedConfigCategory;
+  const count = category?.item_count ? `（${category.item_count} 项）` : "";
   await runConfigAction(
     byId("config-read"),
-    "正在通过 SNMP 读取 147 项配置…",
+    `正在通过 SNMP 读取“${label}”${count}…`,
     async () => {
-      const data = await configRequest("/api/config");
+      const data = await configRequest(
+        "/api/config",
+        {},
+        {category: selectedConfigCategory}
+      );
+      if (sequence !== configLoadSequence) return;
       renderConfigOverview(data);
     }
   );
@@ -1453,13 +1760,17 @@ async function saveConfigurationBaseline() {
     byId("config-baseline-save"),
     "正在读取并保存私有基线…",
     async () => {
-      await configRequest("/api/config/baseline", {
+      const data = await configRequest("/api/config/baseline", {
         method: "POST",
         headers: {"Content-Type": "application/json"},
         body: JSON.stringify({host: currentHost})
       });
-      await readConfiguration();
-      setConfigStatus("配置基线已保存");
+      const baseline = data.baseline || {};
+      byId("config-baseline-info").textContent = baseline.available
+        ? `基线：${baseline.created_at} · 可读 ${baseline.read}/${baseline.total}`
+        : "基线已保存";
+      setConfigStatus("完整配置基线已保存");
+      showToast("完整配置基线已保存", "success");
     }
   );
 }
@@ -1736,9 +2047,10 @@ byId("wifi-scan").addEventListener("click", scanWifi);
 byId("wifi-ap-select").addEventListener("change", chooseWifiAccessPoint);
 byId("wifi-connect").addEventListener("click", connectWifi);
 text("current-host", currentHost ? "当前: " + currentHost : "当前: 默认设备");
-setConfigStatus("尚未读取配置");
+setConfigStatus("正在加载配置分类…");
 loadSettings();
 load();
+loadConfigCategories();
 setInterval(load, 10000);
 </script>
 </body>
@@ -1913,7 +2225,12 @@ def make_handler(
                     ensure_ascii=False,
                 ).encode("utf-8")
                 self._respond(200, "application/json; charset=utf-8", body)
-            elif path in {"/api/config", "/api/config/baseline", "/api/config/compare"}:
+            elif path in {
+                "/api/config",
+                "/api/config/categories",
+                "/api/config/baseline",
+                "/api/config/compare",
+            }:
                 requested = (parse_qs(parsed.query).get("host") or [None])[0]
                 try:
                     host = registry.resolve(requested)
@@ -1934,8 +2251,25 @@ def make_handler(
                     )
                     return
                 try:
-                    if path == "/api/config":
-                        payload = config_workbench.overview(host)
+                    if path == "/api/config/categories":
+                        categories = config_workbench.category_catalog()
+                        payload = {
+                            "host": host,
+                            "categories": categories,
+                            "total": sum(
+                                int(category["item_count"])
+                                for category in categories
+                            ),
+                        }
+                    elif path == "/api/config":
+                        category = (
+                            parse_qs(parsed.query).get("category")
+                            or ["general"]
+                        )[0]
+                        payload = config_workbench.overview(
+                            host,
+                            category=category,
+                        )
                     elif path == "/api/config/baseline":
                         payload = {
                             "host": host,
@@ -1943,11 +2277,20 @@ def make_handler(
                         }
                     else:
                         payload = config_workbench.compare_baseline(host)
+                except ConfigCategoryError as exc:
+                    self._json_error(400, str(exc))
+                    return
                 except ConfigWorkbenchError as exc:
                     self._json_error(502, str(exc))
                     return
                 except ConfigSnapshotError as exc:
                     self._json_error(409, str(exc))
+                    return
+                except Exception as exc:
+                    self._json_error(
+                        502,
+                        f"{type(exc).__name__}: {exc}",
+                    )
                     return
                 body = json.dumps(
                     payload, ensure_ascii=False

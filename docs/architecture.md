@@ -16,6 +16,7 @@ kyocera_monitor/
   discovery.py SNMP 广播/单播与 WS-Discovery 的只读设备发现
   snmp.py      SNMP v1/v2c BER 编解码、GET/GETNEXT walk 与受限 Integer SET
   snmp_status.py  SNMP OID 到 PrinterSnapshot 的只读映射
+  config_web.py  配置分区、脱敏视图、基线及已审核整数写入编排
   web.py       HTTP 状态/扫描 API、页面与快照缓存
   gui.py       GTK3/WebKit2 原生窗口，内嵌同一个本地 Web 仪表盘
   scan.py      KM-WSDL 扫描编排、后台任务、RAW 解码与本地格式导出
@@ -57,20 +58,34 @@ tools/
    `POST /api/devices` 接受手动输入的主机并加入允许列表；启动时允许没有默认
    设备，此时页面先显示空状态，再由用户发现或手动添加。手动添加和发现结果
    都会原子写入用户设置中的 `saved_printers`，服务启动时自动恢复。
-9. 设备详情页提交 `POST /api/scans` 后，`ScanJobManager` 在后台线程执行
+9. 配置工作台按官方对话框把 147 项对象拆成七个互斥分区。
+   `GET /api/config/categories` 只返回导航元数据；`GET /api/config?category=`
+   按当前设备 transport 选择读取路径：TCP 主机使用
+   `collect_config_snmp(item_ids=...)`，`libusb:`/`/dev/` 设备使用
+   `open_channel(device=...) + collect_config(item_ids=...)`，二者都只请求
+   所选分区。USB selector 在 SNMP 入口会被提前拒绝，不能进入
+   `getaddrinfo`。同一 USB 设备的状态、配置和 Wi-Fi 通道共用按 selector
+   分配的 `RLock`，避免多个 Web 请求并发 claim Printer interface。PJL
+   解析记录和 SNMP 记录都带相对/绝对 OID，配置视图不依赖 transport 猜测
+   字段是否存在。单字段网络写入的旧值校验和 SET 后回读只请求目标 item；
+   USB 页面保持只读。基线保存/比较仍显式执行完整 147 项读取。读取层的
+   超时/socket/结果异常统一转换为 `ConfigWorkbenchError`，HTTP 路由始终返回
+   JSON 错误，不让 WebKit 只看到断连式 `TypeError: Load failed`。页面以分区
+   卡片展示九个审核属性，完整配置只出现在基线维护区。
+10. 设备详情页提交 `POST /api/scans` 后，`ScanJobManager` 在后台线程执行
    `preflight -> default_configuration -> open_session -> start_scan ->
    retrieve_image -> decode_raw -> export -> close_session`。同一设备已有
    扫描时返回忙状态。`GET /api/scans/<id>` 返回阶段和结果元数据，
    `GET /api/scans/<id>/files/<n>` 下载结果。任务只接受页面暴露的官方扫描
    token，并固定请求经过真机验证的 RAW 设备格式。
-10. `kyocera_monitor.scan` 把设备请求格式和本地导出格式分开：RAW 经已还原的
+11. `kyocera_monitor.scan` 把设备请求格式和本地导出格式分开：RAW 经已还原的
    分带解码器转为 RGB，再输出 PNG/PDF/JPEG/TIFF/高压缩 PDF/XPS/BMP；
    RAW 保留为高级选项。PNG/PDF/BMP/RAW 使用标准库，JPEG/TIFF 及 JPEG
    内嵌 PDF/XPS 通过 Pillow 编码。Web 与 CLI 共用同一服务层。
-11. `--gui` 在 `127.0.0.1` 的随机端口启动同一个 `create_server()`，由
+12. `--gui` 在 `127.0.0.1` 的随机端口启动同一个 `create_server()`，由
    GTK3/WebKit2 窗口加载总览页；关闭窗口时停止本地服务。GTK/WebKit 是可选
    依赖，缺失时 CLI 返回退出码 2 并提示改用 `--web`。
-12. `--discover` 并行执行 SNMP 广播和 WS-Discovery；广播只取型号 OID，随后用
+13. `--discover` 并行执行 SNMP 广播和 WS-Discovery；广播只取型号 OID，随后用
    单播 GET 补全序列号/固件。ARP 表和可选的子网 CIDR 作为额外单播候选。
    Web 页面的 `/api/discover` 复用同一实现，并把发现的主机加入允许列表和
    持久化设备列表。
@@ -123,7 +138,8 @@ MA2000w（`0482:0d51`），多个候选时要求显式 `--device`。
   转发 PJL，未直接打开 USB 设备；Linux 使用 `usblp` 发送同一 UEL 帧，属于
   原生等价实现。
 - USB 原始帧是否与 TCP 完全一致仍是待验证假设；物理 USB 接入后再做完整对照。
-- Web 界面默认绑定 `127.0.0.1`，没有认证；提供扫描，但不提供配置写入。
+- Web 界面默认绑定 `127.0.0.1`，没有认证；提供扫描、分区配置读取，以及
+  九个已审核整数属性的单字段写入和回读恢复。完整配置只用于显式基线维护。
   `tools/kmscn_probe.py` 是独立的只读 KM-WSDL 协议探针；
   `tools/kmscn_scan.py` 只是包内扫描服务的兼容命令行适配器。
   多设备总览和手动添加主机已实现，主机列表与扫描预设、保存目录一起保存在

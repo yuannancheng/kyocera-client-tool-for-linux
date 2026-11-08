@@ -15,8 +15,8 @@
 - 仅限 SNMPv2c、相同计划与匹配确认令牌的 item 2/item 50
   `OFF -> ON -> OFF` 执行器。
 - `--config-audit-safe` 的无害整数字段白名单、逐项目标回读和自动恢复。
-- Web/GUI 配置工作台：147 项对象、敏感值脱敏、面板/Wi‑Fi 状态、
-  `0600` 私有基线和差异比较。
+- Web/GUI 配置工作台：按官方主要页面划分的七个配置分区、敏感值脱敏、
+  面板/Wi‑Fi 状态、`0600` 私有基线和完整配置差异比较。
 - Web/GUI 九个已审核整数属性的正常设置写入：旧值一致性检查、明确确认、
   SET 后回读以及失败恢复。
 
@@ -28,6 +28,18 @@ Network 模式的 Web/GUI 使用 SNMPv2c 配置工作台。页面只显示脱敏
 SNMP community、Wi‑Fi SSID、系统联系人和位置不会返回给浏览器。基线保存在
 `$XDG_CONFIG_HOME/kyocera-monitor/baselines/<目标哈希>.json`，文件权限为
 `0600`。
+
+配置对象分为 `general`、`paper`、`communication`、`snmp_traps`、`panel`、
+`fax`、`wifi` 七个互斥分区，覆盖 item 1–147 各一次。
+`GET /api/config/categories` 只返回分区元数据；`GET /api/config?category=`
+仅请求当前分区。TCP 主机通过 `collect_config_snmp(item_ids=...)` 读取；
+`libusb:` 或 `/dev/` USB 设备通过 `open_channel(device=...)` 和
+`collect_config(item_ids=...)` 使用 PJL，不能把 USB selector 送进 SNMP
+名称解析。Web/GUI 为同一 USB selector 的状态、配置和 Wi-Fi 通道共享锁，
+防止异步状态刷新与配置读取同时 claim Printer interface。PJL 与 SNMP 记录
+都包含相对 OID 和绝对 OID，视图不依赖 transport 专有字段。该项限制避免只在
+页面层隐藏但仍拉取整表。只有用户明确保存或比较完整基线时，工作台才读取全部
+147 项。
 
 页面可编辑以下九个整数属性：
 
@@ -44,8 +56,13 @@ SNMP community、Wi‑Fi SSID、系统联系人和位置不会返回给浏览器
 这些字段均来自已还原的官方控件/差异表；item 2 和 item 50 已做独立真机写入
 与恢复，其他七个字段属于已执行的 25 项无害整数审计。`POST /api/config/apply` 只接受上述
 item、整数目标值、页面实际读取的 `expected_value` 和 `confirm=true`。设备当前
-值变化时在写入前拒绝；SET 后重新读取同一对象，回读不一致或写入异常时尝试
-恢复旧值并报告恢复结果。页面不提供全表批量提交或自动重启。
+值变化时在写入前拒绝；SET 前的旧值检查与 SET 后的回读都只请求目标 item，
+回读不一致或写入异常时尝试恢复旧值并报告恢复结果。页面不提供全表批量提交或
+自动重启。
+
+USB 设备当前只开放分区读取。PJL 写入尚未完成与网络路径同等的失败恢复和
+真机审计，因此 `writer_available` 对 USB 目标返回 `false`，页面不会展示
+可提交按钮。
 
 CLI 的 `--config-plan` / `--config-apply` 仍是独立的强约束
 `OFF -> ON -> OFF` 研究流程，要求相同基线、目标、赋值和匹配令牌；正式页面
