@@ -21,6 +21,10 @@ class ClientToolJobOidTests(unittest.TestCase):
             cls.rows = list(csv.DictReader(handle, delimiter="\t"))
         cls.by_symbol = {row["symbol"]: row for row in cls.rows}
 
+    @unittest.skipUnless(
+        clienttool_job_oids.DEFAULT_XML.is_file(),
+        "Kyocera/ClientTool job OID XML is not present",
+    )
     def test_checked_in_table_matches_the_expander(self):
         rows = clienttool_job_oids.expand_job_oids(
             clienttool_job_oids.DEFAULT_XML

@@ -419,7 +419,34 @@ Print Box 和 SNMPv3 等工作流。
 下一步：安装 `.deb` 后在 MA2000w 上完成“预设灰度 PDF → 自动保存目录 →
 下载/落盘哈希一致”的真机验收，再实现 E2 的统一配置只读/差异/安全写入界面。
 
-## 最近一次工作交接（第六十二轮）
+## 最近一次工作交接（第六十三轮）
+
+日期：2026-11-08。范围：提交并推送首个发布候选、修复干净 GitHub runner 的
+本地样本依赖，并以补丁版本重新发布。
+
+完成与证据：
+
+- 发布提交 `26137c0`（主题“发布 v0.3.1：完善多语言、版本检查与发布构建”）
+  已推送 `main`，并创建/推送 `v0.3.1` 标签。Release workflow 未生成运行，
+  随后发现 `Test` workflow 在干净 runner 中因 `Kyocera/ClientTool` 被忽略而失败。
+- 配置名称、对话框、FAX、Job OID、OID 来源清单和 UI 字符串测试增加
+  `skipUnless` 样本门控；已提交 TSV、生成模块和解析器测试继续在 CI 运行。
+- Release workflow 增加 `workflow_dispatch` 与必填 `release_tag`，用于标签
+  推送事件未生成运行时显式触发既有标签；仍只对明确的 release tag 执行。
+- 版本升级为 `0.3.2`；`v0.3.1` 标签保留原提交但不创建 Release。
+
+验证：
+
+- 本地全量测试 388/388 通过。
+- 去掉 `Kyocera/`、`analysis/`、`.tools/` 的干净副本中，代码测试仅因副本
+  不含 `.git` 而无法执行公开树 Git 查询；其余测试通过，15 项依赖本地研究
+  样本的测试按预期跳过。公开树检查在原仓库通过。
+- 工作流 YAML、Python 编译、页面 JavaScript 和 `git diff --check` 通过。
+
+下一步：提交并推送 `v0.3.2`，确认 Test 与 Release workflow 成功，以及
+Release/updater 元数据可下载。
+
+## 历史工作交接（第六十二轮）
 
 日期：2026-11-08。范围：参考 `asset-snapshot` 增加手动版本检查，并将发布
 workflow 扩展为同时发布更新元数据；未连接打印机，也未执行任何设备写入。

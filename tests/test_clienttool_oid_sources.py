@@ -20,6 +20,10 @@ class ClientToolOidSourceTests(unittest.TestCase):
             cls.rows = list(csv.DictReader(handle, delimiter="\t"))
         cls.by_source = {row["source"]: row for row in cls.rows}
 
+    @unittest.skipUnless(
+        clienttool_oid_sources.DEFAULT_ROOT.is_dir(),
+        "Kyocera/ClientTool sample tree is not present",
+    )
     def test_checked_in_inventory_matches_the_scanner(self):
         rows = clienttool_oid_sources.inventory(
             clienttool_oid_sources.DEFAULT_ROOT

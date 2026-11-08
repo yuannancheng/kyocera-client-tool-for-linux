@@ -20,6 +20,10 @@ class ClientToolFaxIniTests(unittest.TestCase):
             cls.rows = list(csv.DictReader(handle, delimiter="\t"))
         cls.by_name = {row["name"]: row for row in cls.rows}
 
+    @unittest.skipUnless(
+        clienttool_fax_ini.DEFAULT_INI.is_file(),
+        "Kyocera/ClientTool/FAX/KMSNMP4.INI is not present",
+    )
     def test_checked_in_table_matches_the_parser(self):
         rows = clienttool_fax_ini.parse_ini(clienttool_fax_ini.DEFAULT_INI)
         self.assertEqual(

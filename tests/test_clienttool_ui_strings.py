@@ -11,6 +11,10 @@ EXPECTED = (
 )
 
 
+@unittest.skipUnless(
+    EXE.is_file() and RES.is_file(),
+    "Kyocera Client Tool UI resources are not present",
+)
 class ClientToolUiStringTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):

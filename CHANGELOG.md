@@ -2,6 +2,19 @@
 
 ## 2026-11-08
 
+### Fixed — clean-checkout release CI and v0.3.2
+
+- GitHub `Test` 在推送 `v0.3.1` 标签后发现，部分 Client Tool 研究测试直接读取
+  被 Git 忽略的 `Kyocera/ClientTool` 样本；本地有样本时通过，干净 runner 中
+  因文件不存在而失败。`v0.3.1` 标签保留原提交，没有创建对应 Release。
+- 配置名称、对话框、FAX、Job OID、OID 来源清单和 UI 字符串测试现在各自检查
+  所需样本；样本缺失时跳过依赖原厂文件的回归，但仍运行基于已提交 TSV、
+  生成模块和解析器的可移植检查。
+- Release workflow 新增显式 `workflow_dispatch` 和 `release_tag` 输入；
+  如果标签推送事件未生成运行，可对既有 `vX.Y.Z` 标签手动触发同一构建。
+- 版本升级为 `0.3.2`。验证：本地全量测试 388/388；去掉 `Kyocera/`、`analysis/`
+  和 `.tools/` 的干净副本中，所有剩余测试通过，样本相关测试按预期跳过。
+
 ### Added — manual semantic-version update check
 
 - Web 总览页和设备详情页顶部新增“检查更新”。当前版本来自安装元数据、源码

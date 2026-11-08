@@ -43,6 +43,10 @@ class ClientToolDialogTests(unittest.TestCase):
         self.assertEqual(controls[("0x008d", "0x043f")]["text_present"], "1")
         self.assertEqual(controls[("0x008d", "0x041e")]["class"], "#129")
 
+    @unittest.skipUnless(
+        EXE.is_file(),
+        "Kyocera/ClientTool/KMUTLCFG.exe is not present",
+    )
     def test_checked_in_table_matches_the_extractor(self):
         controls = clienttool_dialogs.read_dialogs(EXE)
         self.assertEqual(

@@ -222,7 +222,7 @@ sudo apt install "./dist/kyocera-monitor_${PROJECT_VERSION}-1_all.deb"
 `update.json` 只发布版本号和发布页地址：
 
 ```json
-{"version":"0.3.1","htmlUrl":"https://github.com/yuannancheng/kyocera-client-tool-for-linux/releases/tag/v0.3.1"}
+{"version":"0.3.2","htmlUrl":"https://github.com/yuannancheng/kyocera-client-tool-for-linux/releases/tag/v0.3.2"}
 ```
 
 发版流程示例：

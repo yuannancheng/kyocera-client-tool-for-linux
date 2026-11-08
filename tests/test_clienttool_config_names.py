@@ -58,6 +58,10 @@ class ClientToolConfigNameTests(unittest.TestCase):
         }
         self.assertEqual(VENDOR_NAMES, expected)
 
+    @unittest.skipUnless(
+        all(path.is_file() for path in clienttool_config_names.DEFAULT_XMLS),
+        "vendor XML samples are not present",
+    )
     def test_checked_in_table_matches_the_extractor(self):
         vendor_oids = clienttool_config_names.merge_vendor_oids(
             clienttool_config_names.DEFAULT_XMLS
@@ -91,6 +95,10 @@ class ClientToolConfigNameTests(unittest.TestCase):
         )
         self.assertIn(("1.3.6.1.4.1.1347.42.5.1.1.12", "kmTimeZone"), pairs)
 
+    @unittest.skipUnless(
+        all(path.is_file() for path in clienttool_config_names.DEFAULT_XMLS),
+        "vendor XML samples are not present",
+    )
     def test_checked_in_index_matches_the_extractor(self):
         rows = clienttool_config_names.build_vendor_index(
             clienttool_config_names.DEFAULT_XMLS
