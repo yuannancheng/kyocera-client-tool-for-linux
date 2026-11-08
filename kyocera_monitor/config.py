@@ -14,6 +14,13 @@ import struct
 from dataclasses import dataclass
 from typing import Iterable
 
+from .config_media import (
+    MEDIA_TYPE_NAMES,
+    PAPER_SIZE_NAMES,
+    PAPER_WEIGHT_NAMES,
+    display_media_value,
+    media_weight_setting_name,
+)
 from .config_vendor_names import VENDOR_NAMES
 from .pjl import Channel, normalize_command, query_merged, split_segments
 from .snmp import (
@@ -305,6 +312,24 @@ for _paper in range(2, 9):
         "confidence": "verified",
     }
 
+CONFIG_KNOWN["43.8.1.1.11.1.1"] = {
+    "label": "Default paper size",
+    "choices": PAPER_SIZE_NAMES,
+    "confidence": "verified",
+}
+CONFIG_KNOWN["43.8.1.1.4.1.1"] = {
+    "label": "Default media type",
+    "choices": MEDIA_TYPE_NAMES,
+    "confidence": "verified",
+}
+for _media_type, _name in MEDIA_TYPE_NAMES.items():
+    _oid = f"43.21.1.1.3.1.{_media_type}"
+    CONFIG_KNOWN[_oid] = {
+        "label": media_weight_setting_name(_oid) or f"{_name} weight",
+        "choices": PAPER_WEIGHT_NAMES,
+        "confidence": "verified",
+    }
+
 _KGETOBJ_RE = re.compile(r'^@PJL KGETOBJ OBJ="([^"]+)"$', re.IGNORECASE)
 
 
@@ -524,7 +549,10 @@ def parse_config_response(
         value, kind = decode_value(record["pjl_type"], record["raw_value"])
         record["value"] = value
         record["value_kind"] = kind
-        record["display"] = _display_value(value, known)
+        record["display"] = display_media_value(
+            obj.oid,
+            _display_value(value, known),
+        )
         records.append(record)
     return records
 
@@ -617,6 +645,9 @@ def collect_config_snmp(
         record["raw_value"] = format_value(varbind.tag, varbind.value)
         record["value"] = value
         record["value_kind"] = kind
-        record["display"] = _display_value(value, known)
+        record["display"] = display_media_value(
+            obj.oid,
+            _display_value(value, known),
+        )
         records.append(record)
     return records

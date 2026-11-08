@@ -55,13 +55,15 @@ class ConfigEditCatalogTests(unittest.TestCase):
 
     def test_media_weight_rows_only_accept_reviewed_values(self):
         setting = EDITABLE_BY_ID[25]
+        self.assertEqual(setting.label, "自定义 1 纸张重量")
         self.assertEqual(
             dict(setting.choices),
-            {11: "设备值 11", 12: "设备值 12", 13: "设备值 13"},
+            {11: "普通 1", 12: "普通 2", 13: "普通 3"},
         )
         self.assertTrue(editable_value_allowed(setting, 11))
         self.assertTrue(editable_value_allowed(setting, 13))
         self.assertFalse(editable_value_allowed(setting, 10))
+        self.assertEqual(display_edit_value(setting, 14), "重 1")
 
     def test_paper_mismatch_switch_only_accepts_audited_values(self):
         setting = EDITABLE_BY_ID[10]

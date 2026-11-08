@@ -1,6 +1,10 @@
 import unittest
 
-from kyocera_monitor.parser import NORMAL_STATUS_CODES, parse_response
+from kyocera_monitor.parser import (
+    NORMAL_STATUS_CODES,
+    friendly_tray_name,
+    parse_response,
+)
 from kyocera_monitor.pjl import UEL, build_request, response_complete
 
 FIXTURE = """@PJL INFO CONFIG
@@ -64,9 +68,18 @@ class ParserTests(unittest.TestCase):
         self.assertEqual(snapshot.network["ip"], "192.168.0.220")
         self.assertEqual(snapshot.network["mac"], "00:17:C8:XX:XX:XX")
         self.assertEqual(len(snapshot.input_trays), 2)
+        self.assertEqual(snapshot.input_trays[0].name, "Single Bypass")
+        self.assertEqual(snapshot.input_trays[1].name, "Main Tray")
         self.assertEqual(snapshot.input_trays[1].capacity, "250")
         self.assertEqual(len(snapshot.tray_status), 2)
+        self.assertEqual(snapshot.tray_status[0].name, "Single Bypass")
+        self.assertEqual(snapshot.tray_status[1].name, "Main Tray")
         self.assertEqual(snapshot.tray_status[0].status, "OK")
+        tray = snapshot.tray_status[0].to_dict()
+        self.assertEqual(tray["display_name"], "手送纸盒")
+        self.assertEqual(tray["display_status"], "就绪")
+        self.assertEqual(tray["display_paper"], "A4 · 普通纸")
+        self.assertEqual(tray["display_remain"], "—")
         self.assertEqual(snapshot.kgetobj["2.5.1.1.10.1"]["VALUE"], "1")
         console_localization = snapshot.kgetobj_known["console_localization"]
         self.assertEqual(console_localization["value"], 1)
@@ -76,6 +89,11 @@ class ParserTests(unittest.TestCase):
     def test_info_id(self):
         snapshot = parse_response('@PJL INFO ID\r\n"MA2000w"\r\n\f')
         self.assertEqual(snapshot.model, "MA2000w")
+
+    def test_protocol_tray_identifiers_have_friendly_fallbacks(self):
+        self.assertEqual(friendly_tray_name("INTRAY1"), "纸盒 1")
+        self.assertEqual(friendly_tray_name("Cassette 2"), "纸盒 2")
+        self.assertEqual(friendly_tray_name("single bypass"), "手送纸盒")
 
     def test_known_kgetobj_fields(self):
         raw = """@PJL KGETOBJ OBJ="1.46.10.1.1.5.3"

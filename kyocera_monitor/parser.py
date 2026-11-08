@@ -5,6 +5,8 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 
+from .config_media import display_tray_paper
+
 # Codes the original monitor treats as non-warning in its INFO STATUS handler.
 NORMAL_STATUS_CODES = frozenset({10001, 10002, 30014, 35078, 38001, 10036, 30001})
 TONER_ALERT_CODES = frozenset({40038, 10023})
@@ -80,6 +82,71 @@ class Tray:
     media: str | None = None
     remain: str | None = None
     capacity: str | None = None
+    source_id: str | None = None
+
+    def to_dict(self) -> dict[str, object]:
+        payload = dict(self.__dict__)
+        payload.update(
+            {
+                "display_name": friendly_tray_name(self.name),
+                "display_status": friendly_tray_status(self.status),
+                "display_paper": display_tray_paper(self.paper, self.media),
+                "display_remain": friendly_tray_remain(self.remain),
+            }
+        )
+        return payload
+
+
+_TRAY_NAME_LABELS = {
+    "single bypass": "手送纸盒",
+    "bypass tray": "手送纸盒",
+    "main tray": "主纸盒",
+}
+
+_TRAY_STATUS_LABELS = {
+    "OK": "就绪",
+    "READY": "就绪",
+    "LOW": "纸张不足",
+    "EMPTY": "缺纸",
+    "NOT READY": "未就绪",
+}
+
+
+def friendly_tray_name(name: str | None) -> str:
+    """Translate protocol identifiers into short paper-tray labels."""
+
+    cleaned = " ".join(str(name or "").split())
+    if not cleaned or cleaned.upper() == "UNKNOWN":
+        return "纸盒"
+    lowered = cleaned.casefold()
+    if lowered in _TRAY_NAME_LABELS:
+        return _TRAY_NAME_LABELS[lowered]
+    match = re.fullmatch(
+        r"(?:INTRAY|TRAY|CASSETTE)\s*([0-9]+)",
+        cleaned,
+        re.IGNORECASE,
+    )
+    if match:
+        return f"纸盒 {match.group(1)}"
+    return cleaned
+
+
+def friendly_tray_status(status: str | None) -> str:
+    """Translate the compact PJL tray status into a user-facing state."""
+
+    cleaned = " ".join(str(status or "").split())
+    if not cleaned or cleaned.upper() == "UNKNOWN":
+        return "—"
+    return _TRAY_STATUS_LABELS.get(cleaned.upper(), cleaned)
+
+
+def friendly_tray_remain(remain: str | None) -> str:
+    """Hide the protocol's UNKNOWN sentinel from the tray table."""
+
+    cleaned = str(remain or "").strip()
+    if not cleaned or cleaned.upper() == "UNKNOWN":
+        return "—"
+    return cleaned
 
 
 @dataclass
@@ -130,8 +197,8 @@ class PrinterSnapshot:
             "timeout": self.timeout,
             "unit_name": self.unit_name,
             "network": self.network,
-            "input_trays": [tray.__dict__ for tray in self.input_trays],
-            "tray_status": [tray.__dict__ for tray in self.tray_status],
+            "input_trays": [tray.to_dict() for tray in self.input_trays],
+            "tray_status": [tray.to_dict() for tray in self.tray_status],
             "kgetobj": self.kgetobj,
             "kgetobj_known": self.kgetobj_known,
             "snmp": self.snmp,
@@ -180,10 +247,11 @@ def _parse_config(snapshot: PrinterSnapshot, body: str) -> None:
         if len(row) >= 4 and row[0] != "INTRAY":
             snapshot.input_trays.append(
                 Tray(
-                    name=row[0],
+                    name=row[1] if len(row) > 1 and row[1] else row[0],
                     paper=row[2],
                     media=row[3],
                     capacity=row[4] if len(row) > 4 else None,
+                    source_id=row[0],
                 )
             )
 
@@ -215,15 +283,22 @@ def _parse_network(snapshot: PrinterSnapshot, body: str) -> None:
 
 
 def _parse_tray_status(snapshot: PrinterSnapshot, body: str) -> None:
+    by_source_id = {
+        tray.source_id: tray.name
+        for tray in snapshot.input_trays
+        if tray.source_id
+    }
     for row in _table_rows(body, "\tINTRAY"):
         if len(row) >= 4 and row[0] != "INTRAY":
+            source_id = row[0]
             snapshot.tray_status.append(
                 Tray(
-                    name=row[0],
+                    name=by_source_id.get(source_id, source_id),
                     status=row[1],
                     paper=row[2],
                     media=row[3],
                     remain=row[4] if len(row) > 4 else None,
+                    source_id=source_id,
                 )
             )
 

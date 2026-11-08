@@ -310,6 +310,24 @@ class ResponseTests(unittest.TestCase):
         self.assertEqual(by_id[65]["label"], "SNMP read community")
         self.assertEqual(by_id[59]["pjl_object"], "1.40.10.1.1.4.1")
 
+    def test_official_media_tables_are_rendered_as_names(self):
+        response = (
+            kgetobj("1.43.8.1.1.4.1.1", 0, 2, "1")
+            + kgetobj("1.43.8.1.1.11.1.1", 0, 2, "9")
+            + kgetobj("1.43.21.1.1.3.1.15", 0, 2, "11")
+        )
+        records = parse_config_response(
+            response,
+            item_ids=(6, 9, 25),
+        )
+        by_id = {record["item_id"]: record for record in records}
+        self.assertEqual(by_id[6]["label"], "Default paper size")
+        self.assertEqual(by_id[6]["display"], "A4")
+        self.assertEqual(by_id[9]["label"], "Default media type")
+        self.assertEqual(by_id[9]["display"], "普通纸")
+        self.assertEqual(by_id[25]["label"], "自定义 1 纸张重量")
+        self.assertEqual(by_id[25]["display"], "普通 1")
+
     def test_failed_and_missing_rows_are_explicit(self):
         response = kgetobj("1.43.5.1.1.23.1", 2, 0, "")
         records = parse_config_response(response)

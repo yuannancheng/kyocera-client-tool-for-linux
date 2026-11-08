@@ -648,6 +648,14 @@ DEVICE_HTML = """<!doctype html>
                                  font-size: .82rem; }
   .config-setting .current { margin-top: 8px; font-size: .9rem; }
   .config-setting .current strong { font-size: 1rem; }
+  .config-readonly-grid { display: grid; gap: 10px; margin-top: 12px;
+    grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); }
+  .config-readonly-item { padding: 11px; border-radius: 8px;
+    border: 1px solid #e2e6ea; background: #f8fafb; }
+  .config-readonly-item strong { display: block; margin-bottom: 5px; }
+  .config-readonly-item .value { color: #28323b; font-size: 1rem; }
+  .config-readonly-item .kind { margin-top: 5px; color: #7a838c;
+    font-size: .78rem; }
   .config-setting-actions { display: flex; align-items: end; gap: 8px; }
   .config-setting-actions select, .config-setting-actions input {
     min-width: 118px; padding: 8px 10px; border-radius: 8px;
@@ -727,6 +735,9 @@ DEVICE_HTML = """<!doctype html>
       color: #9aa4ae;
     }
     .config-setting { background: #1c2228; border-color: #2d3842; }
+    .config-readonly-item { background: #1c2228; border-color: #2d3842; }
+    .config-readonly-item .value { color: #e4edf5; }
+    .config-readonly-item .kind { color: #9aa4ae; }
     .config-setting-actions select, .config-setting-actions input {
       background: #14191e; border-color: #3a444e;
     }
@@ -806,7 +817,7 @@ DEVICE_HTML = """<!doctype html>
     <form id="scan-form" class="scan" autocomplete="off">
       <label>颜色
         <select id="scan-color">
-          <option value="">设备默认</option>
+          <option value="">使用设备当前设置</option>
           <option value="FULL_COLOR">彩色</option>
           <option value="GRAYSCALE">灰度</option>
           <option value="BLACK_AND_WHITE">黑白</option>
@@ -816,7 +827,7 @@ DEVICE_HTML = """<!doctype html>
       </label>
       <label>分辨率
         <select id="scan-resolution">
-          <option value="">设备默认</option>
+          <option value="">使用设备当前设置</option>
           <option value="RESOLUTION_150X150">150 × 150 dpi</option>
           <option value="RESOLUTION_200X200">200 × 200 dpi</option>
           <option value="RESOLUTION_300X300">300 × 300 dpi</option>
@@ -826,7 +837,7 @@ DEVICE_HTML = """<!doctype html>
       </label>
       <label>原稿类型
         <select id="scan-original-image">
-          <option value="">设备默认</option>
+          <option value="">使用设备当前设置</option>
           <option value="TEXT">文字</option>
           <option value="TEXT_AND_PHOTO">文字和照片</option>
           <option value="PHOTO">照片</option>
@@ -888,6 +899,10 @@ DEVICE_HTML = """<!doctype html>
         <section id="config-status-block" hidden>
           <h3 class="config-subheading">设备当前状态</h3>
           <div id="config-status-grid" class="config-grid"></div>
+        </section>
+        <section id="config-readonly-block" hidden>
+          <h3 class="config-subheading">当前设备设置</h3>
+          <div id="config-readonly-items" class="config-readonly-grid"></div>
         </section>
         <section id="config-edit-block" hidden>
           <h3 class="config-subheading">可修改设置</h3>
@@ -991,6 +1006,8 @@ let selectedConfigCategory = "general";
 let configLoadSequence = 0;
 let lastStatusError = null;
 const configStatusLabels = {
+  "Default paper size": "默认纸张尺寸",
+  "Default media type": "默认介质类型",
   "Sleep mode": "睡眠模式",
   "Sleep time": "睡眠时间",
   "Power off timer": "关机定时器",
@@ -1037,7 +1054,12 @@ function trayRows(trays) {
   }
   for (const tray of trays) {
     const row = document.createElement("tr");
-    for (const value of [tray.name, tray.status, tray.paper || tray.media, tray.remain]) {
+    for (const value of [
+      tray.display_name || tray.name,
+      tray.display_status || tray.status,
+      tray.display_paper || tray.paper || tray.media,
+      tray.display_remain || tray.remain
+    ]) {
       const cell = document.createElement("td");
       cell.textContent = value == null || value === "" ? "-" : String(value);
       row.append(cell);
@@ -1484,9 +1506,11 @@ function updateConfigCategoryHeading() {
 
 function clearConfigCategoryView() {
   byId("config-status-block").hidden = true;
+  byId("config-readonly-block").hidden = true;
   byId("config-edit-block").hidden = true;
   byId("config-mode-note").textContent = "";
   byId("config-status-grid").replaceChildren();
+  byId("config-readonly-items").replaceChildren();
   byId("config-edit-items").replaceChildren();
   byId("config-objects").replaceChildren();
   byId("config-changes").replaceChildren();
@@ -1560,6 +1584,25 @@ function renderConfigStatusObjects(objects) {
       ? "已隐藏"
       : (object.readable ? (object.display ?? "-") : "不可用");
     item.append(name, reading);
+    grid.append(item);
+  }
+}
+
+function renderReadonlyConfigObjects(objects) {
+  const grid = byId("config-readonly-items");
+  grid.replaceChildren();
+  for (const object of objects || []) {
+    const item = document.createElement("div");
+    item.className = "config-readonly-item";
+    const name = document.createElement("strong");
+    name.textContent = friendlyConfigLabel(object.label);
+    const reading = document.createElement("div");
+    reading.className = "value";
+    reading.textContent = object.display ?? "—";
+    const kind = document.createElement("div");
+    kind.className = "kind";
+    kind.textContent = "只读";
+    item.append(name, reading, kind);
     grid.append(item);
   }
 }
@@ -1733,13 +1776,16 @@ function renderConfigOverview(data) {
     ? `基线：${baseline.created_at} · 可读 ${baseline.read}/${baseline.total}`
     : (baseline.error ? "基线不可用：" + baseline.error : "尚未保存基线");
   renderConfigStatusObjects(data.status_objects);
+  renderReadonlyConfigObjects(data.read_only_objects);
   renderConfigObjects(data.objects);
   renderConfigEditing(data.editing);
   const statusObjects = data.status_objects || [];
+  const readonlyObjects = data.read_only_objects || [];
   const editableItems = data.editing?.available
     ? (data.editing.items || [])
     : [];
   byId("config-status-block").hidden = statusObjects.length === 0;
+  byId("config-readonly-block").hidden = readonlyObjects.length === 0;
   byId("config-edit-block").hidden = editableItems.length === 0;
   byId("config-mode-note").textContent = data.editing?.available
     ? (editableItems.length
@@ -1751,7 +1797,9 @@ function renderConfigOverview(data) {
         ? "当前连接的通用配置写入不可用；本分类的 Wi-Fi 连接仍使用专用 KSETOBJ 流程。"
         : "当前连接未开放配置写入；USB/PJL 通用写入仍待真机验证，因此这里按只读展示。");
   byId("config-changes").replaceChildren();
-  byId("config-object-count").textContent = `（${data.total} 项）`;
+  byId("config-object-count").textContent = data.hidden_count
+    ? `（显示 ${data.objects?.length || 0} 项，${data.hidden_count} 项设备不支持已隐藏）`
+    : `（${data.objects?.length || 0} 项）`;
   setConfigStatus(
     `“${category.label || selectedConfigCategory}”读取完成：` +
     `${data.read}/${data.total} 项可读`

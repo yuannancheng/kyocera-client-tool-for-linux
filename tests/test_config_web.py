@@ -105,8 +105,8 @@ class ConfigWorkbenchTests(unittest.TestCase):
             )
             general = workbench.overview("printer", category="general")
             wifi = workbench.overview("printer", category="wifi")
-        self.assertEqual(general["read"], 17)
-        self.assertEqual(general["total"], 17)
+        self.assertEqual(general["read"], 15)
+        self.assertEqual(general["total"], 15)
         self.assertEqual(general["full_total"], 147)
         self.assertIn(
             50,
@@ -211,6 +211,40 @@ class ConfigWorkbenchTests(unittest.TestCase):
                 32,
             },
         )
+
+    def test_unreadable_items_are_hidden_and_media_values_are_friendly(self):
+        current = records()
+        by_id = {record["item_id"]: record for record in current}
+        by_id[6]["value"] = 9
+        by_id[9]["value"] = 1
+        by_id[11]["value"] = 11
+        for item_id in (12, 13, 22):
+            by_id[item_id]["status"] = 2
+            by_id[item_id]["value"] = None
+            by_id[item_id]["display"] = None
+        workbench = ConfigWorkbench(
+            lambda _host: current,
+            writer=mock.Mock(),
+            baseline_directory=Path("/tmp/unused-kyocera-baseline"),
+        )
+        paper = workbench.overview("printer", category="paper")
+        visible = {item["item_id"]: item for item in paper["objects"]}
+        self.assertEqual(paper["hidden_count"], 3)
+        self.assertNotIn(12, visible)
+        self.assertNotIn(13, visible)
+        self.assertNotIn(22, visible)
+        self.assertEqual(visible[6]["display"], "A4")
+        self.assertEqual(visible[9]["display"], "普通纸")
+        self.assertEqual(visible[11]["display"], "普通 1")
+        self.assertNotIn(
+            12,
+            {item["item_id"] for item in paper["editing"]["items"]},
+        )
+        read_only = {
+            item["item_id"]: item for item in paper["read_only_objects"]
+        }
+        self.assertEqual(read_only[6]["label"], "Default paper size")
+        self.assertEqual(read_only[9]["label"], "Default media type")
 
     def test_pjl_records_without_absolute_oid_still_render(self):
         pjl_records = []

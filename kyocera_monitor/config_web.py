@@ -15,6 +15,7 @@ from .config_edit import (
     display_edit_value,
     editable_value_allowed,
 )
+from .config_media import MEDIA_WEIGHT_OIDS, display_media_value
 from .config_snapshot import (
     SENSITIVE_ITEM_IDS,
     VOLATILE_ITEM_IDS,
@@ -53,7 +54,14 @@ CONFIG_SECTIONS: tuple[ConfigSection, ...] = (
             "对应官方主设置页。"
         ),
         item_ids=(
-            *range(1, 11),
+            1,
+            2,
+            3,
+            4,
+            5,
+            7,
+            8,
+            10,
             *range(49, 54),
             83,
             87,
@@ -63,7 +71,7 @@ CONFIG_SECTIONS: tuple[ConfigSection, ...] = (
         key="paper",
         label="纸张与介质",
         description="自定义纸张名称、重量、类型和纸路设置。",
-        item_ids=tuple(range(11, 49)),
+        item_ids=(6, 9, *range(11, 49)),
     ),
     ConfigSection(
         key="communication",
@@ -152,18 +160,34 @@ def _record_view(record: dict) -> dict[str, object]:
         bool(record.get("sensitive")) or item_id in SENSITIVE_ITEM_IDS
     )
     display = record.get("display")
+    if (
+        isinstance(record.get("value"), int)
+        and (
+            oid in {"43.8.1.1.11.1.1", "43.8.1.1.4.1.1"}
+            or oid in MEDIA_WEIGHT_OIDS
+        )
+    ):
+        display = display_media_value(oid, record["value"])
     if sensitive:
         display = "<redacted>"
     known = CONFIG_KNOWN.get(oid, {})
+    label = record.get("label") or known.get("label")
+    label_source = (
+        "friendly"
+        if label
+        else "vendor"
+        if record.get("vendor_name")
+        else "oid"
+    )
     return {
         "item_id": item_id,
         "label": (
-            record.get("label")
-            or known.get("label")
+            label
             or record.get("vendor_name")
             or record.get("pjl_object")
             or oid
         ),
+        "label_source": label_source,
         "oid": oid,
         "absolute_oid": absolute_oid,
         "status": record.get("status"),
@@ -376,12 +400,25 @@ class ConfigWorkbench:
         editing_items = [
             item
             for record in records
-            if (item := _editable_view(record)) is not None
+            if (
+                (item := _editable_view(record)) is not None
+                and item["readable"]
+            )
         ]
         editing_available = self._writes_available(host)
         reviewed_ids = {
             int(item["item_id"]) for item in editing_items
         } if editing_available else set()
+        readable_objects = [
+            view for view in by_id.values() if view["readable"]
+        ]
+        technical_ids = set(STATUS_ITEMS) | reviewed_ids
+        read_only_objects = [
+            view
+            for view in readable_objects
+            if view["item_id"] not in technical_ids
+            and view["label_source"] == "friendly"
+        ]
         return {
             "host": host,
             "transport": self._transport_for(host),
@@ -400,13 +437,17 @@ class ConfigWorkbench:
                 "available": editing_available,
                 "items": editing_items,
             },
-            "objects": [
-                _record_view(record) for record in records
-            ],
+            "objects": readable_objects,
+            "hidden_count": len(records) - len(readable_objects),
+            "read_only_objects": read_only_objects,
             "status_objects": [
                 by_id[item_id]
                 for item_id in STATUS_ITEMS
-                if item_id in by_id and item_id not in reviewed_ids
+                if (
+                    item_id in by_id
+                    and item_id not in reviewed_ids
+                    and by_id[item_id]["readable"]
+                )
             ],
         }
 

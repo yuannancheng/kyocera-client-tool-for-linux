@@ -320,6 +320,8 @@ class PageTests(unittest.TestCase):
             "config-baseline-save",
             "config-baseline-compare",
             "config-status-grid",
+            "config-readonly-block",
+            "config-readonly-items",
             "config-edit-items",
             "config-edit-status",
             "config-objects",
@@ -332,6 +334,8 @@ class PageTests(unittest.TestCase):
         self.assertIn("/api/config/categories", DEVICE_HTML)
         self.assertIn("category: selectedConfigCategory", DEVICE_HTML)
         self.assertIn("只访问当前分区", DEVICE_HTML)
+        self.assertIn("当前设备设置", DEVICE_HTML)
+        self.assertIn("设备不支持已隐藏", DEVICE_HTML)
         self.assertIn(
             "grid-template-columns: minmax(0, 1fr) max-content",
             DEVICE_HTML,
@@ -347,6 +351,13 @@ class PageTests(unittest.TestCase):
             'id="config-authorize"',
         ):
             self.assertNotIn(removed, DEVICE_HTML)
+
+    def test_device_page_uses_friendly_tray_and_default_labels(self):
+        self.assertIn("tray.display_name", DEVICE_HTML)
+        self.assertIn("tray.display_paper", DEVICE_HTML)
+        self.assertEqual(DEVICE_HTML.count("使用设备当前设置"), 3)
+        self.assertIn('"Default paper size": "默认纸张尺寸"', DEVICE_HTML)
+        self.assertIn('"Default media type": "默认介质类型"', DEVICE_HTML)
 
     def test_pages_are_self_contained(self):
         for page in (OVERVIEW_HTML, DEVICE_HTML):

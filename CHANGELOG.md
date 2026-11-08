@@ -2,6 +2,26 @@
 
 ## 2026-11-08
 
+### Changed — friendly official device configuration and tray labels
+
+- 设备配置页不再列出设备返回 `STATUS!=0` 或缺失的不可读对象，只在技术详情
+  摘要中保留隐藏数量；不可读的可写属性也不会显示成禁用编辑卡。
+- 纸张尺寸、介质类型和纸张重量改用官方 Client Tool 1.4.11.2 枚举，而不是
+  `设备值 11` 一类占位文案。新增可复现工具
+  `tools/clienttool_media_values.py`，校验 `KMUTLCFG.exe` 与简体中文资源 DLL
+  的 SHA-256 后从 `0x00497458`、`0x00497c68` 表提取映射。
+- “介质/纸张”相关对象重新归入“纸张与介质”分区；普通可读设置使用只读卡片
+  展示，原始 OID 表移到折叠的技术详情中。
+- PJL 纸盒解析保留 `INFO CONFIG` 的 `NAME` 列，并与
+  `INFO KINTRAYSTATUS` 的 `INTRAYn` 标识合并。界面显示“主纸盒”“手送纸盒”
+  或“纸盒 n”，介质显示“A4 · 普通纸”，`UNKNOWN` 被替换为破折号。
+- 扫描颜色、分辨率和原稿类型未指定时改称“使用设备当前设置”，避免把省略值
+  显示成含糊的“设备默认”。
+- 验证：全量测试 348/348 通过；官方映射提取结果与公开 TSV 逐字一致；
+  页面 JavaScript 语法、Python 编译、公开树检查和 `git diff --check` 通过。
+  当前环境无浏览器宿主且本地服务监听被沙盒拒绝，未完成人工截图验收；本轮
+  未连接 MA2000w，也未执行设备写入。
+
 ### Changed — unified Wi-Fi and device configuration UI
 
 - 设备页将独立的“Wi‑Fi 状态与配置”卡片合并到“设备配置 → Wi‑Fi”分区；

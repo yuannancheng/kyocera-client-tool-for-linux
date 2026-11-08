@@ -10,6 +10,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from .config_media import MEDIA_TYPE_NAMES, paper_weight_name
+
 
 @dataclass(frozen=True)
 class EditableIntegerSetting:
@@ -41,13 +43,13 @@ _MEDIA_WEIGHT_IDS = (
     32,
 )
 _MEDIA_WEIGHT_CHOICES = (
-    (11, "设备值 11"),
-    (12, "设备值 12"),
-    (13, "设备值 13"),
+    (11, "普通 1"),
+    (12, "普通 2"),
+    (13, "普通 3"),
 )
 _MEDIA_WEIGHT_DESCRIPTION = (
     "MA2000w 已验证设备值 11、12、13 可写入并恢复；"
-    "具体介质名称仍待官方资源确认。"
+    "显示名称来自 Client Tool 1.4.11.2 的纸张重量表。"
 )
 
 
@@ -84,9 +86,9 @@ EDITABLE_INTEGER_SETTINGS: tuple[EditableIntegerSetting, ...] = (
         EditableIntegerSetting(
             item_id=item_id,
             label=(
-                "自定义纸 1 的重量/类型"
-                if item_id == 25
-                else f"介质重量第 {item_id - 10} 行"
+                f"{MEDIA_TYPE_NAMES[item_id - 10]} 纸张重量"
+                if MEDIA_TYPE_NAMES[item_id - 10].startswith("自定义")
+                else f"{MEDIA_TYPE_NAMES[item_id - 10]}重量"
             ),
             description=_MEDIA_WEIGHT_DESCRIPTION,
             choices=_MEDIA_WEIGHT_CHOICES,
@@ -152,6 +154,8 @@ def display_edit_value(setting: EditableIntegerSetting, value: int) -> str:
     choices = dict(setting.choices)
     if value in choices:
         rendered = choices[value]
+    elif weight_name := paper_weight_name(value):
+        rendered = weight_name
     elif setting.scale != 1:
         rendered = f"{value * setting.scale} {setting.unit or ''}".strip()
     else:

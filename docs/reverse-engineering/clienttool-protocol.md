@@ -964,6 +964,47 @@ MA2000w 只读配置值：`item 70 = 2`（`snmpEnableAuthenTraps` disabled）、
 （On/Off）与 `0x4da`（`Duplex` 静态标签）只在自定义纸张记录下可见，其状态来自
 该记录的 `+0x20c` 字段，尚不能把它单独绑定到某个 OID，继续保留为未知。
 
+### 6.6.3 纸张尺寸、介质类型和纸张重量
+
+官方 `KMUTLCFG.exe` 与简体中文资源 DLL 的哈希分别为：
+
+- `KMUTLCFG.exe`：
+  `63e202a050fe44611377deb4c5d01246da45fd51cda22f308ff990867730c9ea`；
+- `LANG/zh-Hans/KMUTLCFGRes.dll`：
+  `ae3b8ee53860f235fa8f180c23b3aca382af6f8e0f45fe79131b5a5210abcd96`。
+
+`KMUTLCFG.exe` 的 `.rdata` 表提供了设备枚举值与 RT_STRING ID 的直接映射：
+
+| 表地址 | 记录结构 | 用途 |
+| --- | --- | --- |
+| `0x00497458` | 6 个 DWORD，以首字段 `0x15` 结束 | 纸张尺寸 |
+| `0x00497c68` | 7 个 DWORD，以第二字段 `0x17` 结束 | 普通介质类型 |
+| `0x00497ef0` | 7 个 DWORD | Pictor 模式介质子集 |
+
+静态复核时，PE 节表确认 `.rdata` 的 VMA 为 `0x00488000`、文件偏移为
+`0x00086e00`；REA 的节表证据 ID 为
+`ev_2a865bfd9a803fae78e081f8fe21c446fc391a381d77f7511647409326e27d6a`。
+简体中文资源 DLL 的 PE 资源清单证据 ID 为
+`ev_1aedc3dd025061932d914ca5401bd4baebbe25d99b8a1e54a64c9c1ee2dcd42b`。
+
+映射后的公开数据见
+[`data/clienttool-media-values.tsv`](data/clienttool-media-values.tsv)。其中：
+
+- 纸张尺寸值 `9` = A4，值 `20` = 自定义尺寸；该表没有值 `19`，实现不得自行补项；
+- 介质类型值 `1` = 普通纸、`2` = 预印纸、`4` = 铜版纸、`12` = 卡片纸；
+- 介质值 `15..22` 对应自定义 `1..8`；
+- 纸张重量控件 `0x3f6` 的选项顺序为轻、普通 1–3、重 1–3；
+  `FUN_00405c10` 读取记录后减去 `10` 选择控件项，因此设备值
+  `10..16` 对应上述七项。
+
+当前正式界面使用官方名称显示介质和纸张枚举；写操作仍只允许此前审计过的
+设备值 `11/12/13`，没有因为补齐显示资源而扩大可写字段或可写值范围。
+
+纸盒名称来自 PJL `INFO CONFIG` 的 `NAME` 列，而不是 `INTRAY1` 等协议标识。
+`INFO KINTRAYSTATUS` 只返回标识、状态、尺寸、介质和余量，因此界面按
+`INTRAYn` 标识与 `INFO CONFIG` 合并名称。无名称时只显示“纸盒 n”，不把
+协议标识或 `UNKNOWN` 哨兵值直接暴露给用户。
+
 Wi‑Fi 状态页（dialog `0x00f3`，页面过程 `FUN_00403e80`）：
 
 | 控件 | 模型偏移 | item_id | OID | 页面语义 |

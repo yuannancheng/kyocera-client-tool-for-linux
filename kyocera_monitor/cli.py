@@ -130,10 +130,19 @@ def format_snapshot(snapshot: PrinterSnapshot) -> str:
             )
         )
     for tray in snapshot.tray_status:
+        display = tray.to_dict()
         details = " ".join(
-            value for value in (tray.status, tray.paper, tray.media) if value
+            str(value)
+            for value in (
+                display.get("display_status"),
+                display.get("display_paper"),
+            )
+            if value and value != "—"
         )
-        lines.append(f"Tray {tray.name}: {details} remain={tray.remain}".rstrip())
+        lines.append(
+            f"{display['display_name']}: {details}; "
+            f"remaining={display['display_remain']}".rstrip()
+        )
     for item in snapshot.kgetobj_known.values():
         unit = f" {item['unit']}" if item.get("unit") else ""
         inferred = " (inferred)" if item.get("confidence") == "inferred" else ""
