@@ -10,7 +10,10 @@
 - API 回退仍要求稳定版本标签、非 draft/prerelease、HTTPS 发布链接，并沿用
   16 KiB 响应上限、双端 60 秒缓存和手动触发边界。
 - 版本升级为 `0.3.3`。验证：全量测试 389/389 通过，新增下载域失败后 API
-  回退测试；`v0.3.2` 保持已发布状态，不重写历史标签。
+  回退测试；GitHub Test（Python 3.10/3.12）与 Release workflow 均成功，发布
+  wheel、sdist、Debian 包和指向 `v0.3.3` 的 updater 元数据；真实
+  `--check-update` 返回当前/最新均为 `0.3.3`。`v0.3.2` 保持已发布状态，
+  不重写历史标签。
 
 ### Fixed — clean-checkout release CI and v0.3.2
 

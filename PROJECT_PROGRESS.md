@@ -435,15 +435,21 @@ Print Box 和 SNMPv3 等工作流。
   release API 回退，避免依赖单一下载域。
 - API 回退拒绝 draft/prerelease 和非 HTTPS 发布页，继续使用 16 KiB 上限、
   语义版本比较和双端 60 秒缓存。版本升级为 `0.3.3`。
+- `v0.3.3` 的 Test（Python 3.10/3.12）和 Release workflow 均成功；Release
+  包含 `kyocera-monitor_0.3.3-1_all.deb`、wheel 和 sdist，updater 元数据
+  为 `{"version":"0.3.3","htmlUrl":".../v0.3.3"}`，GitHub latest release
+  指向 `v0.3.3`。
 
 验证：
 
 - 全量测试 389/389 通过；新增 release 资产 504 后 API 回退测试。
+- GitHub Actions 的 Python 3.10/3.12 Test 与 Release 均成功；真实
+  `kyocera-monitor --check-update --json` 返回当前/最新 `0.3.3` 且无更新。
 - `v0.3.2` 保持已发布，不移动或复用历史标签。
 - 工作流 YAML、Python 编译、公开树检查和 `git diff --check` 通过。
 
-下一步：提交并推送 `v0.3.3`，确认 Release 与 updater 元数据发布成功，并执行
-真实 `--check-update`。
+下一步：在英文桌面环境人工检查版本弹窗与长文本布局；后续按明确的语义版本
+标签发布，不移动已发布的 `v0.3.1`、`v0.3.2` 或 `v0.3.3`。
 
 ## 历史工作交接（第六十三轮）
 
