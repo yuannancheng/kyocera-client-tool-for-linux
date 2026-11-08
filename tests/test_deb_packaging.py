@@ -1,3 +1,4 @@
+import os
 import shutil
 import subprocess
 import tempfile
@@ -41,6 +42,8 @@ class DebianPackageTests(unittest.TestCase):
             self.assertIn("Package: kyocera-monitor", info)
             self.assertIn("Architecture: all", info)
             self.assertIn("python3-pil", info)
+            self.assertIn("libusb-1.0-0", info)
+            self.assertIn("cups-client", info)
 
             contents = subprocess.run(
                 ["dpkg-deb", "--contents", str(package)],
@@ -53,13 +56,46 @@ class DebianPackageTests(unittest.TestCase):
                 "./usr/bin/kyocera-gui",
                 "./usr/bin/kyocera-kmscn-probe",
                 "./usr/lib/python3/dist-packages/kyocera_monitor/scan.py",
+                "./usr/lib/python3/dist-packages/kyocera_monitor/usb_libusb.py",
+                "./usr/lib/python3/dist-packages/kyocera_monitor/usb_scan.py",
+                "./usr/lib/python3/dist-packages/kyocera_monitor/wifi.py",
                 "./usr/share/applications/kyocera-monitor.desktop",
                 "./usr/share/icons/hicolor/scalable/apps/kyocera-monitor.svg",
+                "./usr/lib/udev/rules.d/90-kyocera-usb.rules",
+                "./usr/libexec/kyocera-monitor/install-linux-driver",
                 "./usr/share/doc/kyocera-monitor/LICENSE",
+                "./usr/share/doc/kyocera-monitor/install_linux_driver.py",
             ):
                 self.assertIn(path, contents)
             self.assertNotIn("Kyocera/ClientTool", contents)
             self.assertNotIn(".pyc", contents)
+
+            extracted = Path(tmp) / "root"
+            subprocess.run(
+                ["dpkg-deb", "--extract", str(package), str(extracted)],
+                check=True,
+            )
+            environment = dict(os.environ)
+            environment["PYTHONPATH"] = str(
+                extracted / "usr" / "lib" / "python3" / "dist-packages"
+            )
+            helper = subprocess.run(
+                [
+                    str(
+                        extracted
+                        / "usr"
+                        / "libexec"
+                        / "kyocera-monitor"
+                        / "install-linux-driver"
+                    ),
+                    "--help",
+                ],
+                check=True,
+                capture_output=True,
+                text=True,
+                env=environment,
+            )
+            self.assertIn("inspect or install a CUPS USB queue", helper.stdout)
 
 
 if __name__ == "__main__":

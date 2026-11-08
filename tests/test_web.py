@@ -256,6 +256,22 @@ class PageTests(unittest.TestCase):
         self.assertIn("link.addEventListener(\"click\"", DEVICE_HTML)
         self.assertIn('setScanStatus("正在下载 "', DEVICE_HTML)
 
+    def test_device_page_has_wifi_status_scan_and_connect(self):
+        for element_id in (
+            "wifi-status-read",
+            "wifi-scan",
+            "wifi-ap-select",
+            "wifi-ssid",
+            "wifi-security",
+            "wifi-password",
+            "wifi-connect-confirm",
+            "wifi-connect",
+        ):
+            self.assertIn(f'id="{element_id}"', DEVICE_HTML)
+        self.assertIn("/api/wifi/status", DEVICE_HTML)
+        self.assertIn("/api/wifi/scan", DEVICE_HTML)
+        self.assertIn("/api/wifi/connect", DEVICE_HTML)
+
     def test_device_page_has_presets_folder_and_settings(self):
         for element_id in (
             "preset-select",
@@ -789,6 +805,104 @@ class ConfigApiTests(unittest.TestCase):
         self.assertEqual(status, 400)
         self.assertIn("confirm=true", json.loads(body)["error"])
         self.workbench.apply_integer.assert_not_called()
+
+
+class WifiApiTests(unittest.TestCase):
+    def setUp(self):
+        registry = DeviceRegistry(
+            lambda key: snapshot(), "192.0.2.1", min_interval=0
+        )
+        self.workbench = mock.Mock()
+        self.handler = make_handler(registry, wifi_workbench=self.workbench)
+
+    def request(self, method, path, payload=None):
+        body = json.dumps(payload).encode() if payload is not None else None
+        request = self.handler.__new__(self.handler)
+        request.path = path
+        request.headers = {
+            "Content-Length": str(len(body or b"")),
+            "Content-Type": "application/json",
+        }
+        request.rfile = io.BytesIO(body or b"")
+        request.wfile = io.BytesIO()
+        request._status = None
+        request._headers = {}
+
+        def send_response(status):
+            request._status = status
+
+        def send_header(name, value):
+            request._headers[name] = value
+
+        request.send_response = send_response
+        request.send_header = send_header
+        request.end_headers = lambda: None
+        request.log_message = lambda *_args: None
+        getattr(request, f"do_{method}")()
+        return request._status, request._headers, request.wfile.getvalue()
+
+    def test_wifi_status_and_scan_are_dispatched(self):
+        self.workbench.status.return_value = {
+            "connected": True,
+            "ssid": "Office",
+        }
+        self.workbench.scan.return_value = [{"ssid": "Office"}]
+        status, _, body = self.request(
+            "GET", "/api/wifi/status?host=192.0.2.1"
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(body)["ssid"], "Office")
+        self.workbench.status.assert_called_once_with("192.0.2.1")
+
+        status, _, body = self.request(
+            "GET", "/api/wifi/scan?host=192.0.2.1"
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(body)[0]["ssid"], "Office")
+        self.workbench.scan.assert_called_once_with("192.0.2.1")
+
+    def test_wifi_connect_requires_confirmation_and_dispatches(self):
+        status, _, body = self.request(
+            "POST",
+            "/api/wifi/connect",
+            {
+                "host": "192.0.2.1",
+                "ssid": "Office",
+                "security": 4,
+                "password": "secret",
+            },
+        )
+        self.assertEqual(status, 400)
+        self.assertIn("confirm=true", json.loads(body)["error"])
+        self.workbench.connect.assert_not_called()
+
+        self.workbench.connect.return_value = {
+            "connected": True,
+            "ssid": "Office",
+            "security_name": "WPA2 PSK (AES)",
+        }
+        status, _, body = self.request(
+            "POST",
+            "/api/wifi/connect",
+            {
+                "host": "192.0.2.1",
+                "ssid": "Office",
+                "security": 4,
+                "password": "secret",
+                "bssid": "AA:BB:CC:DD:EE:FF",
+                "confirm": True,
+            },
+        )
+        self.assertEqual(status, 200)
+        self.assertTrue(json.loads(body)["connected"])
+        self.workbench.connect.assert_called_once_with(
+            "192.0.2.1",
+            ssid="Office",
+            security=4,
+            password="secret",
+            bssid="AA:BB:CC:DD:EE:FF",
+            wep_index=0,
+        )
 
 
 if __name__ == "__main__":

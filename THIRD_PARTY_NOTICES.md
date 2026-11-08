@@ -4,9 +4,11 @@ This repository does not vendor third-party source code or binary packages.
 
 The status, discovery, monitoring, PNG, PDF, BMP, and RAW paths use only the
 Python standard library. JPEG, TIFF, high-compression PDF, and XPS local scan
-export use Pillow. The optional native GUI uses the system-provided GTK 3 and
-WebKit2GTK libraries. These dependencies are not bundled with this repository;
-their licenses and notices are supplied by the packages that provide them.
+export use Pillow. The optional USB device fallback dynamically uses the
+system-provided libusb 1.0 library through Python `ctypes`. The optional native
+GUI uses the system-provided GTK 3 and WebKit2GTK libraries. These dependencies
+are not bundled with this repository; their licenses and notices are supplied
+by the packages that provide them.
 
 ## Pillow
 

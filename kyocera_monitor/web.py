@@ -1,7 +1,8 @@
-"""Read-only local web dashboard for a printer status snapshot.
+"""Local web dashboard for printer status, scanning and reviewed writes.
 
 The dashboard serves the same ``PrinterSnapshot`` data as ``--json``. It binds
-to loopback by default and never sends write commands to the printer.
+to loopback by default. Configuration, Wi-Fi and scan actions require explicit
+API confirmation where they change device state.
 """
 
 from __future__ import annotations
@@ -36,6 +37,7 @@ from .scan import (
     ScanJobManager,
     ScanOptions,
 )
+from .wifi import SECURITY_MODES, WifiError, WifiWorkbench
 
 Collector = Callable[[], PrinterSnapshot]
 
@@ -740,6 +742,46 @@ DEVICE_HTML = """<!doctype html>
   <div class="card" style="margin-top:12px">
     <div class="label">设备设置</div>
     <div id="settings" class="value">-</div>
+  </div>
+  <div class="card" style="margin-top:12px">
+    <div class="label">Wi-Fi 状态与配置</div>
+    <div class="inline">
+      <button id="wifi-status-read" type="button">读取 Wi-Fi 状态</button>
+      <button id="wifi-scan" type="button">扫描附近网络</button>
+      <span id="wifi-op-status" class="muted">尚未读取</span>
+    </div>
+    <div id="wifi-status-grid" class="config-grid"></div>
+    <div class="settings" style="margin-top:10px">
+      <label class="wide">附近网络
+        <select id="wifi-ap-select">
+          <option value="">先扫描附近网络，或手动输入</option>
+        </select>
+      </label>
+      <label>SSID
+        <input id="wifi-ssid" maxlength="32" autocomplete="off">
+      </label>
+      <label>安全模式
+        <select id="wifi-security">
+          <option value="4">WPA2 PSK (AES)</option>
+          <option value="3">WPA/WPA2 PSK (Auto)</option>
+          <option value="2">WPA/WPA2 PSK (AES)</option>
+          <option value="1">WEP</option>
+          <option value="0">开放网络</option>
+        </select>
+      </label>
+      <label>密码
+        <input id="wifi-password" type="password" autocomplete="new-password">
+      </label>
+    </div>
+    <div class="inline">
+      <label><input id="wifi-connect-confirm" type="checkbox">
+        确认更改设备 Wi-Fi；连接失败可能需要用打印机面板恢复网络</label>
+      <button id="wifi-connect" type="button">连接 Wi-Fi</button>
+    </div>
+    <div id="wifi-note" class="muted">
+      配置使用官方 Wi-Fi Setup Tool 的 KGETOBJ/KSETOBJ 顺序。
+      密码只发送到本机服务，不写入设置文件或日志。
+    </div>
   </div>
   <div class="card" style="margin-top:12px">
     <div class="label">设备属性配置、面板与 Wi-Fi</div>
@@ -1511,6 +1553,132 @@ async function readPushScan() {
   }
 }
 
+function renderWifiStatus(data) {
+  const grid = byId("wifi-status-grid");
+  grid.replaceChildren();
+  const rows = [
+    ["连接状态", data.connected ? "已连接" : "未连接"],
+    ["SSID", data.ssid],
+    ["安全模式", data.security_name],
+    ["信道", data.channel],
+    ["信号", data.rssi == null ? "未知" : `${data.rssi} dBm`]
+  ];
+  for (const [name, value] of rows) {
+    const item = document.createElement("div");
+    item.className = "config-item";
+    const label = document.createElement("div");
+    label.className = "name";
+    label.textContent = name;
+    const reading = document.createElement("div");
+    reading.className = "reading";
+    reading.textContent = value == null || value === "" ? "-" : String(value);
+    item.append(label, reading);
+    grid.append(item);
+  }
+}
+
+async function readWifiStatus() {
+  const status = byId("wifi-op-status");
+  const button = byId("wifi-status-read");
+  button.disabled = true;
+  status.textContent = "正在读取 Wi-Fi 状态…";
+  try {
+    const data = await configRequest("/api/wifi/status");
+    renderWifiStatus(data);
+    status.textContent = "Wi-Fi 状态已读取";
+  } catch (err) {
+    status.textContent = "读取失败：" + String(err);
+  } finally {
+    button.disabled = false;
+  }
+}
+
+async function scanWifi() {
+  const status = byId("wifi-op-status");
+  const button = byId("wifi-scan");
+  const select = byId("wifi-ap-select");
+  button.disabled = true;
+  status.textContent = "正在通过设备扫描附近网络；通常需要数秒…";
+  try {
+    const points = await configRequest("/api/wifi/scan");
+    select.replaceChildren();
+    const empty = document.createElement("option");
+    empty.value = "";
+    empty.textContent = points.length ? "选择一个网络" : "未发现网络";
+    select.append(empty);
+    for (const point of points) {
+      const option = document.createElement("option");
+      option.value = String(point.index);
+      option.dataset.ssid = point.ssid || "";
+      option.dataset.security = String(point.security ?? 4);
+      option.dataset.bssid = point.bssid || "";
+      const signal = point.rssi == null ? "" : ` · ${point.rssi} dBm`;
+      option.textContent = `${point.ssid || "隐藏网络"} · ${point.security_name}${signal}`;
+      select.append(option);
+    }
+    status.textContent = `扫描完成，共 ${points.length} 个网络`;
+  } catch (err) {
+    status.textContent = "扫描失败：" + String(err);
+  } finally {
+    button.disabled = false;
+  }
+}
+
+function chooseWifiAccessPoint() {
+  const select = byId("wifi-ap-select");
+  const option = select.selectedOptions[0];
+  if (!option || !option.value) return;
+  byId("wifi-ssid").value = option.dataset.ssid || "";
+  byId("wifi-security").value = option.dataset.security || "4";
+  byId("wifi-password").focus();
+}
+
+async function connectWifi() {
+  const status = byId("wifi-op-status");
+  if (!byId("wifi-connect-confirm").checked) {
+    status.textContent = "请先勾选确认框";
+    return;
+  }
+  const ssid = byId("wifi-ssid").value.trim();
+  const security = Number(byId("wifi-security").value);
+  const password = byId("wifi-password").value;
+  const option = byId("wifi-ap-select").selectedOptions[0];
+  const selectedMatches = Boolean(
+    option?.value
+    && option.dataset.ssid === ssid
+    && Number(option.dataset.security) === security
+  );
+  if (!ssid) {
+    status.textContent = "SSID 不能为空";
+    return;
+  }
+  if (!confirm(`确认把打印机切换到 Wi-Fi「${ssid}」？`)) return;
+  const button = byId("wifi-connect");
+  button.disabled = true;
+  status.textContent = "正在写入官方 Wi-Fi 配置并等待关联…";
+  try {
+    const result = await configRequest("/api/wifi/connect", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({
+        confirm: true,
+        ssid,
+        security,
+        password,
+        bssid: selectedMatches ? (option?.dataset.bssid || "") : ""
+      })
+    });
+    byId("wifi-password").value = "";
+    byId("wifi-connect-confirm").checked = false;
+    status.textContent = `已连接到 ${result.ssid}（${result.security_name}）`;
+    await readWifiStatus();
+  } catch (err) {
+    status.textContent = "配置失败：" + String(err);
+  } finally {
+    button.disabled = false;
+  }
+}
+
 async function discover() {
   const box = byId("devices");
   box.textContent = "正在搜索…";
@@ -1559,6 +1727,10 @@ byId("config-read").addEventListener("click", readConfiguration);
 byId("config-baseline-save").addEventListener("click", saveConfigurationBaseline);
 byId("config-baseline-compare").addEventListener("click", compareConfigurationBaseline);
 byId("push-scan-read").addEventListener("click", readPushScan);
+byId("wifi-status-read").addEventListener("click", readWifiStatus);
+byId("wifi-scan").addEventListener("click", scanWifi);
+byId("wifi-ap-select").addEventListener("change", chooseWifiAccessPoint);
+byId("wifi-connect").addEventListener("click", connectWifi);
 text("current-host", currentHost ? "当前: " + currentHost : "当前: 默认设备");
 setConfigStatus("尚未读取配置");
 loadSettings();
@@ -1577,6 +1749,7 @@ def make_handler(
     settings_store: SettingsStore | None = None,
     config_workbench: ConfigWorkbench | None = None,
     push_scan_reader: Callable[[str], dict] | None = None,
+    wifi_workbench: WifiWorkbench | None = None,
 ) -> type[BaseHTTPRequestHandler]:
     manager = scan_manager or ScanJobManager()
     settings = settings_store or SettingsStore()
@@ -1659,6 +1832,39 @@ def make_handler(
                     payload = settings.load()
                 except SettingsError as exc:
                     self._json_error(500, str(exc))
+                    return
+                body = json.dumps(
+                    payload, ensure_ascii=False
+                ).encode("utf-8")
+                self._respond(200, "application/json; charset=utf-8", body)
+            elif path in {"/api/wifi/status", "/api/wifi/scan"}:
+                requested = (parse_qs(parsed.query).get("host") or [None])[0]
+                try:
+                    host = registry.resolve(requested)
+                except KeyError:
+                    self._json_error(
+                        404 if requested is not None else 400,
+                        (
+                            f"unknown device: {requested}"
+                            if requested is not None
+                            else "no printer selected"
+                        ),
+                    )
+                    return
+                if wifi_workbench is None:
+                    self._json_error(
+                        409,
+                        "Wi-Fi operations are unavailable for this connection",
+                    )
+                    return
+                try:
+                    payload = (
+                        wifi_workbench.status(host)
+                        if path.endswith("/status")
+                        else wifi_workbench.scan(host)
+                    )
+                except (WifiError, OSError, TimeoutError, ValueError) as exc:
+                    self._json_error(502, str(exc))
                     return
                 body = json.dumps(
                     payload, ensure_ascii=False
@@ -1809,6 +2015,7 @@ def make_handler(
                 "/api/settings",
                 "/api/config/baseline",
                 "/api/config/apply",
+                "/api/wifi/connect",
             }:
                 self._respond(404, "text/plain; charset=utf-8", b"not found\n")
                 return
@@ -1816,7 +2023,11 @@ def make_handler(
                 length = int(self.headers.get("Content-Length") or "0")
             except ValueError:
                 length = 0
-            maximum = 64 * 1024 if parsed.path == "/api/settings" else 4096
+            maximum = (
+                64 * 1024
+                if parsed.path in {"/api/settings", "/api/wifi/connect"}
+                else 4096
+            )
             if length <= 0 or length > maximum:
                 self._json_error(
                     400,
@@ -1851,6 +2062,9 @@ def make_handler(
             if parsed.path == "/api/config/apply":
                 self._config_apply_operation(payload, config_workbench)
                 return
+            if parsed.path == "/api/wifi/connect":
+                self._wifi_connect_operation(payload, wifi_workbench)
+                return
             if parsed.path == "/api/scans":
                 self._start_scan(payload)
                 return
@@ -1872,6 +2086,84 @@ def make_handler(
                 {"device": host, "devices": registry.hosts()},
                 ensure_ascii=False,
             ).encode("utf-8")
+            self._respond(200, "application/json; charset=utf-8", body)
+
+        def _wifi_connect_operation(
+            self,
+            payload: dict[str, object],
+            workbench: WifiWorkbench | None,
+        ) -> None:
+            if workbench is None:
+                self._json_error(
+                    409,
+                    "Wi-Fi operations are unavailable for this connection",
+                )
+                return
+            client = getattr(self, "client_address", ("127.0.0.1", 0))[0]
+            if client not in {"127.0.0.1", "::1"}:
+                self._json_error(
+                    403,
+                    "Wi-Fi credential changes are limited to loopback clients",
+                )
+                return
+            if payload.get("confirm") is not True:
+                self._json_error(400, "Wi-Fi change requires confirm=true")
+                return
+            requested = payload.get("host")
+            if requested is not None and not isinstance(requested, str):
+                self._json_error(400, "host must be a string or null")
+                return
+            ssid = payload.get("ssid")
+            security = payload.get("security")
+            password = payload.get("password")
+            bssid = payload.get("bssid", "")
+            wep_index = payload.get("wep_index", 0)
+            if not isinstance(ssid, str) or not ssid:
+                self._json_error(400, "ssid must be a non-empty string")
+                return
+            if isinstance(security, bool) or not isinstance(security, int):
+                self._json_error(400, "security must be an integer")
+                return
+            if security not in SECURITY_MODES:
+                self._json_error(400, "unsupported Wi-Fi security mode")
+                return
+            if password is not None and not isinstance(password, str):
+                self._json_error(400, "password must be a string or null")
+                return
+            if not isinstance(bssid, str):
+                self._json_error(400, "bssid must be a string")
+                return
+            if isinstance(wep_index, bool) or not isinstance(wep_index, int):
+                self._json_error(400, "wep_index must be an integer")
+                return
+            if wep_index < 0:
+                self._json_error(400, "wep_index must be non-negative")
+                return
+            try:
+                host = registry.resolve(requested)
+            except KeyError:
+                self._json_error(
+                    404 if requested is not None else 400,
+                    (
+                        f"unknown device: {requested}"
+                        if requested is not None
+                        else "no printer selected"
+                    ),
+                )
+                return
+            try:
+                result = workbench.connect(
+                    host,
+                    ssid=ssid,
+                    security=security,
+                    password=password,
+                    bssid=bssid,
+                    wep_index=wep_index,
+                )
+            except (WifiError, OSError, TimeoutError, ValueError) as exc:
+                self._json_error(502, str(exc))
+                return
+            body = json.dumps(result, ensure_ascii=False).encode("utf-8")
             self._respond(200, "application/json; charset=utf-8", body)
 
         def _config_baseline_operation(
@@ -2068,6 +2360,7 @@ def run_server(
     settings_store: SettingsStore | None = None,
     config_workbench: ConfigWorkbench | None = None,
     push_scan_reader: Callable[[str], dict] | None = None,
+    wifi_workbench: WifiWorkbench | None = None,
 ) -> None:
     server = create_server(
         registry,
@@ -2078,6 +2371,7 @@ def run_server(
         settings_store=settings_store,
         config_workbench=config_workbench,
         push_scan_reader=push_scan_reader,
+        wifi_workbench=wifi_workbench,
     )
     if on_listen is not None:
         actual_port = server.server_address[1]
@@ -2101,6 +2395,7 @@ def create_server(
     settings_store: SettingsStore | None = None,
     config_workbench: ConfigWorkbench | None = None,
     push_scan_reader: Callable[[str], dict] | None = None,
+    wifi_workbench: WifiWorkbench | None = None,
 ) -> ThreadingHTTPServer:
     """Create (but do not start) the dashboard HTTP server.
 
@@ -2117,5 +2412,6 @@ def create_server(
             settings_store=settings_store,
             config_workbench=config_workbench,
             push_scan_reader=push_scan_reader,
+            wifi_workbench=wifi_workbench,
         ),
     )

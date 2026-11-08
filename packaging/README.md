@@ -8,7 +8,7 @@ install them from the distribution.
 
 ```bash
 python3 tools/build_deb.py
-sudo apt install ./dist/kyocera-monitor_0.2.6-1_all.deb
+sudo apt install ./dist/kyocera-monitor_0.3.0-1_all.deb
 ```
 
 Build without root and without contacting the network. The output path is

@@ -1,0 +1,10 @@
+# Give the active desktop user access to KYOCERA MA2000/MA2001 USB functions.
+# Interface 0 is the bidirectional printer endpoint; interface 1 is the
+# vendor-specific scanner endpoint used by the Linux scanner client.
+SUBSYSTEM=="usb", ATTR{idVendor}=="0482", ATTR{idProduct}=="0d50", TAG+="uaccess"
+SUBSYSTEM=="usb", ATTR{idVendor}=="0482", ATTR{idProduct}=="0d51", TAG+="uaccess"
+SUBSYSTEM=="usb", ATTR{idVendor}=="0482", ATTR{idProduct}=="0d81", TAG+="uaccess"
+SUBSYSTEM=="usb", ATTR{idVendor}=="0482", ATTR{idProduct}=="0d82", TAG+="uaccess"
+
+SUBSYSTEM=="usbmisc", KERNEL=="lp[0-9]*", ATTRS{idVendor}=="0482", ATTRS{idProduct}=="0d5[01]", TAG+="uaccess", GROUP="lp", MODE="0660"
+SUBSYSTEM=="usbmisc", KERNEL=="lp[0-9]*", ATTRS{idVendor}=="0482", ATTRS{idProduct}=="0d8[12]", TAG+="uaccess", GROUP="lp", MODE="0660"

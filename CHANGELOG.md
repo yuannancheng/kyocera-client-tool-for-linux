@@ -1,5 +1,41 @@
 # CHANGELOG
 
+## 2026-11-08
+
+### Added — physical USB, Wi-Fi setup and Linux driver integration
+
+- USB 状态路径完成 MA2000w 真机验证。用户无 `lp` 组权限时，新增纯 `ctypes`
+  libusb Printer-class 回退；它自动分离并恢复 `usblp`，发送相同的 UEL/PJL，
+  Linux 不依赖 Windows mailslot、语言监视器或官方 DLL。
+- 新增 Wi-Fi 状态、AP 扫描和连接协议实现，来自官方 Wi-Fi Setup Tool 的
+  `KGETOBJ/KSETOBJ` 顺序。AP 扫描、安全模式、信道和 RSSI 已在 USB 与 TCP
+  9100 两条真机路径验证；连接写入按 SSID、security、BSSID、WEP、PSK 顺序
+  执行并回读状态。
+- Web/GUI 设备页新增 Wi-Fi 状态、扫描结果选择、手动 SSID、安全模式和密码
+  输入；连接需要显式确认。密码只存在于单次请求，不持久化，写 API 只接受
+  回环客户端。
+- 逆向社会 `KMUSBSCN3.dll` 的 Windows `usbscan.sys` 调用，恢复
+  `IOCTL_SEND_USB_REQUEST` 到 Linux vendor control transfer 的映射；真机
+  验证 scanner interface 的 connect、machine-info、version 和 disconnect。
+  `--usb-scan-info` 可独立执行该只读诊断握手；control 响应现在校验命令码和
+  成功状态，打开失败会释放 libusb 资源。另从 `Ns1815TW3.dll` 与
+  `KMUSBSCN3.dll` 恢复 20-DWORD 扫描参数和 `0x81` ScanReq、`0x82` PageData、
+  `0x83` JobEnd、6 字节 ACK 状态，并加入实验性 `--usb-scan-capture` 单页捕获
+  和合成分帧测试；真机 ACK/RAW 流验证前，图像取回不能标记为已完成。
+- 新增 Debian 包内的 Kyocera USB `uaccess` udev 规则和打印队列安装辅助
+  脚本。当前机器已验证 `kyodialog 10.1-0`、`MA2000w-2` USB CUPS 队列和
+  `usb://Kyocera/MA2000w?serial=...` 设备 URI；辅助脚本默认 dry-run，
+  同名队列指向其他 URI 时拒绝覆盖，只有 `--force` 才更新。包依赖补充
+  `libusb-1.0-0` 和 `cups-client`，辅助入口直接作为可执行文件安装。
+- 版本升级为 `0.3.0`；构建 `dist/kyocera-monitor_0.3.0-1_all.deb`，
+  SHA-256 `3f1a21d7d969b35fbd071ca9fd96923732732756faf758bee66911149518525e`；
+  使用相同 `SOURCE_DATE_EPOCH` 两次构建逐字节一致。
+- 通过 `pkexec` 将系统包从 `0.2.6-1` 升级为 `0.3.0-1`；CUPS `MA2000w-2`
+  USB 队列重新启用，当前为 idle/enabled/accepting。设备已从 USB 总线消失，
+  因此尚未验证实际打印输出。
+- 全量测试 322/322 通过，公开树检查、`compileall`、页面 JavaScript、
+  udev 规则和 `git diff --check` 通过。
+
 ## 2026-11-01
 
 ### Added — reviewed device property editing

@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import argparse
+import getpass
 import json
+import os
 import sys
 import time
 import webbrowser
@@ -37,6 +39,7 @@ from .config_write_executor import (
 from .config_web import ConfigWorkbench
 from .discovery import discover
 from .parser import PrinterSnapshot, parse_response
+from .kmscn_raw import RawScanError, decode_raw
 from .pjl import (
     QUERY_SEQUENCE,
     USB_QUERY_SEQUENCE,
@@ -59,10 +62,32 @@ from .scan import (
     ScanJobManager,
     ScanError,
     ScanOptions,
+    ScanResult,
+    export_pages,
     scan_device,
     write_outputs,
 )
-from .usb import UsbError, discover_usb_printers, select_usb_printer
+from .usb import (
+    UsbError,
+    discover_usb_printers,
+    merge_usb_printers,
+    select_usb_printer,
+)
+from .usb_libusb import discover_libusb_printers
+from .usb_scan import (
+    UsbScanError,
+    UsbScanParameters,
+    UsbScannerControl,
+    probe_scanner,
+)
+from .wifi import (
+    SECURITY_MODES,
+    WifiError,
+    WifiWorkbench,
+    connect_access_point,
+    read_wifi_status,
+    scan_access_points,
+)
 from .web import DeviceRegistry, run_server
 
 
@@ -152,6 +177,81 @@ def format_snapshot(snapshot: PrinterSnapshot) -> str:
     return "\n".join(lines)
 
 
+def usb_scan_parameters_from_cli(args) -> UsbScanParameters:
+    """Map the user-facing scan tokens onto recovered USB integer fields."""
+
+    color = {
+        None: 3,
+        "FULL_COLOR": 3,
+        "GRAYSCALE": 2,
+        "BLACK_AND_WHITE": 1,
+    }
+    if args.scan_color not in color:
+        raise UsbScanError(
+            "the recovered USB request does not yet model "
+            f"scan color {args.scan_color}"
+        )
+    resolution = {
+        None: 300,
+        "RESOLUTION_200X200": 200,
+        "RESOLUTION_300X300": 300,
+        "RESOLUTION_400X400": 400,
+        "RESOLUTION_600X600": 600,
+    }
+    if args.scan_resolution not in resolution:
+        raise UsbScanError(
+            "the recovered USB request does not yet model "
+            f"resolution {args.scan_resolution}"
+        )
+    original_image = {
+        None: 3,
+        "TEXT": 1,
+        "PHOTO": 2,
+        "TEXT_AND_PHOTO": 3,
+        "FOR_OCR": 4,
+    }
+    if args.scan_original_image not in original_image:
+        raise UsbScanError(
+            "the recovered USB request does not yet model "
+            f"original image {args.scan_original_image}"
+        )
+    placement = {
+        None: 1,
+        "AUTO": 1,
+        "ADF": 2,
+        "PLATEN": 3,
+    }
+    if args.scan_original_placement not in placement:
+        raise UsbScanError(
+            f"unsupported USB original placement: "
+            f"{args.scan_original_placement}"
+        )
+    duplex = {
+        None: 0,
+        "SIMPLEX": 0,
+        "DUPLEX": 1,
+    }
+    if args.scan_duplex not in duplex:
+        raise UsbScanError(
+            f"unsupported USB duplex mode: {args.scan_duplex}"
+        )
+    if args.scan_continuous not in {"OFF", None}:
+        raise UsbScanError("continuous USB scan is not yet modeled")
+    if args.scan_max_pages != 1:
+        raise UsbScanError("USB capture currently supports one page")
+    if args.scan_device_format != "RAW":
+        raise UsbScanError("USB scan transport only requests RAW image data")
+    return UsbScanParameters(
+        original_size=4,
+        feed_method=placement[args.scan_original_placement],
+        resolution=resolution[args.scan_resolution],
+        color_mode=color[args.scan_color],
+        original_image=original_image[args.scan_original_image],
+        duplex=duplex[args.scan_duplex],
+        duplex_edge=0,
+    )
+
+
 def collect(
     host: str | None,
     device: str | None,
@@ -200,12 +300,29 @@ def main(argv: list[str] | None = None) -> int:
     target.add_argument(
         "--usb",
         action="store_true",
-        help="auto-detect a /dev/usb/lp* printer and use it",
+        help="auto-detect a USB printer (usblp or libusb fallback)",
     )
     parser.add_argument(
         "--list-usb",
         action="store_true",
-        help="list detected /dev/usb/lp* printers and exit",
+        help="list detected USB printers and exit",
+    )
+    parser.add_argument(
+        "--usb-scan-info",
+        action="store_true",
+        help=(
+            "probe the vendor USB scanner connect/machine-info/version "
+            "protocol without capturing an image"
+        ),
+    )
+    parser.add_argument(
+        "--usb-scan-capture",
+        type=Path,
+        metavar="PATH",
+        help=(
+            "attempt the statically recovered vendor USB RAW scan and export "
+            "one page; experimental until the response stream is hardware-verified"
+        ),
     )
     parser.add_argument(
         "--discover",
@@ -366,6 +483,59 @@ def main(argv: list[str] | None = None) -> int:
             "without receiving or executing a scan"
         ),
     )
+    wifi_mode = parser.add_mutually_exclusive_group()
+    wifi_mode.add_argument(
+        "--wifi-status",
+        action="store_true",
+        help="read the current Wi-Fi connection state over PJL",
+    )
+    wifi_mode.add_argument(
+        "--wifi-scan",
+        action="store_true",
+        help="trigger the official access-point scan and list results",
+    )
+    wifi_mode.add_argument(
+        "--wifi-connect",
+        metavar="SSID",
+        help="connect to an access point using the official SET sequence",
+    )
+    parser.add_argument(
+        "--wifi-security",
+        type=int,
+        choices=tuple(SECURITY_MODES),
+        help="security-mode integer required with --wifi-connect",
+    )
+    parser.add_argument(
+        "--wifi-bssid",
+        default="",
+        help="optional BSSID used with --wifi-connect",
+    )
+    parser.add_argument(
+        "--wifi-wep-index",
+        type=int,
+        default=0,
+        help="WEP key index for security mode 1 (default: 0)",
+    )
+    parser.add_argument(
+        "--wifi-password-env",
+        default="KYOCERA_WIFI_PASSWORD",
+        help=(
+            "environment variable containing the WEP/PSK secret; "
+            "prompts securely when unset"
+        ),
+    )
+    parser.add_argument(
+        "--wifi-scan-timeout",
+        type=float,
+        default=20.0,
+        help="seconds to wait for an access-point scan (default: 20)",
+    )
+    parser.add_argument(
+        "--wifi-connect-timeout",
+        type=float,
+        default=25.0,
+        help="seconds to wait for Wi-Fi association (default: 25)",
+    )
     parser.add_argument(
         "--push-scan-listen",
         action="store_true",
@@ -477,7 +647,9 @@ def main(argv: list[str] | None = None) -> int:
         )
 
     if args.list_usb:
-        printers = discover_usb_printers()
+        printers = merge_usb_printers(
+            discover_usb_printers(), discover_libusb_printers()
+        )
         if args.json:
             print(
                 json.dumps(
@@ -501,7 +673,7 @@ def main(argv: list[str] | None = None) -> int:
                 )
                 print(f"{printer.device}\t{identity}\t{description}".rstrip())
         if not printers:
-            print("no /dev/usb/lp* devices found", file=sys.stderr)
+            print("no USB printer devices found", file=sys.stderr)
         return 0 if printers else 2
 
     if args.discover:
@@ -537,10 +709,57 @@ def main(argv: list[str] | None = None) -> int:
             print("no printers found", file=sys.stderr)
         return 0 if printers else 1
 
-    if not (args.host or args.device or args.usb) and not (
+    if not (
+        args.host
+        or args.device
+        or args.usb
+        or args.usb_scan_info
+    ) and not (
         args.web or args.gui
     ):
         parser.error("one of --host, --device or --usb is required")
+    if args.usb_scan_info and any(
+        (
+            args.host,
+            args.device,
+            args.usb,
+            args.usb_scan_capture,
+            args.web,
+            args.gui,
+            args.config,
+            args.scan,
+            args.push_scan,
+            args.push_scan_listen,
+            args.wifi_status,
+            args.wifi_scan,
+            args.wifi_connect,
+        )
+    ):
+        parser.error("--usb-scan-info must be used alone")
+    if args.usb_scan_capture is not None:
+        if not args.usb:
+            parser.error("--usb-scan-capture requires --usb")
+        if any(
+            (
+                args.host,
+                args.device,
+                args.web,
+                args.gui,
+                args.config,
+                args.scan,
+                args.push_scan,
+                args.push_scan_listen,
+                args.wifi_status,
+                args.wifi_scan,
+                args.wifi_connect,
+                args.watch is not None,
+                args.count,
+                args.raw,
+            )
+        ):
+            parser.error(
+                "USB scan capture cannot be combined with other modes"
+            )
     if args.snmp and args.usb:
         parser.error("--snmp cannot be combined with --usb")
     if args.snmp and not args.host:
@@ -549,6 +768,46 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("--push-scan and --push-scan-listen are mutually exclusive")
     if args.push_scan_run and not args.push_scan_listen:
         parser.error("--push-scan-run requires --push-scan-listen")
+    if bool(args.wifi_status or args.wifi_scan or args.wifi_connect) and any(
+        (
+            args.config,
+            args.scan,
+            args.scan_output is not None,
+            args.push_scan,
+            args.push_scan_listen,
+            args.web,
+            args.gui,
+            args.raw,
+            args.watch is not None,
+            args.count,
+        )
+    ):
+        parser.error("Wi-Fi operations cannot be combined with other modes")
+    if args.wifi_connect:
+        if args.wifi_security is None:
+            parser.error("--wifi-connect requires --wifi-security")
+        if args.wifi_wep_index < 0:
+            parser.error("--wifi-wep-index must be non-negative")
+        if args.wifi_scan_timeout <= 0 or args.wifi_connect_timeout <= 0:
+            parser.error("Wi-Fi timeouts must be positive")
+    elif any(
+        (
+            args.wifi_security is not None,
+            args.wifi_bssid,
+            args.wifi_wep_index,
+            args.wifi_connect_timeout != 25.0,
+        )
+    ):
+        parser.error(
+            "--wifi-security/--wifi-bssid/--wifi-wep-index/"
+            "--wifi-connect-timeout require --wifi-connect"
+        )
+    if args.wifi_scan_timeout <= 0:
+        parser.error("--wifi-scan-timeout must be positive")
+    if args.wifi_scan_timeout != 20.0 and not (
+        args.wifi_scan or args.wifi_connect
+    ):
+        parser.error("--wifi-scan-timeout requires --wifi-scan")
     if args.push_scan or args.push_scan_listen:
         if not args.host:
             parser.error("Push Scan inspection requires --host")
@@ -676,10 +935,201 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("--scan-output requires --scan")
     if args.usb:
         try:
-            args.device = select_usb_printer(discover_usb_printers()).device
+            printers = merge_usb_printers(
+                discover_usb_printers(), discover_libusb_printers()
+            )
+            args.device = select_usb_printer(printers).device
         except UsbError as exc:
             print(f"error: {exc}", file=sys.stderr)
             return 2
+
+    if args.usb_scan_info:
+        try:
+            result = probe_scanner()
+        except (UsbScanError, UsbError, OSError, TimeoutError, ValueError) as exc:
+            print(f"USB scanner probe failed: {exc}", file=sys.stderr)
+            return 2
+        if args.json:
+            print(json.dumps(result, ensure_ascii=False, indent=2))
+        else:
+            info = result["machine_info"]["raw"]
+            print(f"USB scanner: {result['vendor_id']}:{result['product_id']}")
+            print(f"model code: {result['model_code']}")
+            print(f"version: {result['version']}")
+            for name, value in info.items():
+                print(f"{name}: {value}")
+            print("image capture: not implemented")
+        return 0
+
+    if args.usb_scan_capture is not None:
+        try:
+            parameters = usb_scan_parameters_from_cli(args)
+            with UsbScannerControl() as scanner:
+                scanner.connect()
+                scanner.machine_info()
+                scanner.version()
+                page = scanner.capture_page(
+                    parameters,
+                    max_bytes=args.scan_max_response_bytes,
+                    max_seconds=args.scan_timeout,
+                )
+            decoded = decode_raw(page.raw)
+            stem = args.usb_scan_capture.stem or "usb-scan"
+            artifacts = export_pages(
+                [decoded],
+                raw_pages=[page.raw],
+                output_format=args.scan_format,
+                output_stem=stem,
+                resolution=args.scan_resolution,
+            )
+            scan_result = ScanResult(
+                device="usb:0482:0d51",
+                endpoint="usb:vendor-scanner",
+                operation_id="usb-recovered-scan",
+                pages=1,
+                requested_device_format="RAW",
+                effective_device_format="RAW",
+                outputs=artifacts,
+                close_result="disconnected",
+                close_error=None,
+            )
+            paths = write_outputs(scan_result, args.usb_scan_capture)
+        except (
+            OSError,
+            RawScanError,
+            TimeoutError,
+            UsbScanError,
+            ValueError,
+        ) as exc:
+            print(f"USB scan capture failed: {exc}", file=sys.stderr)
+            return 2
+        payload = {
+            "device": scan_result.device,
+            "transport": scan_result.endpoint,
+            "source": page.scan_ack.source,
+            "terminator": page.terminator,
+            "raw_bytes": len(page.raw),
+            "width": decoded.width,
+            "height": decoded.height,
+            "outputs": [
+                {
+                    **artifact.metadata(),
+                    "path": str(path),
+                }
+                for artifact, path in zip(artifacts, paths, strict=True)
+            ],
+        }
+        if args.json:
+            print(json.dumps(payload, ensure_ascii=False, indent=2))
+        else:
+            print(
+                f"USB scan: {decoded.width}x{decoded.height}, "
+                f"{len(page.raw)} raw bytes"
+            )
+            for path in paths:
+                print(path)
+        return 0
+
+    if args.wifi_status or args.wifi_scan or args.wifi_connect:
+        try:
+            with open_channel(
+                host=args.host,
+                device=args.device,
+                port=args.port,
+            ) as channel:
+                if args.wifi_status:
+                    result = read_wifi_status(
+                        channel,
+                        timeout=args.timeout,
+                        idle=args.idle,
+                    )
+                    if args.json:
+                        print(
+                            json.dumps(result, ensure_ascii=False, indent=2)
+                        )
+                    else:
+                        print(
+                            "Wi-Fi: {state}  SSID: {ssid}  "
+                            "Security: {security_name}  "
+                            "RSSI: {rssi} dBm  Channel: {channel}".format(
+                                state=(
+                                    "connected"
+                                    if result["connected"]
+                                    else "not connected"
+                                ),
+                                **result,
+                            )
+                        )
+                elif args.wifi_scan:
+                    access_points = scan_access_points(
+                        channel,
+                        timeout=args.timeout,
+                        idle=args.idle,
+                        scan_timeout=args.wifi_scan_timeout,
+                    )
+                    if args.json:
+                        print(
+                            json.dumps(
+                                [
+                                    point.to_dict()
+                                    for point in access_points
+                                ],
+                                ensure_ascii=False,
+                                indent=2,
+                            )
+                        )
+                    else:
+                        for point in access_points:
+                            print(
+                                f"{point.index}\t{point.ssid}\t"
+                                f"{point.security_name}\t"
+                                f"{point.rssi if point.rssi is not None else '-'}"
+                                f"\t{point.bssid}"
+                            )
+                else:
+                    secret = os.environ.get(args.wifi_password_env)
+                    if args.wifi_security in (1, 2, 3, 4) and not secret:
+                        if not sys.stdin.isatty():
+                            raise WifiError(
+                                f"set {args.wifi_password_env} or run "
+                                "interactively to enter the Wi-Fi secret"
+                            )
+                        secret = getpass.getpass("Wi-Fi secret: ")
+                    result = connect_access_point(
+                        channel,
+                        ssid=args.wifi_connect,
+                        security=args.wifi_security,
+                        password=secret,
+                        bssid=args.wifi_bssid,
+                        wep_index=args.wifi_wep_index,
+                        timeout=args.timeout,
+                        idle=args.idle,
+                        connect_timeout=args.wifi_connect_timeout,
+                        on_progress=(
+                            lambda message: print(message, file=sys.stderr)
+                            if not args.json
+                            else None
+                        ),
+                    )
+                    if args.json:
+                        print(
+                            json.dumps(result, ensure_ascii=False, indent=2)
+                        )
+                    else:
+                        print(
+                            f"connected to {result['ssid']} using "
+                            f"{result['security_name']}"
+                        )
+        except (
+            WifiError,
+            PjlError,
+            OSError,
+            TimeoutError,
+            ValueError,
+        ) as exc:
+            print(f"Wi-Fi operation failed: {exc}", file=sys.stderr)
+            return 2
+        return 0
 
     if args.push_scan:
         try:
@@ -1288,6 +1738,18 @@ def main(argv: list[str] | None = None) -> int:
         registry = DeviceRegistry(collect_host, default_key)
         config_workbench = None
         push_scan_reader = None
+        def open_web_wifi_channel(target: str):
+            if target.startswith("libusb:") or target.startswith("/dev/"):
+                return open_channel(device=target, port=args.port)
+            return open_channel(host=target, port=args.port)
+
+        wifi_workbench = WifiWorkbench(
+            open_web_wifi_channel,
+            timeout=args.timeout,
+            idle=args.idle,
+            scan_timeout=20.0,
+            connect_timeout=25.0,
+        )
         if not (args.device or args.usb):
             def read_web_configuration(key: str):
                 return collect_config_snmp(
@@ -1339,6 +1801,7 @@ def main(argv: list[str] | None = None) -> int:
                     discover_fn=discover_fn,
                     config_workbench=config_workbench,
                     push_scan_reader=push_scan_reader,
+                    wifi_workbench=wifi_workbench,
                 )
             except GuiUnavailable as exc:
                 print(f"error: {exc}", file=sys.stderr)
@@ -1365,6 +1828,7 @@ def main(argv: list[str] | None = None) -> int:
                 on_listen=announce,
                 config_workbench=config_workbench,
                 push_scan_reader=push_scan_reader,
+                wifi_workbench=wifi_workbench,
             )
         except OSError as exc:
             print(f"error: {exc}", file=sys.stderr)

@@ -20,8 +20,10 @@ from kyocera_monitor.usb import (
     UsbError,
     UsbPrinter,
     discover_usb_printers,
+    merge_usb_printers,
     select_usb_printer,
 )
+from kyocera_monitor.usb_libusb import LibusbChannel, LibusbError
 
 
 def usb_response(commands=QUERY_SEQUENCE) -> bytes:
@@ -110,6 +112,47 @@ class UsbDiscoveryTests(unittest.TestCase):
         ]
         with self.assertRaises(UsbError):
             select_usb_printer(printers)
+
+    def test_merge_prefers_real_device_over_libusb_duplicate(self):
+        import tempfile
+
+        with tempfile.NamedTemporaryFile() as real_file:
+            libusb = UsbPrinter(
+                "libusb:001:003",
+                vendor_id=0x0482,
+                product_id=0x0D51,
+                serial="H493345795",
+            )
+            device = UsbPrinter(
+                real_file.name,
+                vendor_id=0x0482,
+                product_id=0x0D51,
+                serial="H493345795",
+            )
+            merged = merge_usb_printers([libusb], [device])
+        self.assertEqual([item.device for item in merged], [real_file.name])
+
+    def test_merge_uses_libusb_when_real_device_is_not_accessible(self):
+        libusb = UsbPrinter(
+            "libusb:001:003",
+            vendor_id=0x0482,
+            product_id=0x0D51,
+            serial="H493345795",
+        )
+        device = UsbPrinter(
+            "/dev/usb/unreadable",
+            vendor_id=0x0482,
+            product_id=0x0D51,
+            serial="H493345795",
+        )
+        merged = merge_usb_printers([device], [libusb])
+        self.assertEqual([item.device for item in merged], ["libusb:001:003"])
+
+    def test_libusb_selector_validation(self):
+        with self.assertRaises(LibusbError):
+            LibusbChannel("usb:001:003")
+        with self.assertRaises(LibusbError):
+            LibusbChannel("libusb:0:3")
 
 
 class UsbTransportTests(unittest.TestCase):

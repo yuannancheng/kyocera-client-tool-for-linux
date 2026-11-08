@@ -2,7 +2,7 @@
 
 独立的、非官方 Linux 打印机客户端，面向 Kyocera 设备（当前验证机型
 MA2000w）。项目通过公开的 PJL/SNMP 行为和互操作性测试实现状态读取与网络
-扫描：支持 TCP 9100、USB `usblp`、只读 SNMP 和 KM-WSDL 扫描路径。
+扫描：支持 TCP 9100、USB `usblp`/libusb、只读 SNMP 和 KM-WSDL 扫描路径。
 
 本项目与 Kyocera Corporation 及其关联公司没有隶属、授权、赞助或背书关系，
 不是京瓷官方产品。Kyocera、KYOCERA、ECOSYS、MA2000w 等名称是其各自权利人的
@@ -41,6 +41,12 @@ python3 -m kyocera_monitor --host 192.168.0.220 --json
 python3 -m kyocera_monitor --device /dev/usb/lp0
 python3 -m kyocera_monitor --list-usb
 python3 -m kyocera_monitor --usb --json
+python3 -m kyocera_monitor --usb-scan-info --json
+python3 -m kyocera_monitor --usb --wifi-status --json
+python3 -m kyocera_monitor --usb --wifi-scan --json
+python3 -m kyocera_monitor --host 192.168.0.220 --wifi-status --json
+KYOCERA_WIFI_PASSWORD='...' python3 -m kyocera_monitor \
+  --usb --wifi-connect SSID --wifi-security 4
 python3 -m kyocera_monitor --host 192.168.0.220 --watch 30
 python3 -m kyocera_monitor --host 192.168.0.220 --snmp
 python3 -m kyocera_monitor --host 192.168.0.220 --snmp --json
@@ -170,7 +176,7 @@ python3 -m pip install --user .
 
 ```bash
 python3 tools/build_deb.py
-sudo apt install ./dist/kyocera-monitor_0.2.6-1_all.deb
+sudo apt install ./dist/kyocera-monitor_0.3.0-1_all.deb
 ```
 
 构建过程只使用本地 Python 和 `dpkg-deb`，不联网。包的运行依赖声明为
@@ -410,11 +416,48 @@ options、Communication、SNMP trap、Wi‑Fi 状态、音量与 FAX notificatio
 ARP 表作为附加候选；`--discover-subnet <CIDR>` 显式扫描 IPv4 网段（最大 /22）。
 发现到设备返回 0，未发现返回 1，参数错误返回 2。
 
-`--list-usb` 扫描 `/dev/usb/lp*` 并从 sysfs 读取 VID/PID；`--usb` 自动选择
-Kyocera MA2000w（`0482:0d51`）或其他唯一可用的 USB 打印机。Linux USB 路径使用
-内核 `usblp` 直接发送 UEL PJL 帧；Windows 原程序实际通过 Kyocera 语言监视器
-转发，因此 USB 原始帧的完全一致性仍需硬件接入后验证。`--list-usb` 在找不到
-`/dev/usb/lp*` 时返回退出码 2。
+`--list-usb` 枚举 `/dev/usb/lp*` 和 libusb Printer-class 设备；`--usb`
+优先使用可读写的 `usblp` 节点，权限不足时短暂使用 libusb 声明打印接口，
+释放后自动恢复内核驱动。MA2000w 真机已完成完整 PJL 状态查询。该回退不需要
+依赖官方 DLL、mailslot 或 Windows 打印后台。
+
+设备页现在提供 Wi-Fi 状态、附近网络扫描和连接。协议复刻官方 Wi-Fi Setup
+Tool 的 KGETOBJ/KSETOBJ 顺序；AP 扫描与连接状态已在 USB 和 TCP 9100 两条
+路径真机验证。更换 AP 需要用户在页面勾选确认框或通过 CLI 显式指定；密码
+不会保存到设置文件，Web API 只接受回环客户端。详细证据见
+[`docs/reverse-engineering/wifi.md`](docs/reverse-engineering/wifi.md)。
+
+USB 扫描接口是 interface 1 的 vendor-specific 功能。项目已经恢复
+Windows `usbscan.sys` 到 Linux control/bulk 映射，并真机验证 connect、
+machine-info、version 和 disconnect；当前产品扫描仍使用已验证的网络
+KM-WSDL 路径。`--usb-scan-info` 可独立执行这段受控握手，不捕获图像。
+
+已从 USB TWAIN 前端恢复 20-DWORD 扫描配置、`0x81` ScanReq、6 字节 ACK、
+`0x82` PageData 和 `0x83` JobEnd，并提供实验性单页捕获入口：
+
+```bash
+python3 -m kyocera_monitor --usb --usb-scan-capture /tmp/usb-scan.png \
+  --scan-color GRAYSCALE --scan-resolution RESOLUTION_300X300
+```
+
+该入口沿用网络扫描的 RAW 解码器和 PNG/PDF/JPEG/TIFF/XPS/BMP 导出。由于当前
+MA2000w 已从 USB 总线消失，新的 ScanReq 尚未取得真机 ACK、RAW 首包和结束帧，
+命令会明确报告这一实验性边界；在完成真机样本验证前，正式推荐路径仍是
+KM-WSDL 网络扫描。
+
+连接已知 Kyocera USB 打印机后，驱动辅助入口默认只读检查设备和 CUPS URI：
+
+```bash
+python3 tools/install_linux_driver.py
+python3 tools/install_linux_driver.py --apply
+```
+
+Debian 包安装后的对应命令为
+`/usr/libexec/kyocera-monitor/install-linux-driver`。它选择已安装的 Kyocera
+PPD 并创建/更新 CUPS 队列；同名队列已指向其他设备时 fail closed，只有显式
+`--force` 才替换。安装系统级 Kyocera PPD、CUPS/SANE 组件仍由发行版包管理器
+负责，本工具不下载或分发原厂二进制。Kyocera-only udev 规则为已列出的
+MA2000/MA2001 打印与扫描 USB 接口增加当前桌面会话的 `uaccess`。
 
 ## 测试
 
@@ -423,7 +466,7 @@ python3 -m unittest discover -s tests -v
 python3 tools/check_publication.py
 ```
 
-当前 290 个测试覆盖 PJL 解析/帧格式、分段补发与合并、KGETOBJ 结构化字段、
+当前 322 个测试覆盖 PJL 解析/帧格式、分段补发与合并、KGETOBJ 结构化字段、
 147 项配置对象表与 CLI 配置导出、`KMUTLCFG` UI 控件字符串提取、
 147 项对象→模型偏移映射与首批控件→OID 对照、
 配置 SNMP 后备读取、
@@ -438,6 +481,9 @@ PNG/PDF/JPEG/TIFF/高压缩 PDF/XPS 导出、扫描后台任务与下载、设�
 计数 CSV、配置工作台/敏感值脱敏/写入令牌、Debian 包内容和公开树合规检查。
 Push Scan 专项测试覆盖 IPv4/IPv6/主机名匹配、USB 与未配置状态、缺失对象、
 上次结果语义、CLI 只读读取、槽位映射、明确启用的本地预设执行和 Web API。
+USB 专项测试覆盖 sysfs/libusb 发现、可访问节点优先级、PTY PJL 往返和无 root
+libusb 回退；Wi-Fi 专项测试覆盖状态解码、官方 AP 扫描触发、UTF-8 十六进制
+SSID、SET 顺序、状态判定、Web 回环限制和密码不写入进度输出。
 
 ## 研究资料
 

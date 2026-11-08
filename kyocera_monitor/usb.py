@@ -149,3 +149,31 @@ def select_usb_printer(
     raise UsbError(
         f"multiple USB printers found ({listing}); select one with --device"
     )
+
+
+def merge_usb_printers(*groups: list[UsbPrinter]) -> list[UsbPrinter]:
+    """Combine sysfs and libusb views, preferring a real character device."""
+    merged: dict[tuple[int | None, int | None, str | None], UsbPrinter] = {}
+    fallback: list[UsbPrinter] = []
+    for group in groups:
+        for printer in group:
+            if printer.vendor_id is None and printer.product_id is None:
+                fallback.append(printer)
+                continue
+            key = (printer.vendor_id, printer.product_id, printer.serial)
+            existing = merged.get(key)
+
+            def priority(candidate: UsbPrinter | None) -> int:
+                if candidate is None:
+                    return -1
+                if candidate.device.startswith("libusb:"):
+                    return 1
+                if os.access(candidate.device, os.R_OK | os.W_OK):
+                    return 2
+                return 0
+
+            if priority(printer) > priority(existing):
+                merged[key] = printer
+    result = list(merged.values())
+    result.extend(fallback)
+    return sorted(result, key=lambda printer: printer.device)

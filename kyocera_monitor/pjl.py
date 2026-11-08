@@ -212,7 +212,15 @@ def open_channel(
 ) -> Iterator[Channel]:
     channel: Channel
     if device:
-        channel = DeviceChannel(device)
+        if device.startswith("libusb:"):
+            from .usb_libusb import LibusbChannel, LibusbError
+
+            try:
+                channel = LibusbChannel(device)
+            except LibusbError as exc:
+                raise PjlError(str(exc)) from exc
+        else:
+            channel = DeviceChannel(device)
     elif host:
         channel = TcpChannel(host, port)
     else:

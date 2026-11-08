@@ -1,6 +1,6 @@
 # PROJECT PROGRESS
 
-> 最后更新：2026-11-01。详细轮次记录已归档到
+> 最后更新：2026-11-08。详细轮次记录已归档到
 > [`docs/reverse-engineering/progress-history.md`](docs/reverse-engineering/progress-history.md)；
 > 本文件只保留当前状态、优先级、阻塞和可执行的下一步。
 
@@ -10,11 +10,12 @@
 功能和通信行为，并在 Linux 上实现可移植、可测试的替代工具；长期目标不限于
 MA2000w。
 
-当前结论：**MA2000w 网络扫描产品闭环已在 Web 端独立打通，并已生成、安装
-`0.2.5-1` Debian 安装包；`0.2.6-1` 已构建但当前环境的 pkexec/sudo 权限链
-不可用，系统安装待完成。** 深色状态标签、已保存打印机、统一设备页和配置编辑入口均已
-完成；只读监控、设备发现、配置读取/基线/差异、单页扫描和已审核整数写入
-均可用；彩色与灰度 RAW、官方扫描参数覆盖和多页状态机处理均已实现。
+当前结论：**MA2000w 网络扫描产品闭环继续可用，本轮新增物理 USB 状态、
+Wi-Fi 状态/AP 扫描、纯 libusb Printer-class 回退和 USB vendor 扫描控制握手
+真机验证。** 系统已安装 `kyocera-monitor 0.3.0-1`、`kyodialog 10.1-0` 和
+`kyocera-sane 2.3.1523`；CUPS `MA2000w-2` 已重新启用并接受任务。USB 打印接口无需
+Windows mailslot 或官方 DLL 即可完成完整 PJL 状态查询；Wi-Fi 状态和 AP 扫描
+已在 USB 与 TCP 9100 两条路径通过 MA2000w 真机验证。
 扫描编排已移入 `kyocera_monitor.scan`，Web 详情页可提交后台任务、查看阶段并
 下载 PNG/PDF/JPEG/TIFF/高压缩 PDF/XPS/BMP/RAW；E2 已加入本地扫描预设、
 用户保存目录、多设备计数 CSV 和可关闭浏览器通知。MA2000w 真机已取得
@@ -42,6 +43,12 @@ MA2000w。
 - 已验证协议/模拟：`CONTINUE_SCAN` 官方返回码、ADF/双面/连续扫描字段、
   多页逐页保存和最终关会话。
 - 离线实现：USB `usblp` 路径、PJL 分段补发、PTY 假设备往返。
+- 已真机验证：物理 USB `0482:0d51`、`usblp` 绑定，以及无 `lp` 组权限时的
+  libusb Printer-class 回退；完整型号、固件、状态、耗材、纸盒、网络和计数读取。
+- 已真机验证：Wi-Fi `Connected`、WPA2 PSK、信道、RSSI；官方 AP 扫描触发、
+  数量和列表解析在 USB/TCP 9100 均成功。
+- 已真机验证：扫描 interface `MI_01` 的 vendor control connect/disconnect、
+  machine-info 和 version；完整 USB ScanReq 图像取回仍未闭环。
 - 已验证写入：MA2000w `Auto error clear` 经 SNMPv2c 从 OFF→ON→OFF，
   SET echo 和同 OID 回读均成功；`Quiet mode` 同样完成回读和恢复；另有 25 个
   无害整数字段完成批量写入、目标回读和自动恢复，最终全表一致。
@@ -51,8 +58,8 @@ MA2000w。
 - 已验证 Push Scan 触发编码：状态码 `89000–89999` 减 `89000` 即预设号；
   网络 Client Tool 从厂商告警文本列 `1347.43.18.2.1.3` 读取该状态。
   MA2000w 真机该列为 `35078`，两次有限 SNMP 轮询稳定且未产生虚假事件。
-- 未闭环：物理 USB、其他机型兼容性、完整色彩管理、TIFF/XPS 真实查看器
-  验证，以及 ADF/双面/多页硬件验证。MA2000w 本身没有输稿器。
+- 未闭环：USB vendor scanner 图像取回、其他机型兼容性、完整色彩管理、
+  TIFF/XPS 真实查看器验证，以及 ADF/双面/多页硬件验证。MA2000w 本身没有输稿器。
 
 ## 计划对齐检查
 
@@ -74,7 +81,9 @@ MA2000w。
 并通过自动化测试及 MA2000w 真机验证。配置写入/回滚实验只保留在显式 CLI
 研究工具中，不进入正式 Web/GUI。
 
-`IN_PROGRESS`：阶段 E3 已启动。Push Scan 增加只读接口、目标地址类型、目标
+`IN_PROGRESS`：阶段 E3 已启动。物理 USB 已从不可测阻塞项转为可验证功能；
+USB 打印状态、Wi-Fi 状态和 AP 扫描均完成真机验收。换 AP 的官方 SET 顺序已
+实现，但为避免覆盖现有可用网络，本轮没有执行带新凭据的关联测试。Push Scan 增加只读接口、目标地址类型、目标
 和上次结果探针；MA2000w 当前明确选择 USB 目标，网络目标未配置。官方预设号
 来源已确认为 `status_code - 89000`，`--push-scan-listen` 可从厂商告警列只读
 检测 `89xxx`。本地预设可显式绑定 0–30 槽位，`--push-scan-run` 会通过普通
@@ -126,7 +135,7 @@ MA2000w。
 | P2 | Push Scan 触发检测 | `89000–89999` 编码、厂商状态列和 CLI 只读监听已验证；无虚假事件 | `DONE` |
 | P2 | Push Scan 触发与执行 | 映射与本地执行已实现；待真实事件和官方结果回写验证 | `IN_PROGRESS` |
 | BLOCKED | ADF/双面/其他机型 | 获得对应硬件后验证真实行为 | `BLOCKED` |
-| BLOCKED | USB 物理路径 | 获得可访问的 `usblp` 设备后验证断线、重连和睡眠唤醒 | `BLOCKED` |
+| P2 | USB 物理路径 | 状态/配置/Wi‑Fi 已真机验证；继续完成 USB ScanReq 图像取回、断线重连和睡眠唤醒 | `IN_PROGRESS` |
 | FROZEN | 配置字段扩展 | 当前 25 字段与写入安全边界足够；仅缺陷或明确需求触发 | `FROZEN` |
 
 P0 已完成：扫描编排位于 `kyocera_monitor.scan`，Web API 与 CLI 共用服务层；
@@ -144,7 +153,8 @@ E2 已完成并补充了正常属性设置入口。统一设备页现在覆盖�
 读取/基线/差异、九个已审核整数写入、面板/Wi‑Fi 状态、Quick Scan 预设、
 目录保存/PDF 和计数导出。令牌化 `OFF -> ON -> OFF` 回滚实验仍只保留在显式
 CLI 研究工作流；任意字段批量写入、网络/Wi‑Fi/凭据/字符串和重置仍未开放。
-后续继续 E3 的 Push Scan 真机事件、Print Box、Wi‑Fi 配置和 SNMPv3 等工作流。
+后续继续 E3 的 USB ScanReq 图像取回、Wi‑Fi 换 AP 验收、Push Scan 真机事件、
+Print Box 和 SNMPv3 等工作流。
 
 官方程序完整能力、证据和逐项覆盖状态见
 [`docs/official-feature-parity-plan.md`](docs/official-feature-parity-plan.md)。
@@ -154,7 +164,7 @@ CLI 研究工作流；任意字段批量写入、网络/Wi‑Fi/凭据/字符串
 - **E2/P1 核心设备管理**：F02 状态、F04 通知、F06 安全配置写入、F08 面板/
   Wi-Fi 状态、F16 保存目录、F19 Quick Scan 预设、F22 计数导出；
 - **E3/P2 设备驱动工作流**：F03 作业、F07 网络配置、F09 Wi-Fi、F20 Push Scan、
-  F21 Print Box、F26 SNMPv3；F18 邮件为可选出口，F27 USB 在硬件出现后验证；
+  F21 Print Box、F26 SNMPv3；F27 USB 已启动真机验证；
 - **E4/P3 高风险或硬件依赖**：F10–F12 重启/维护/固件、F23 计划发送、
   F24–F25 传真；
 - **E5/P4 可选或平台专用**：F28–F30 外部链接、打印驱动集成、Content Redactor。
@@ -176,7 +186,7 @@ CLI 研究工作流；任意字段批量写入、网络/Wi‑Fi/凭据/字符串
 | 官方扫描参数覆盖 | `DONE` | 官方 DLL 枚举表与请求；CLI 仅接受已知 token，序列化顺序有测试 |
 | ADF/双面/多页客户端路径 | `DONE` | 官方 `CONTINUE_SCAN=10010` 证据；多页模拟覆盖两页、ADF/BOOKLET/ON 和关会话 |
 | ADF/双面其他机型真机 | `BLOCKED` | 当前只有 MA2000w，无输稿器；不能据模拟测试宣称硬件兼容 |
-| USB 物理验证 | `BLOCKED` | 物理连接未确认；仅完成离线 PTY 测试 |
+| USB 物理验证 | `IN_PROGRESS` | `0482:0d51` 真机状态、libusb 回退、Wi‑Fi、扫描控制握手已验证；USB 图像取回待完成 |
 | 配置只读基线与差异 | `DONE` | 147 项私密快照、SHA-256、通道/目标绑定、只读差异测试 |
 | 配置单字段写入计划 | `DONE` | item 2 dry-run、漂移阻断、回滚预演和确认令牌；不执行写入 |
 | 配置写入与回滚 | `DONE` | MA2000w item 2 SNMPv2c OFF→ON→OFF；SET echo、双重回读和全表恢复一致 |
@@ -249,12 +259,13 @@ CLI 研究工作流；任意字段批量写入、网络/Wi‑Fi/凭据/字符串
 
 1. **DONE：E2 核心设备管理。** 配置读取/基线、九个已审核整数属性写入、
    状态、预设、目录和计数已在统一页闭环；回滚实验仍隔离在 CLI。
-2. **E3：下一主目标。** 从 Push Scan 或 Print Box 中选一项形成真机闭环。
-   当前已完成只读状态、触发检测、槽位映射和显式本地预设执行。下一步验证
-   真实网络触发，并继续定位官方结果回写的上游调用方。
+2. **E3：下一主目标。** USB 打印状态、Wi-Fi 状态/AP 扫描和扫描控制握手已经
+   真机闭环。下一步完成 USB ScanReq 图像取回；若需要换 AP，再用用户提供的
+   凭据验收官方 SET 顺序。
 3. **FROZEN：配置字段扩展。** 当前覆盖已经足够，不再主动扩大。
-4. **BLOCKED：ADF/双面、其他机型和 USB。** 等待对应硬件后单独验证，不进入
-   主线排期。
+4. **P2：Push Scan/Print Box/SNMPv3。** Push Scan 已验证只读状态、触发检测、
+   槽位映射和本地执行；真实事件与结果回写继续等待设备操作。
+5. **BLOCKED：ADF/双面和其他机型。** 等待对应硬件后单独验证。
 
 ## 待验证假设
 
@@ -287,8 +298,9 @@ CLI 研究工作流；任意字段批量写入、网络/Wi‑Fi/凭据/字符串
   环境，但它不能覆盖所有 Windows TWAIN UI 和驱动动态路径。
 - 当前 MA2000w 没有输稿器；ADF、双面和真正多页只能完成协议构造与模拟状态机
   验证，跨机型硬件验证阻塞。
-- USB 物理验证受硬件接入限制；历史检查未发现 `0482:0d51`，本次 `lsusb`
-  因执行环境无法初始化 libusb（`-99`）而未能复核，接入时需重新确认。
+- 物理 USB 状态、Wi-Fi 和扫描控制握手已验证；纯 USB ScanReq 图像取回仍需
+  完整参数/响应时序对照。官方 SANE softconnect 受控测试后 USB 设备从总线消失，
+  但网络仍在线，后续 USB 回归需重新插拔确认。
 - MA2000w 的 9090 在睡眠状态可正常完成扫描；此前失败已确认是简化 SOAP 1.1
   请求不匹配官方 SOAP 1.2 封装，不再是阻塞。
 - 设备只发布 WSD 打印服务，`631/tcp` 关闭；扫描使用 KM-WSDL，而非 eSCL。
@@ -384,7 +396,83 @@ CLI 研究工作流；任意字段批量写入、网络/Wi‑Fi/凭据/字符串
 下一步：安装 `.deb` 后在 MA2000w 上完成“预设灰度 PDF → 自动保存目录 →
 下载/落盘哈希一致”的真机验收，再实现 E2 的统一配置只读/差异/安全写入界面。
 
-## 最近一次工作交接（第五十二轮）
+## 最近一次工作交接（第五十三轮）
+
+日期：2026-11-08。范围：物理 USB、Wi‑Fi 状态/扫描、CUPS 驱动检查和 USB
+scan control 协议；完成一次网络 KM-WSDL 灰度真机扫描，没有更换当前 Wi‑Fi
+网络或执行配置重置。
+
+完成与证据：
+
+- MA2000w 物理 USB 已确认 `0482:0d51`，interface 0 绑定 `usblp`，interface 1
+  为 vendor-specific scanner，端点 `0x03 OUT`/`0x84 IN`。当前用户没有
+  `/dev/usb/lp0` 的 `lp` 组权限，项目新增 `usb_libusb.py`，通过 usbfs 声明
+  Printer interface、自动分离并恢复 `usblp`，发送同一 UEL/PJL。
+- `--usb --json` 真机返回型号、固件、睡眠状态、双纸盒、网络、寿命/鼓/扫描计数。
+  `/dev/usb/lp0` 仍是优先路径；不可读时选择 libusb 设备。
+- 新增 `wifi.py`。官方 Wi‑Fi Setup Tool 的 IL 恢复出 KGETOBJ/KSETOBJ 参数和
+  AP 扫描触发：设置 `40.39.1.1.10.1.1=1`，读取数量，再读 SSID/security/BSSID/
+  RSSI；字符串 SSID 使用 UTF-8 十六进制。USB 与 TCP 9100 均完成真机状态/AP
+  扫描验证，返回 `Connected`、WPA2 PSK、信道、RSSI 和 AP 列表。
+- Wi‑Fi 连接按 SSID、security、BSSID、WEP index/key、PSK 顺序写入
+  `40.40.1.1.*`，每步要求 `STATUS=0`，最后轮询设置结果和连接状态。CLI/Web/
+  GUI 入口已实现；Web API 只接受回环客户端，密码不持久化。未用新凭据覆盖当前
+  可用网络，因此真实换 AP 仍需用户明确提供目标网络后验收。
+- Web/GUI 设备页新增 Wi-Fi 状态、AP 扫描、SSID/security/password 输入和显式
+  确认连接；`/api/wifi/status`、`/api/wifi/scan`、`/api/wifi/connect` 已由
+  自动测试和真实 USB Web 服务验证。
+- 网络扫描真机完成：灰度 300 dpi，生成 `/tmp/ma2000w-usb-session.png`，
+  2496×3520 RGB PNG，5,443,054 字节，SHA-256
+  `0df03e83b0b62595b49af1bda820cd93bb8937b4efe28097577db034a8240817`，
+  Pillow `verify()` 通过。
+- USB scanner 侧已恢复 `usbscan.sys` 的 `IOCTL_SEND_USB_REQUEST` 映射和
+  control/bulk 请求码。真机验证 connect `0x41`、disconnect `0x42`、
+  machine-info `0x21`、MA2000w version `0x22`。ScanReq 一次灰度尝试未收到
+  ack；`--usb-scan-info` 只提供已验证的 connect/machine-info/version/
+  disconnect 诊断，USB 图像取回保持未完成。
+- USB TWAIN 前端 `Ns1815TW3.dll` 与 `KMUSBSCN3.dll` 的静态复核补齐了
+  20-DWORD 扫描配置、`0x81` ScanReq 文本字段与长度头、6 字节 ACK 状态、
+  `0x82` PageData 和 `0x83` JobEnd 请求。Linux 侧已有纯函数构造器和合成
+  分帧/解码测试，以及明确标注实验性的 `--usb-scan-capture` 单页捕获入口；
+  仍缺设备 ACK/RAW 流验证，因此没有进入正式推荐扫描入口。
+- CUPS 当前已启用。`MA2000w-2` 使用
+  `usb://Kyocera/MA2000w?serial=...`，PPD 为 `Kyocera MA2000w KPSL`，
+  filter 为 `/usr/lib/cups/filter/kyofilter_kpsl_X`；系统安装
+  `kyodialog 10.1-0`。新增 `tools/install_linux_driver.py` 可只读检查或
+  安装/更新队列；同名队列指向其他 URI 时默认拒绝，只有 `--force` 才替换。
+  Debian 包包含 Kyocera-only udev `uaccess` 规则，并把该脚本直接安装为
+  `/usr/libexec/kyocera-monitor/install-linux-driver`。
+
+验证：
+
+- 全量 `python3 -m unittest discover -s tests -v` → 322/322 通过。
+- `python3 tools/check_publication.py`、`compileall`、页面 JavaScript
+  `node --check`、`udevadm verify`、`desktop-file-validate` 和
+  `git diff --check` 通过。
+- 构建 `dist/kyocera-monitor_0.3.0-1_all.deb`，SHA-256
+  `3f1a21d7d969b35fbd071ca9fd96923732732756faf758bee66911149518525e`；
+  使用相同 `SOURCE_DATE_EPOCH` 两次构建 `cmp` 一致；解包后 `wifi.py`、
+  `usb_libusb.py`、`usb_scan.py` 和驱动辅助入口可加载、可执行。
+- 用户恢复交互后通过 `pkexec` 完成系统升级；`dpkg-query` 返回
+  `kyocera-monitor 0.3.0-1`，安装状态为 `install ok installed`。CUPS 服务
+  正在运行，`MA2000w-2` 使用 `usb://Kyocera/MA2000w?serial=...`，已通过
+  `cupsenable` 重新启用且 `lpstat` 显示 idle/enabled/accepting。
+
+剩余问题：
+
+- 官方 SANE softconnect 受控测试后 MA2000w 从 USB 总线消失，但网络仍在线；
+  下一次纯 USB 测试需要重新插拔；当前 CUPS 队列已启用，但无设备时无法验证
+  实际打印输出。
+- USB ScanReq 的构造、ACK 状态和分帧逻辑已静态恢复，实验性
+  `--usb-scan-capture` 已实现；设备 ACK、RAW 首包和结束帧仍未在当前真机取得，
+  因此正式推荐扫描仍使用已验证的 KM-WSDL 网络路径。
+- Wi-Fi 换 AP、WPS 和断线恢复未做破坏性真机测试。
+
+下一步：重新插拔 USB 后先运行 `--usb --wifi-status --json` 和
+`--wifi-scan --json` 回归，再以已恢复的 ScanReq 表和网络 RAW 解析器对照
+USB raw packet；在 ACK 和首包稳定前不宣称 USB 扫描完成。
+
+## 历史交接（第五十二轮）
 
 日期：2026-11-01。范围：修复正式 Web/GUI 无法设置设备属性的问题，并核清
 Push Scan 可设置边界。实现和自动测试未向真机发送 SET；Push Scan 目标字段

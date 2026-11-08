@@ -112,11 +112,29 @@ def build_package(
             ROOT / "packaging" / "kyocera-monitor.svg",
             icons / "kyocera-monitor.svg",
         )
+        udev_rules = root / "usr" / "lib" / "udev" / "rules.d"
+        udev_rules.mkdir(parents=True)
+        shutil.copy2(
+            ROOT / "packaging" / "90-kyocera-usb.rules",
+            udev_rules / "90-kyocera-usb.rules",
+        )
+        helper = root / "usr" / "libexec" / PACKAGE
+        helper.mkdir(parents=True)
+        driver_helper = helper / "install-linux-driver"
+        shutil.copy2(
+            ROOT / "tools" / "install_linux_driver.py",
+            driver_helper,
+        )
+        driver_helper.chmod(0o755)
 
         documentation = root / "usr" / "share" / "doc" / PACKAGE
         documentation.mkdir(parents=True)
         for name in ("LICENSE", "NOTICE", "README.md"):
             shutil.copy2(ROOT / name, documentation / name)
+        shutil.copy2(
+            ROOT / "tools" / "install_linux_driver.py",
+            documentation / "install_linux_driver.py",
+        )
         shutil.copy2(ROOT / "THIRD_PARTY_NOTICES.md", documentation / "copyright")
 
         control_directory = root / "DEBIAN"
@@ -132,16 +150,28 @@ def build_package(
             "Installed-Size: "
             f"{installed_kib}\n"
             "Depends: python3 (>= 3.10), python3-pil, python3-gi, "
-            "gir1.2-gtk-3.0, gir1.2-webkit2-4.1\n"
+            "gir1.2-gtk-3.0, gir1.2-webkit2-4.1, libusb-1.0-0, "
+            "cups-client\n"
             "Homepage: https://github.com/yuannancheng/"
             "kyocera-client-tool-for-linux\n"
             "Description: independent KYOCERA printer client for Linux\n"
             " Monitor device status, manage guarded configuration snapshots,\n"
-            " and scan through the device's verified KM-WSDL service.\n"
+            " configure Wi-Fi, inspect USB, and scan through verified\n"
+            " device services.\n"
             " The application is unofficial and does not include or load\n"
             " Kyocera's original Windows binaries.\n"
         )
         (control_directory / "control").write_text(control, encoding="utf-8")
+        _write_executable(
+            control_directory / "postinst",
+            "#!/bin/sh\n"
+            "set -e\n"
+            "if command -v udevadm >/dev/null 2>&1; then\n"
+            "  udevadm control --reload-rules >/dev/null 2>&1 || true\n"
+            "  udevadm trigger --subsystem-match=usbmisc >/dev/null 2>&1 || true\n"
+            "  udevadm trigger --subsystem-match=usb >/dev/null 2>&1 || true\n"
+            "fi\n",
+        )
 
         source_epoch = os.environ.get("SOURCE_DATE_EPOCH")
         if source_epoch:

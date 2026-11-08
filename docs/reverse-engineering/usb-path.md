@@ -229,3 +229,112 @@ Windows 端的 mailslot 和 Kyocera 语言监视器无法移植。Linux 侧采�
   查询序列。
 - 待验证假设：语言监视器是否对 USB 字节做额外封装；`usblp` 双向读取是否
   与设备固件兼容。
+
+## 11. 2026-11-08 物理 USB 验证
+
+MA2000w 接入后，Linux 总线确认：
+
+- USB ID `0482:0d51`，设备报告型号 `MA2000w`；
+- interface 0 为 Printer/Bidirectional，`usblp` 绑定，端点 `0x01 OUT`、
+  `0x82 IN`；
+- interface 1 为 vendor-specific scanner，端点 `0x03 OUT`、`0x84 IN`。
+
+普通桌面用户没有 `/dev/usb/lp0` 的 `lp` 组权限，但 usbfs 节点可访问。项目新增
+纯 `ctypes` 的 libusb Printer-class 后端：短暂自动分离 `usblp`，声明
+interface 0，发送与 `usblp` 相同的 UEL/PJL，退出时释放并恢复内核驱动。
+
+真机完整状态查询成功，返回型号、固件、睡眠状态码、耗材、双纸盒、网络地址、
+寿命计数、鼓计数和扫描计数。说明 Windows mailslot/language monitor 只是传输
+适配层，USB 打印接口本身接受本项目的 UEL/PJL 帧。
+
+### 11.1 Windows usbscan 到 Linux 的映射
+
+官方 TWAIN 安装载荷中的 `KMUSBSCN3.dll`
+（SHA-256 `9cd9627a39334f7b9a16b3a55c319097b763db2580beb5a597ce97e4560e29bb`）
+通过 `usbscan.sys` 工作。静态恢复结果：
+
+- `DeviceIoControl(0x80002024)` 对应 `IOCTL_SEND_USB_REQUEST`；
+- 输入为 `IO_BLOCK_EX {uOffset, uLength, pbyData, uIndex, bRequest,
+  bmRequestType, fTransferDirectionIn}`；
+- 常用扫描控制请求为 bmRequestType `0xc0`、wValue `0`、wIndex `1`、
+  length `255`；
+- bRequest：connect `0x41`、disconnect `0x42`、page data `0x82`、
+  job end `0x83`、page retry `0x91`、cancel `0xc0`、jam check `0xe0`、
+  error `0xe1`。
+
+Linux 直接对 interface 1 发送相同 vendor control transfer。真机已验证：
+
+```text
+connect     00 00 00 02 41 80
+disconnect  00 00 00 02 42 80
+```
+
+bulk 帧使用 4 字节大端长度前缀和命令字节。真机进一步验证 machine-info
+`00 00 00 02 21 00` 返回 T/C/D/P 能力字段，MA2000w version 请求
+`00 00 00 07 22 00 0a 30 30 31 0a` 返回版本码。
+
+当前尚未完成纯 USB 图像取回：ScanReq 的完整参数集合与官方 MFP 响应时序仍需
+继续确认。网络 KM-WSDL 扫描已在同一设备上完成 2496×3520 真机闭环，因此该
+空白不能表述为“USB 扫描已支持”。
+
+### 11.2 USB ScanReq 静态恢复与当前边界
+
+对 USB TWAIN 前端 `Ns1815TW3.dll`
+（SHA-256 `cec7aa7fb535e87ed9cc1115b1db11ef97e23925918619f92f00e0fdb5c72b06`）
+的 `KmUsbScnStart` 调用点复核后，确认它把 20 个 DWORD（0x50 字节）压栈；
+`KMUSBSCN3.dll!KmUsbScnStart` 再把这段数据复制到通信对象的 `+0x118`。
+`ScanReq` 序列化函数读取同一结构并按以下顺序组成文本体：
+
+```text
+R=<原稿尺寸>
+X=<分辨率>
+M=<MONO|GRAY|COLOR>
+Q=<TEXT|PHOTO|TEXT+PHOTO|OCR>
+D=<-3..3>
+U=<OFF|ON>                 # 可省略
+F=<AUTO|DP|TABLE>
+P=<CNT|STEP>
+S=<None|Low|Medium|High>
+B=<SIMPLEX|DUPLEX>         # 可省略
+N=<LEFTRIGHT|TOP>          # 可省略
+O=<Top Edge Left|Top Edge Top>
+E=<OFF|ON>
+A=d,<coordinate 1>,<coordinate 2>,<coordinate 3>
+%d,%d,%d,%d
+```
+
+每行之间是单个 LF。首部为 4 字节大端总长减 4、命令 `0x81` 和状态 `0`；
+bulk OUT 后，设备返回 6 字节 ACK。已恢复的 ACK 状态为：
+
+- `0x80`：普通成功；
+- `0x8a`：平板上稿，官方日志判定为 platen scan；
+- `0x8b`：输稿器路径；
+- `0x81`：可重试；
+- `0x82`：未检测到原稿；
+- 其他值：未知/失败。
+
+页数据请求是 control IN `0x82`，作业结束是 control IN `0x83`；`0x83`
+响应 `0x80` 明确表示成功，`0x82` 的响应状态表尚未恢复。官方流解析器还识别
+页信息 `82 84`、扫描带 `82 81`、扫描结束 `7e 7e` 和作业结束 `7e 83`；
+这些响应帧的跨 USB 传输边界和完整图像时序尚未用当前 Linux 实现真机取得。
+
+Linux 已在 `kyocera_monitor/usb_scan.py` 中实现 20-DWORD 参数模型、
+ScanReq 构造、6 字节 ACK 解析、PageData/JobEnd 控制请求和合成测试。上述
+请求体包含官方实现中一个不可忽略的原文细节：`A=` 行后的格式参数实际解析为
+`d,%d,%d,%d`，随后还追加字面量 `%d,%d,%d,%d`。在真机接受性验证前必须原样
+保留，不能按常见文本协议习惯自行“修正”。
+
+CLI 的实验性入口为：
+
+```bash
+python3 -m kyocera_monitor --usb \
+  --usb-scan-capture /tmp/usb-scan.png \
+  --scan-color GRAYSCALE \
+  --scan-resolution RESOLUTION_300X300
+```
+
+捕获器按大端长度帧拼接 bulk IN 数据，保留校准/扫描带帧，忽略页信息帧，在
+`7e 7e` 页结束后发送 JobEnd，并复用已经真机验证的网络 RAW 解码器。当前 USB
+设备已从总线消失，尚无新 ScanReq 的 ACK、RAW 首包和页结束样本，因此正式
+CLI/Web 扫描入口仍只推荐已真机验证的 KM-WSDL 网络路径。已经完成的是
+可复现的请求构造、ACK 状态和帧组装证据，不是“USB 图像取回已完成”。

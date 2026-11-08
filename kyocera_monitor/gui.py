@@ -18,6 +18,7 @@ from urllib.parse import urlsplit
 
 from .config_web import ConfigWorkbench
 from .scan import ScanArtifact, ScanJobManager
+from .wifi import WifiWorkbench
 from .web import DeviceRegistry, create_server
 
 _DOWNLOAD_PATH_RE = re.compile(
@@ -229,6 +230,7 @@ def run_gui(
     discover_fn: Callable[[], list] | None = None,
     config_workbench: ConfigWorkbench | None = None,
     push_scan_reader: Callable[[str], dict] | None = None,
+    wifi_workbench: WifiWorkbench | None = None,
     title: str = "KYOCERA 打印机",
 ) -> None:
     """Open the dashboard in a native window and block until it closes."""
@@ -245,6 +247,7 @@ def run_gui(
         scan_manager=manager,
         config_workbench=config_workbench,
         push_scan_reader=push_scan_reader,
+        wifi_workbench=wifi_workbench,
     )
     port = server.server_address[1]
     thread = threading.Thread(target=server.serve_forever, daemon=True)

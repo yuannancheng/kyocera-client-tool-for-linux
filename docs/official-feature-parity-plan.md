@@ -51,7 +51,7 @@
 | F06 | 设备配置写入 | 字段差异、SET/KSETOBJ、回读/恢复 | `REPLICATED` | P1 | 安全字段有 GUI，危险字段分级并明确确认 |
 | F07 | 网络/SNMP/trap 配置 | Communication、trap 页面和对象 | `PARTIAL` | P2 | 只读完整；写入具备断线恢复和逐字段回滚 |
 | F08 | 面板/Wi-Fi 状态 | Panel options、Wi-Fi 状态页 OID | `REPLICATED` | P1 | 状态和可安全修改项进入统一设置页 |
-| F09 | Wi-Fi AP 扫描/连接/WPS | `WifiSetupTool*`、AP/设置/WPS OID | `STATIC_ONLY` | P2 | 支持扫描 AP、连接和恢复，失败不丢失旧配置 |
+| F09 | Wi-Fi AP 扫描/连接/WPS | `WifiSetupTool*`、AP/设置/WPS OID | `PARTIAL` | P2 | 状态、AP 扫描和连接 SET 顺序已实现；换 AP 仍需用户凭据验收，WPS 未实现 |
 | F10 | 设备重启/恢复出厂 | reset/restore OID 和官方菜单入口 | `STATIC_ONLY` | P3 | 有独立危险操作确认、断线恢复和重新发现流程 |
 | F11 | 维护菜单 | `KMUTLMNT`、KPSL、39 条 request 定义 | `STATIC_ONLY` | P3 | 先实现只读诊断；破坏性请求逐项真机验证 |
 | F12 | 固件升级 | `ShowFirmwareUpgrade` 入口及语言资源；升级主体不全 | `STATIC_ONLY` | P3 | 官方升级文件和校验行为确认后才实现 |
@@ -69,7 +69,7 @@
 | F24 | FAX 地址簿 | `KMADRBK.exe`、个人/组/限制号码接口 | `BLOCKED` | P3 | 在带传真选件的设备上验证读取、写入和导入 |
 | F25 | FAX 偏好/远程传真 | `ShowFaxPreferences`、远程传真组件、45.* OID | `BLOCKED` | P3 | 硬件可用后复刻；MA2000w 不提供 |
 | F26 | SNMPv3 | `KMSTMNET` 注册表认证/加密设置 | `NOT_STARTED` | P2 | 支持 noAuth/authPriv、错误提示和凭据安全存储 |
-| F27 | USB 设备路径 | Windows mailslot→Linux `usblp` 等价实现 | `PARTIAL` | BLOCKED | 物理 USB 设备测通状态、扫描、断线重连和睡眠唤醒 |
+| F27 | USB 设备路径 | Windows mailslot/usbscan→Linux `usblp`/libusb 等价实现 | `PARTIAL` | P2 | 状态、配置、Wi-Fi 和扫描控制握手已真机验证；USB 图像取回、断线重连和睡眠唤醒待完成 |
 | F28 | 错误/帮助/外部链接 | 帮助、驱动下载、FAQ、耗材购买入口 | `NOT_CORE` | P4 | 只提供项目自己的帮助与安全链接，不复刻厂商网页流程 |
 | F29 | 打印首选项/属性 | Windows 打印驱动与 shell 集成 | `NOT_CORE` | P4 | 交给 Linux 打印队列/CUPS，不在 GUI 内伪造 |
 | F30 | Content Redactor | `ShowContentRedactor`、`DataMasking.exe` | `NOT_STARTED` | P4 | 先逆向 PDF 遮罩规则和输出证据，再决定是否实现 |
@@ -116,7 +116,10 @@ Web/GUI。MA2000w 真机完成预设驱动灰度 HCPDF 自动落盘，HTTP 下�
 
 ### 阶段 E3：设备驱动工作流（P2）
 
-进度（2026-11-01）：Push Scan 已增加只读状态探针和统一设备页入口，读取
+进度（2026-11-08）：物理 USB 状态路径、Wi-Fi 状态/AP 扫描和 CUPS 驱动
+安装检查已完成真机验证。`usbscan.sys` 的 connect、machine-info、version 和
+disconnect 已用 libusb 独立复刻；USB 图像取回仍待完成。Push Scan 已增加
+只读状态探针和统一设备页入口，读取
 接口、IPv4/IPv6/主机名目标、地址类型及上次结果；MA2000w 实测当前目标为
 USB，明确显示网络未就绪。静态与真实表项验证确认触发码为
 `89000 + preset`，`--push-scan-listen` 只读轮询厂商告警状态列。本地预设可
