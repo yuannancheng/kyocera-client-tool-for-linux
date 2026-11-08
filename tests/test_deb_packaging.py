@@ -65,6 +65,8 @@ class DebianPackageTests(unittest.TestCase):
                 "./usr/lib/udev/rules.d/90-kyocera-usb.rules",
                 "./usr/libexec/kyocera-monitor/install-linux-driver",
                 "./usr/share/doc/kyocera-monitor/LICENSE",
+                "./usr/share/doc/kyocera-monitor/README.md",
+                "./usr/share/doc/kyocera-monitor/README.en.md",
                 "./usr/share/doc/kyocera-monitor/install_linux_driver.py",
             ):
                 self.assertIn(path, contents)

@@ -2,6 +2,17 @@
 
 ## 2026-11-08
 
+### Docs — bilingual, task-oriented README
+
+- 根目录 `README.md` 继续作为默认简体中文入口，并新增完整英文版本
+  `README.en.md`；两份文档顶部互相链接。
+- README 从长篇研究记录整理为安装、快速开始、Web/GUI、扫描、配置、USB/Wi-Fi、
+  多语言、版本检查、发布流程、测试、研究资料和安全边界等产品导向章节；详细
+  协议证据继续保留在 `docs/reverse-engineering/`。
+- 英文 README 加入 Python sdist 清单和 Debian 文档目录，安装包同时携带中英文
+  说明。
+- 验证：全量测试 390/390 通过，新增 README 入口和语言互链测试。
+
 ### Fixed — update-check API fallback and v0.3.3
 
 - `v0.3.2` 发布成功且 `updater/update.json` 可经 GitHub API 读取，但当前网络

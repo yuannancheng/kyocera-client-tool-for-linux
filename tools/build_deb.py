@@ -133,7 +133,7 @@ def build_package(
 
         documentation = root / "usr" / "share" / "doc" / PACKAGE
         documentation.mkdir(parents=True)
-        for name in ("LICENSE", "NOTICE", "README.md"):
+        for name in ("LICENSE", "NOTICE", "README.md", "README.en.md"):
             shutil.copy2(ROOT / name, documentation / name)
         shutil.copy2(
             ROOT / "tools" / "install_linux_driver.py",
