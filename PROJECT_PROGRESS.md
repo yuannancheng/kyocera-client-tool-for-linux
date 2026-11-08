@@ -12,7 +12,7 @@ MA2000w。
 
 当前结论：**MA2000w 网络扫描产品闭环继续可用，本轮新增物理 USB 状态、
 Wi-Fi 状态/AP 扫描、纯 libusb Printer-class 回退和 USB vendor 扫描控制握手
-真机验证。** 系统已安装 `kyocera-monitor 0.3.0-1`、`kyodialog 10.1-0` 和
+真机验证。** 系统已安装 `kyocera-monitor 0.3.1-1`、`kyodialog 10.1-0` 和
 `kyocera-sane 2.3.1523`；CUPS `MA2000w-2` 已重新启用并接受任务。USB 打印接口无需
 Windows mailslot 或官方 DLL 即可完成完整 PJL 状态查询；Wi-Fi 状态和 AP 扫描
 已在 USB 与 TCP 9100 两条路径通过 MA2000w 真机验证。
@@ -22,7 +22,16 @@ Windows mailslot 或官方 DLL 即可完成完整 PJL 状态查询；Wi-Fi 状�
 2496×3520 PNG、PDF 和 JPEG；最大风险转为其他机型、ADF/双面、USB、复杂色彩
 管理，以及 TIFF/XPS 在真实查看器或其他设备上的验证。Web/GUI 现已可设置
 睡眠、错误处理、纸张匹配、介质重量、打印浓度、单位、超时、面板自动清除和
-静音模式 27 个已审核整数属性；设置采用旧值校验、确认、SET 后回读和失败恢复。
+静音模式 27 个已审核整数属性；网络使用 SNMP SET，USB 使用官方 `KSETOBJ`，
+设置采用旧值校验、确认、写后回读和失败恢复。USB 字段级真机写入审计仍待设备
+重新接入后完成。
+Web/GUI 已支持自动、简体中文和 English；自动模式按设备浏览器语言匹配，
+无法匹配时回退中文，手动选择持久化并在总览/详情页共享。GitHub Actions 已按
+“测试与发版分离”配置：普通提交只跑测试，只有推送匹配 `pyproject.toml`
+版本的 `vX.Y.Z` 标签才构建 wheel、源码包、`.deb` 并创建 Release。
+Web/GUI 与 CLI 已加入手动版本检查：当前版本按语义版本比较，远端
+`updater/update.json` 只在用户点击或显式执行 `--check-update` 时访问，
+前后端各缓存 60 秒；发布 workflow 负责更新该元数据。
 配置页已按官方主默认值、通信、Trap、面板、传真和 Wi‑Fi 分区，Wi‑Fi 状态
 与连接配置位于同一 Wi‑Fi 分类；单分区读取与单字段回读不再扫描整表，扫描区
 下方重复的英文设备设置摘要已移除。纸张尺寸、介质类型和纸张重量已接入官方
@@ -144,6 +153,10 @@ USB 打印状态、Wi-Fi 状态和 AP 扫描均完成真机验收。换 AP 的�
 | P2 | Push Scan 触发与执行 | 映射与本地执行已实现；待真实事件和官方结果回写验证 | `IN_PROGRESS` |
 | BLOCKED | ADF/双面/其他机型 | 获得对应硬件后验证真实行为 | `BLOCKED` |
 | P2 | USB 物理路径 | 状态/配置/Wi‑Fi 已真机验证；继续完成 USB ScanReq 图像取回、断线重连和睡眠唤醒 | `IN_PROGRESS` |
+| P2 | USB 配置写入 | 27 个审核字段已接入官方 `KSETOBJ`、回读与恢复；待物理 USB 真机写入审计 | `IN_PROGRESS` |
+| P1 | 中英文界面与语言偏好 | 自动匹配、中文回退、手动切换、设置持久化和双页/GTK 标题接入 | `DONE` |
+| P1 | release-only 构建流 | 普通 CI 不打包；`vX.Y.Z` 标签校验后构建并发布三类产物 | `DONE` |
+| P1 | 手动版本检查 | Web/GUI/CLI、语义版本比较、缓存、外链限制和 updater 元数据发布 | `DONE` |
 | FROZEN | 配置字段扩展 | 用户明确请求后已开放 27 个已审计 UI 字段；继续仅按缺陷或明确需求触发 | `FROZEN` |
 
 P0 已完成：扫描编排位于 `kyocera_monitor.scan`，Web API 与 CLI 共用服务层；
@@ -268,7 +281,8 @@ Print Box 和 SNMPv3 等工作流。
 1. **DONE：E2 核心设备管理。** 配置读取/基线、27 个已审核整数属性写入、
    状态、预设、目录和计数已在统一页闭环；回滚实验仍隔离在 CLI。
 2. **E3：下一主目标。** USB 打印状态、Wi-Fi 状态/AP 扫描和扫描控制握手已经
-   真机闭环。下一步完成 USB ScanReq 图像取回；若需要换 AP，再用用户提供的
+   真机闭环；27 个审核配置字段也已有官方 `KSETOBJ` 自动路径，待物理 USB
+   写入验收。下一步完成 USB ScanReq 图像取回；若需要换 AP，再用用户提供的
    凭据验收官方 SET 顺序。
 3. **FROZEN：配置字段扩展。** 用户明确指出的已审计字段已开放到 27 个；
    后续不再主动扩大，除非出现缺陷或明确字段需求。
@@ -405,7 +419,140 @@ Print Box 和 SNMPv3 等工作流。
 下一步：安装 `.deb` 后在 MA2000w 上完成“预设灰度 PDF → 自动保存目录 →
 下载/落盘哈希一致”的真机验收，再实现 E2 的统一配置只读/差异/安全写入界面。
 
-## 最近一次工作交接（第五十九轮）
+## 最近一次工作交接（第六十二轮）
+
+日期：2026-11-08。范围：参考 `asset-snapshot` 增加手动版本检查，并将发布
+workflow 扩展为同时发布更新元数据；未连接打印机，也未执行任何设备写入。
+
+完成与证据：
+
+- 新增 `kyocera_monitor/updates.py`。当前版本依次从源码 `pyproject.toml`、
+  Debian 生成的 `_build_version.py` 和 wheel `.dist-info` 解析；远端版本必须是
+  `MAJOR.MINOR.PATCH`，按数值比较，`0.10.0 > 0.9.9`。
+- `update.json` 固定为 `{"version":"x.y.z","htmlUrl":"https://..."}`，响应最大
+  16 KiB；发布 URL 必须为 HTTPS，GTK 外链桥只允许 `github.com`。
+- Web 总览页和设备页顶部新增“检查更新”；用户点击后才请求 `/api/update`。
+  结果在 localStorage 和后端 `UpdateChecker` 各缓存 60 秒。新版本弹窗显示
+  当前版本、最新版本和发布页链接，GTK 通过 `kyoceraOpenUrl` 消息桥调用系统
+  浏览器。
+- 新增 `kyocera-monitor --check-update [--json]` 和 `KYOCERA_UPDATE_URL` 镜像
+  覆盖；普通状态、扫描、配置和 Web/GUI 启动不会自动检查网络。
+- `.github/workflows/release.yml` 在主 Release 完成后生成 `update.json`，更新
+  固定 `updater` Release，并把 `vX.Y.Z` Release 恢复为 GitHub latest。
+
+验证：
+
+- 全量 `python3 -m unittest discover -s tests` → 388/388 通过。
+- 新增测试覆盖版本数值比较、源码/包版本解析、JSON/版本/HTTPS/大小校验、
+  缓存与 force、Web API、CLI、GTK 外链白名单、翻译键、Debian 版本文件和
+  workflow 元数据步骤。
+- 页面 JavaScript 语法、Python 编译、工作流 YAML、公开树检查和
+  `git diff --check` 通过。
+
+剩余问题：
+
+- 当前仓库尚无真实的 `updater` Release；首次 `vX.Y.Z` 标签发布后需验证
+  GitHub 下载 URL、元数据更新、latest 恢复以及 Web/GUI 实际远端检查。
+- 当前没有可用浏览器宿主，未做新版本弹窗的人工截图检查。
+
+下一步：按既定流程发布下一个明确版本标签，然后分别用
+`kyocera-monitor --check-update --json` 和 Web/GUI 检查更新，确认
+`updater/update.json` 与发布页链接均可访问。
+
+## 历史工作交接（第六十一轮）
+
+日期：2026-11-08。范围：新增中英文界面与语言偏好，并将 GitHub Actions
+调整为测试/发版分离；没有连接设备或执行设备写入。
+
+完成与证据：
+
+- 新增 `kyocera_monitor/i18n.py`：解析 `Accept-Language` 质量顺序，匹配
+  `zh*`/`en*`，无匹配回退 `zh-CN`；`auto`、`zh-CN`、`en-US` 三种偏好
+  持久化在 `settings.json`。
+- 总览页和设备页共用语言选择与翻译表，覆盖静态控件、动态扫描/配置/Wi‑Fi/
+  Push Scan 提示、官方配置标签和 Push Scan 状态；手动切换通过
+  `POST /api/language` 保存并重新加载页面。GTK 标题同步和下载结果对话框也已
+  接入有效语言。
+- 版本管理以 `pyproject.toml` 为唯一来源。新增 `tools/release.py`：
+  `bump major|minor|patch` 只改版本字段，`check --tag vX.Y.Z` 在发布前/工作流
+  中校验标签完全匹配。
+- `.github/workflows/ci.yml` 仅执行 Python 3.10/3.12 测试、编译和公开树检查；
+  普通 `main` 推送或 PR 不生成安装包。新增 `.github/workflows/release.yml`，
+  仅由 `v*` 标签触发，构建 wheel、sdist、架构无关 Debian 包，上传 artifact
+  并创建/更新 GitHub Release。
+
+验证：
+
+- 全量 `python3 -m unittest discover -s tests -v` → 371/371 通过。
+- `compileall`、两页 JavaScript 语法、工作流 YAML、公开树检查和
+  `git diff --check` 通过。
+- 本地运行 `python3 tools/build_deb.py` 成功生成
+  `/tmp/kyocera-i18n-build.dO0Ld2/deb/kyocera-monitor_0.3.1-1_all.deb`；
+  `pip wheel --no-deps --no-build-isolation` 成功生成
+  `kyocera_monitor-0.3.1-py3-none-any.whl`。
+- 当前环境没有可用浏览器宿主，未做人工截图验收；工作流尚未推送到 GitHub，
+  因此远程 runner 的首次 release 运行仍待标签发布时验证。
+- 本机系统 Python 无法直接执行 `python -m build`（同名 Debian 包与
+  PyPA `build` 冲突），所以本地用 `pip wheel` 验证 wheel；sdist 由发布
+  workflow 安装 PyPA `build` 后生成，尚未在本地实构建。
+
+剩余问题：
+
+- `release.yml` 的 GitHub Release 创建/更新步骤需要仓库 Actions 具备
+  `contents: write`；首次推送标签后应确认 `gh release` 权限和产物上传结果。
+- 英文翻译已通过键覆盖和页面语法测试，但尚未在英文桌面环境人工逐页检查
+  长文本换行。
+
+下一步：在英文桌面环境启动 Web/GUI，检查总览、扫描、配置和 Wi‑Fi 长文本
+布局；随后按 `tools/release.py bump`、更新 CHANGELOG、打 `vX.Y.Z` 标签的流程
+执行首次远程发版。
+
+## 历史工作交接（第六十轮）
+
+日期：2026-11-08。范围：修复设备配置在 USB/PJL 连接下整体只读，复核 27 个
+已审核整数属性，并更新桌面安装包；没有执行设备写入、扫描、Wi‑Fi 切换或重置。
+
+完成与证据：
+
+- 根因：CLI 的 `writer_available` 对 `libusb:`/`/dev/` 目标固定返回
+  `false`，页面因此隐藏所有配置编辑器。该限制是当时尚未接入 USB 写入路径，
+  不是字段映射丢失。
+- 新增 `config_set_command()` 和 `set_config_integer()`，严格生成官方静态
+  证据中的 `@PJL KSETOBJ OBJ="1.<relative-oid>" VALUE =<integer>`，并要求
+  设备响应 `STATUS=0`；写入后继续由 `ConfigWorkbench` 读取目标 item、核对
+  回读值并在失败时恢复旧值。
+- Web/GUI 的 USB writer 与状态、分区读取和 Wi‑Fi 操作共用 selector 锁；
+  网络目标继续使用 SNMP SET。27 个可编辑属性清单与安全写审计白名单保持一致。
+- 对 MA2000w `192.168.0.220` 仅执行 SNMP GET：27/27 字段返回
+  `status=0`、`value_kind=integer`；睡眠时间当前值为 `1`。
+- 版本升级为 `0.3.1`，构建并安装
+  `dist/kyocera-monitor_0.3.1-1_all.deb`。SHA-256 为
+  `4b008ca84f08323505b5a99a6a4244ffbc68ee9fc7f9ea309c0839cf23ac3b65`；
+  `dpkg-query` 显示 `0.3.1-1 install ok installed`。
+
+验证：
+
+- 全量 `python3 -m unittest discover -s tests -v` → 353/353 通过。
+- 新增测试覆盖 USB 配置写入、`KSETOBJ` 命令格式、`STATUS!=0` fail closed、
+  USB 写后回读，以及可编辑目录与安全审计白名单一致。
+- `compileall`、两页 JavaScript 语法、`tools/check_publication.py` 和
+  `git diff --check` 通过。
+- 安装后的 `/usr/lib/python3/dist-packages` 解析到 27 个字段，并能生成上述
+  `KSETOBJ` 命令。用安装后的代码对 MA2000w `general` 分区做只读视图核对，
+  `editing.available=true`，可编辑项为 `1/2/3/10/49/50/51/52`，睡眠时间
+  显示 `1 分钟`。
+
+剩余问题：
+
+- 当前没有京瓷 USB 设备，USB 路径只完成单元/模拟测试；需在物理 USB
+  MA2000w 上对代表性字段执行一次用户授权的写入、回读和恢复。
+- 网络路径已有 25 字段批量审计和 item 2/50 真机写入证据；其他未审计配置
+  对象不能被推断为可写。
+
+下一步：连接 MA2000w USB 后，从“设备默认值”修改睡眠时间并核对写后回读，
+随后恢复原值；确认页面不再显示“当前连接未开放配置写入”。
+
+## 历史工作交接（第五十九轮）
 
 日期：2026-11-08。范围：设备配置可读性、官方纸张/介质枚举和纸盒名称显示；
 未连接 MA2000w，未执行任何设备写入、扫描、Wi‑Fi 切换或重置。

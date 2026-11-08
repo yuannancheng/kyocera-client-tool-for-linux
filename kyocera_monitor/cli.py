@@ -13,7 +13,7 @@ import webbrowser
 from contextlib import contextmanager
 from pathlib import Path
 
-from .config import collect_config, collect_config_snmp
+from .config import collect_config, collect_config_snmp, set_config_integer
 from .config_snapshot import (
     ConfigSnapshotError,
     build_config_snapshot,
@@ -81,6 +81,11 @@ from .usb_scan import (
     UsbScanParameters,
     UsbScannerControl,
     probe_scanner,
+)
+from .updates import (
+    DEFAULT_UPDATE_URL,
+    UpdateCheckError,
+    UpdateChecker,
 )
 from .wifi import (
     SECURITY_MODES,
@@ -360,6 +365,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--idle", type=float, default=1.5)
     parser.add_argument("--json", action="store_true", help="emit JSON")
     parser.add_argument("--raw", action="store_true", help="emit raw PJL response")
+    parser.add_argument(
+        "--check-update",
+        action="store_true",
+        help="check the published update metadata and exit",
+    )
     parser.add_argument(
         "--scan",
         action="store_true",
@@ -656,6 +666,58 @@ def main(argv: list[str] | None = None) -> int:
             subnet=args.discover_subnet,
             use_wsd=not args.discover_no_wsd,
         )
+
+    if args.check_update:
+        if any(
+            (
+                args.host,
+                args.device,
+                args.usb,
+                args.list_usb,
+                args.usb_scan_info,
+                args.usb_scan_capture,
+                args.discover,
+                args.web,
+                args.gui,
+                args.scan,
+                args.snmp,
+                args.push_scan,
+                args.push_scan_listen,
+                args.config,
+                args.wifi_status,
+                args.wifi_scan,
+                args.wifi_connect,
+                args.raw,
+                args.watch is not None,
+                args.count,
+            )
+        ):
+            parser.error("--check-update can only be combined with --json")
+        try:
+            checker = UpdateChecker(
+                url=os.environ.get("KYOCERA_UPDATE_URL", DEFAULT_UPDATE_URL)
+            )
+            update_result = checker.check(force=True)
+        except UpdateCheckError as exc:
+            print(f"Update check failed: {exc}", file=sys.stderr)
+            return 2
+        if args.json:
+            print(
+                json.dumps(
+                    update_result.to_dict(),
+                    ensure_ascii=False,
+                    indent=2,
+                )
+            )
+        else:
+            print(f"Current version: {update_result.current_version}")
+            print(f"Latest version: {update_result.latest_version}")
+            print(
+                "Update available: "
+                + ("yes" if update_result.update_available else "no")
+            )
+            print(f"Release: {update_result.release_url}")
+        return 0
 
     if args.list_usb:
         printers = merge_usb_printers(
@@ -1819,6 +1881,16 @@ def main(argv: list[str] | None = None) -> int:
             )
 
         def write_web_configuration(key: str, oid: str, value: int):
+            if is_usb_target(key):
+                with usb_access_lock(key):
+                    with open_channel(device=key, port=args.port) as channel:
+                        return set_config_integer(
+                            channel,
+                            oid,
+                            value,
+                            timeout=args.timeout,
+                            idle=args.idle,
+                        )
             client = SnmpClient(
                 key,
                 community=args.snmp_community,
@@ -1833,7 +1905,6 @@ def main(argv: list[str] | None = None) -> int:
             read_web_configuration,
             scoped_reader=read_web_configuration,
             writer=write_web_configuration,
-            writer_available=lambda key: not is_usb_target(key),
             transport=lambda key: (
                 "pjl" if is_usb_target(key) else "snmp"
             ),

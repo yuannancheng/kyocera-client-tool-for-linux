@@ -8,7 +8,8 @@ install them from the distribution.
 
 ```bash
 python3 tools/build_deb.py
-sudo apt install ./dist/kyocera-monitor_0.3.0-1_all.deb
+PROJECT_VERSION=$(python3 tools/release.py version)
+sudo apt install "./dist/kyocera-monitor_${PROJECT_VERSION}-1_all.deb"
 ```
 
 Build without root and without contacting the network. The output path is
@@ -20,6 +21,21 @@ Validation performed by the repository tests:
 - require the three command entry points, Python package, desktop file, icon
   and license;
 - reject bundled vendor binaries and bytecode files.
+
+Normal CI runs Python 3.10 and 3.12 tests without building packages.
+[`../.github/workflows/release.yml`](../.github/workflows/release.yml) builds
+only when a matching `vX.Y.Z` tag is pushed. It verifies the tag against
+`pyproject.toml`, runs tests with Python 3.12, builds the wheel, source archive
+and architecture-independent `.deb`, runs the publication check, uploads all
+three artifacts, and creates or updates the GitHub Release. Use
+`python3 tools/release.py bump patch|minor|major` to update the single project
+version before creating the release commit and tag.
+
+The release workflow also publishes
+`update.json` to the fixed `updater` Release. It contains the released version
+and release page URL used by the application's manual update check. The updater
+Release is metadata only; the workflow restores the semantic-version release as
+GitHub's latest release after updating it.
 
 ## AppImage
 

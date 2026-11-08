@@ -6,6 +6,7 @@ from kyocera_monitor.config_edit import (
     display_edit_value,
     editable_value_allowed,
 )
+from kyocera_monitor.config_write_audit import SAFE_AUDIT_FIELDS
 
 
 class ConfigEditCatalogTests(unittest.TestCase):
@@ -42,6 +43,16 @@ class ConfigEditCatalogTests(unittest.TestCase):
                 85,
             ],
         )
+
+    def test_ui_catalog_matches_device_verified_and_safe_audit_fields(self):
+        audited = {field.item_id for field in SAFE_AUDIT_FIELDS}
+        directly_verified = {
+            item_id
+            for item_id in EDITABLE_BY_ID
+            if item_id in {2, 50}
+        }
+        self.assertEqual(set(EDITABLE_BY_ID), audited | directly_verified)
+        self.assertEqual(len(set(EDITABLE_BY_ID)), 27)
 
     def test_units_follow_the_official_control_mapping(self):
         setting = EDITABLE_BY_ID[51]

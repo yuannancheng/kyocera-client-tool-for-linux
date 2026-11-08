@@ -67,6 +67,8 @@ python3 -m kyocera_monitor --host 192.168.0.220 --snmp --web --web-port 8080
 python3 -m kyocera_monitor --discover
 python3 -m kyocera_monitor --discover --json
 python3 -m kyocera_monitor --discover --discover-subnet 192.168.0.0/24
+python3 -m kyocera_monitor --check-update
+python3 -m kyocera_monitor --check-update --json
 python3 tools/kmscn_probe.py 192.168.0.220
 python3 tools/kmscn_probe.py 192.168.0.220 --capability --json
 python3 tools/kmscn_probe.py 192.168.0.220 --preflight --json --raw
@@ -132,6 +134,21 @@ PNG/PDF/BMP/RAW 路径只需要 Python 标准库；JPEG/TIFF/高压缩 PDF/XPS �
 “发现打印机”使用 SNMP 广播/WS-Discovery 搜索。启动时也可以加
 `--host 192.168.0.220` 直接进入该设备。
 
+页面顶部提供“自动（设备语言） / 简体中文 / English”切换。默认的自动模式按
+浏览器或 GTK WebKit 发送的 `Accept-Language` 匹配中文或英文；没有可支持的
+语言时回退简体中文。手动选择保存到
+`~/.config/kyocera-monitor/settings.json`（或 `XDG_CONFIG_HOME` 对应目录），
+总览页和设备详情页共用同一偏好；原生窗口标题及下载结果对话框也会跟随当前
+语言。
+
+页面顶部还显示当前版本和“检查更新”入口。只有用户明确点击后才访问 GitHub
+上的 `update.json`；`0.10.0` 与 `0.9.9` 这样的版本按数值比较，不按字符串比较。
+发现新版本时显示当前版本、最新版本和发布页链接，结果在前后端各缓存 60 秒。
+`kyocera-monitor --check-update` 提供同样的手动检查，`--json` 输出便于脚本使用。
+没有发布元数据、网络失败或 JSON/版本/URL 校验失败时只报告检查失败，不影响打印
+机状态和扫描功能。可用 `KYOCERA_UPDATE_URL` 指向兼容的镜像 `update.json`；
+发布页链接必须是 HTTPS。
+
 原生窗口依赖 GTK3 与 WebKit2 4.1（Debian/Ubuntu 包名通常为
 `gir1.2-gtk-3.0`、`gir1.2-webkit2-4.1`）。缺少依赖时 `--gui` 会返回退出码 2
 并提示改用 `--web`。
@@ -176,7 +193,8 @@ python3 -m pip install --user .
 
 ```bash
 python3 tools/build_deb.py
-sudo apt install ./dist/kyocera-monitor_0.3.0-1_all.deb
+PROJECT_VERSION=$(python3 tools/release.py version)
+sudo apt install "./dist/kyocera-monitor_${PROJECT_VERSION}-1_all.deb"
 ```
 
 构建过程只使用本地 Python 和 `dpkg-deb`，不联网。包的运行依赖声明为
@@ -184,6 +202,48 @@ sudo apt install ./dist/kyocera-monitor_0.3.0-1_all.deb
 `gir1.2-webkit2-4.1`，由 APT 按发行版提供。构建与验证边界见
 [`packaging/README.md`](packaging/README.md)。AppImage 是后续便携目标，需要
 另外封装 Python、GTK 和 WebKitGTK；当前首发产物为 `.deb`。
+
+## 持续集成与构建产物
+
+`pyproject.toml` 的 `[project].version` 是唯一版本号，采用
+`MAJOR.MINOR.PATCH`。`tools/build_deb.py` 从该字段生成 Debian 版本，发布标签
+必须写成 `vX.Y.Z`，例如项目版本 `0.3.1` 对应标签 `v0.3.1`。
+
+普通推送和拉取请求只运行
+[`.github/workflows/ci.yml`](.github/workflows/ci.yml) 的测试矩阵
+（Python 3.10/3.12），不会生成安装包。只有显式推送 `v*` 标签才触发
+[`.github/workflows/release.yml`](.github/workflows/release.yml)：
+先校验标签与 `pyproject.toml` 完全一致，再运行发布测试、构建 wheel、源码包和
+架构无关的 Debian 包、执行公开树检查、上传 Actions artifact，并创建或更新
+对应的 GitHub Release。发布完成后工作流还会更新固定的 `updater` Release
+中的 `update.json`，供应用的手动版本检查读取。构建流不访问设备，也不调用
+或打包京瓷官方 Windows 二进制。
+
+`update.json` 只发布版本号和发布页地址：
+
+```json
+{"version":"0.3.1","htmlUrl":"https://github.com/yuannancheng/kyocera-client-tool-for-linux/releases/tag/v0.3.1"}
+```
+
+发版流程示例：
+
+```bash
+# 选择 patch/minor/major；命令只修改 pyproject.toml，不提交、不打标签
+python3 tools/release.py bump patch
+NEXT_VERSION=$(python3 tools/release.py version)
+
+# 更新 CHANGELOG.md，运行测试并提交版本变更
+git add pyproject.toml CHANGELOG.md
+git commit -m "release: v${NEXT_VERSION}"
+
+# 先检查标签与版本一致，再创建并推送标签
+python3 tools/release.py check --tag "v${NEXT_VERSION}"
+git tag -a "v${NEXT_VERSION}" -m "KYOCERA Client Tool v${NEXT_VERSION}"
+git push origin main "v${NEXT_VERSION}"
+```
+
+不要为文档修正、小型重构或普通功能提交单独创建版本标签；这些提交仍由 CI
+验证。已发布的标签不应移动或复用；需要修复时递增版本并发布新标签。
 
 JSON 输出同时保留原始 `kgetobj`，并在 `kgetobj_known` 中提供已确认的结构化
 字段（Scan count、Drum counter、Drum counter max、Auto error clear 及其
@@ -403,9 +463,10 @@ options、Communication、SNMP trap、Wi‑Fi 状态、音量与 FAX notificatio
 “设备配置 → Wi‑Fi”，保存
 `0600` 私有基线并比较差异；SNMP community、Wi‑Fi SSID 等敏感值在页面中
 隐藏。睡眠、错误清除、纸张匹配、介质重量、打印浓度、长度单位、送纸/面板
-超时和静音模式等 27 个已审核整数属性可写入；`POST /api/config/apply` 要求
-页面旧值、目标值、`confirm=true`，并在 SET 后重新读取设备，失败时尝试恢复
-旧值。网络、SNMP 凭据、传真、字符串、重置和其他未知字段仍只读；Wi‑Fi
+超时和静音模式等 27 个已审核整数属性可写入；网络目标使用 SNMP SET，
+USB 目标使用官方 `KSETOBJ`。`POST /api/config/apply` 要求页面旧值、目标值、
+`confirm=true`，并在写入后重新读取设备，失败时尝试恢复旧值。网络、SNMP
+凭据、传真、字符串、重置和其他未知字段仍只读；Wi‑Fi
 凭据只能通过分区内的专用连接流程提交。`/api/config/plan` 不存在，CLI 的
 令牌化 `OFF -> ON -> OFF` 研究流程保持独立。
 详情页的 Push Scan 区通过 `/api/push-scan` 显示设备只读状态，并说明设备
@@ -475,7 +536,7 @@ python3 -m unittest discover -s tests -v
 python3 tools/check_publication.py
 ```
 
-当前 323 个测试覆盖 PJL 解析/帧格式、分段补发与合并、KGETOBJ 结构化字段、
+当前 388 个测试覆盖 PJL 解析/帧格式、分段补发与合并、KGETOBJ 结构化字段、
 147 项配置对象表与 CLI 配置导出、`KMUTLCFG` UI 控件字符串提取、
 147 项对象→模型偏移映射与首批控件→OID 对照、
 配置 SNMP 后备读取、
@@ -488,6 +549,10 @@ sysfs 发现、PTY 假设备往返、SNMP/WSD 发现与结果合并，以及 Web
 PNG/PDF/JPEG/TIFF/高压缩 PDF/XPS 导出、扫描后台任务与下载、设备忙保护、
 `file_size` 不作为传输长度、截断 chunked 响应处理、扫描预设/保存目录、
 计数 CSV、配置工作台/敏感值脱敏/写入令牌、Debian 包内容和公开树合规检查。
+语言专项测试覆盖 `Accept-Language` 质量顺序、中文回退、手动覆盖、设置迁移、
+API、翻译键完整性和双页语言控件；发布专项测试覆盖语义版本 bump、标签校验、
+普通 CI 不构建产物以及标签发布流。版本检查专项覆盖数值比较、当前版本解析、
+元数据格式/大小/HTTPS 校验、缓存、Web API、CLI 和 GTK 外链限制。
 Push Scan 专项测试覆盖 IPv4/IPv6/主机名匹配、USB 与未配置状态、缺失对象、
 上次结果语义、CLI 只读读取、槽位映射、明确启用的本地预设执行和 Web API。
 USB 专项测试覆盖 sysfs/libusb 发现、可访问节点优先级、PTY PJL 往返和无 root

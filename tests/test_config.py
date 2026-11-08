@@ -17,11 +17,14 @@ from unittest.mock import patch
 from kyocera_monitor import cli
 from kyocera_monitor.config import (
     CONFIG,
+    ConfigSetError,
     absolute_config_oid,
     build_config_commands,
     collect_config_snmp,
+    config_set_command,
     decode_value,
     parse_config_response,
+    set_config_integer,
 )
 from kyocera_monitor.config_snapshot import (
     ConfigSnapshotError,
@@ -80,6 +83,30 @@ def config_response(commands) -> bytes:
         pjl_object = command.split('"')[1]
         parts.append(kgetobj(pjl_object, status, pjl_type, value))
     return "".join(parts).encode("ascii")
+
+
+class ConfigSetChannel:
+    def __init__(self, *, status: int = 0, response: bytes | None = None):
+        self.status = status
+        self.response = response
+        self.sent = b""
+        self.expected = ()
+        self.drained = False
+
+    def drain(self) -> None:
+        self.drained = True
+
+    def send(self, data: bytes) -> None:
+        self.sent = data
+
+    def receive(self, _timeout, _idle, expected=()):
+        self.expected = expected
+        if self.response is not None:
+            return self.response
+        command = expected[0]
+        return (
+            f"{command}\r\nSTATUS={self.status}\r\nVALUE =1\r\n\x0c"
+        ).encode("ascii")
 
 
 def pty_responder(master_fd: int, response: bytes, expected_commands: int) -> None:
@@ -825,6 +852,55 @@ class ConfigWritePlanTests(unittest.TestCase):
             self.assertTrue(plan["review"]["plan_preconditions_valid"])
             self.assertTrue(plan["review"]["executor_supported"])
             self.assertTrue(plan["execution"]["allowed"])
+
+
+class ConfigSetTests(unittest.TestCase):
+    def test_ksetobj_uses_the_official_int_line_for_absolute_oid(self):
+        self.assertEqual(
+            config_set_command(
+                "1.3.6.1.4.1.1347.43.5.1.1.23.1",
+                2,
+            ),
+            '@PJL KSETOBJ OBJ="1.43.5.1.1.23.1" VALUE =2',
+        )
+        self.assertEqual(
+            config_set_command("43.5.1.1.23.1", 1),
+            '@PJL KSETOBJ OBJ="1.43.5.1.1.23.1" VALUE =1',
+        )
+
+    def test_set_config_integer_requires_echoed_success_status(self):
+        channel = ConfigSetChannel()
+        self.assertEqual(
+            set_config_integer(
+                channel,
+                "1.3.6.1.4.1.1347.43.5.1.1.23.1",
+                2,
+            ),
+            0,
+        )
+        self.assertTrue(channel.drained)
+        self.assertIn(
+            b'@PJL KSETOBJ OBJ="1.43.5.1.1.23.1" VALUE =2\r\n',
+            channel.sent,
+        )
+        self.assertEqual(
+            channel.expected,
+            ('@PJL KSETOBJ OBJ="1.43.5.1.1.23.1" VALUE =2',),
+        )
+
+    def test_set_config_integer_fails_closed_on_device_error(self):
+        with self.assertRaisesRegex(ConfigSetError, "STATUS=4"):
+            set_config_integer(
+                ConfigSetChannel(status=4),
+                "1.3.6.1.4.1.1347.43.5.1.1.23.1",
+                2,
+            )
+        with self.assertRaisesRegex(ConfigSetError, "no response"):
+            set_config_integer(
+                ConfigSetChannel(response=b""),
+                "1.3.6.1.4.1.1347.43.5.1.1.23.1",
+                2,
+            )
 
 
 class ConfigWriteCandidateTests(unittest.TestCase):

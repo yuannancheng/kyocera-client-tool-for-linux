@@ -17,6 +17,8 @@ kyocera_monitor/
   snmp.py      SNMP v1/v2c BER 编解码、GET/GETNEXT walk 与受限 Integer SET
   snmp_status.py  SNMP OID 到 PrinterSnapshot 的只读映射
   config_web.py  配置分区、脱敏视图、基线及已审核整数写入编排
+  i18n.py      语言协商、自动/手动偏好和页面翻译资源
+  updates.py   手动版本检查、语义版本比较、元数据校验与短时缓存
   web.py       HTTP 状态/扫描 API、页面与快照缓存
   gui.py       GTK3/WebKit2 原生窗口，内嵌同一个本地 Web 仪表盘
   scan.py      KM-WSDL 扫描编排、后台任务、RAW 解码与本地格式导出
@@ -67,8 +69,10 @@ tools/
    `getaddrinfo`。同一 USB 设备的状态、配置和 Wi-Fi 通道共用按 selector
    分配的 `RLock`，避免多个 Web 请求并发 claim Printer interface。PJL
    解析记录和 SNMP 记录都带相对/绝对 OID，配置视图不依赖 transport 猜测
-   字段是否存在。单字段网络写入的旧值校验和 SET 后回读只请求目标 item；
-   USB 页面保持只读。基线保存/比较仍显式执行完整 147 项读取。读取层的
+   字段是否存在。单字段网络写入使用 SNMP SET，USB 写入使用官方
+   `KSETOBJ ... VALUE =<integer>` 行；两者的旧值校验和 SET 后回读都只请求
+   目标 item。USB 写入与其他状态/读取操作共用 selector 锁。基线保存/比较
+   仍显式执行完整 147 项读取。读取层的
    超时/socket/结果异常统一转换为 `ConfigWorkbenchError`，HTTP 路由始终返回
    JSON 错误，不让 WebKit 只看到断连式 `TypeError: Load failed`。页面以分区
    卡片展示 27 个审核属性，完整配置只出现在基线维护区。Wi‑Fi 状态和连接配置
@@ -87,10 +91,19 @@ tools/
 12. `--gui` 在 `127.0.0.1` 的随机端口启动同一个 `create_server()`，由
    GTK3/WebKit2 窗口加载总览页；关闭窗口时停止本地服务。GTK/WebKit 是可选
    依赖，缺失时 CLI 返回退出码 2 并提示改用 `--web`。
-13. `--discover` 并行执行 SNMP 广播和 WS-Discovery；广播只取型号 OID，随后用
+13. Web/GUI 的语言偏好保存在用户设置中，取值为 `auto`、`zh-CN` 或
+   `en-US`。`auto` 使用请求的 `Accept-Language`，按质量值匹配 `zh*` 或
+   `en*`，其他语言回退 `zh-CN`；手动值优先于设备语言。页面初始 HTML 带有
+   有效 locale 和翻译表，详情页、总览页和原生窗口标题共用同一结果。
+   `POST /api/language` 只更新语言字段，不影响扫描目录、预设或设备列表。
+14. `--discover` 并行执行 SNMP 广播和 WS-Discovery；广播只取型号 OID，随后用
    单播 GET 补全序列号/固件。ARP 表和可选的子网 CIDR 作为额外单播候选。
    Web 页面的 `/api/discover` 复用同一实现，并把发现的主机加入允许列表和
    持久化设备列表。
+15. `--check-update` 或 Web/GUI 的“检查更新”按钮调用 `/api/update`，从固定
+    `updater` Release 下载 `update.json`。版本号必须是稳定的
+   `MAJOR.MINOR.PATCH`，按数值比较；发布页必须是 HTTPS。后端和页面各缓存
+    60 秒，启动时不自动联网。GTK 只允许通过消息桥打开 GitHub HTTPS 链接。
 
 USB 设备选择由 `usb.discover_usb_printers()` 完成：扫描 `/dev/usb/lp*`，从
 `/sys/class/usbmisc/lpN/device` 向上读取 `idVendor`/`idProduct`，优先选择
@@ -147,9 +160,15 @@ MA2000w（`0482:0d51`），多个候选时要求显式 `--device`。
   多设备总览和手动添加主机已实现，主机列表与扫描预设、保存目录一起保存在
   `0600` 原子写入的用户设置中。
 - 原生 GUI 是 Web 仪表盘的 GTK3/WebKit2 外壳，不复制状态解析逻辑；需要
-  无界面运行或未安装 WebKit 时使用 `--web`。
+  无界面运行或未安装 WebKit 时使用 `--web`。HTML 内的当前语言标题会同步到
+  GTK 窗口标题，下载结果对话框使用同一有效语言。
 - 设备发现只发送 SNMP GET 和 WS-Discovery Probe；子网扫描必须显式指定
   `--discover-subnet`，上限 /22，不使用端口扫描。
+- 版本号只维护在 `pyproject.toml` 的 `[project].version`，格式为
+  `MAJOR.MINOR.PATCH`；Debian 构建从该字段读取。普通提交和 PR 只运行测试，
+  发布构建仅由匹配的 `vX.Y.Z` Git 标签触发，工作流在构建前验证标签一致性。
+- 版本检查是显式网络操作，不参与状态/扫描启动路径；远端元数据只包含版本和
+  发布页 URL，不下载或执行更新包，也不宣称自动升级能力。
 
 ## 退出码
 

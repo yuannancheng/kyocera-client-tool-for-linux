@@ -10,6 +10,7 @@ import threading
 from pathlib import Path
 from typing import Callable
 
+from .i18n import LANGUAGE_AUTO, normalize_language_preference
 from .scan import ScanOptions
 
 SETTINGS_VERSION = 1
@@ -47,6 +48,7 @@ def default_scan_directory() -> str:
 def default_settings() -> dict[str, object]:
     return {
         "version": SETTINGS_VERSION,
+        "language": LANGUAGE_AUTO,
         "scan_directory": default_scan_directory(),
         "presets": [],
         "saved_printers": [],
@@ -193,6 +195,7 @@ def normalize_settings(value: object) -> dict[str, object]:
         raise SettingsError("settings must be a JSON object")
     unknown = set(value) - {
         "version",
+        "language",
         "scan_directory",
         "presets",
         "saved_printers",
@@ -223,8 +226,13 @@ def normalize_settings(value: object) -> dict[str, object]:
     ]
     if len(push_scan_slots) != len(set(push_scan_slots)):
         raise SettingsError("Push Scan slots must be unique")
+    try:
+        language = normalize_language_preference(value.get("language"))
+    except ValueError as exc:
+        raise SettingsError(str(exc)) from exc
     return {
         "version": SETTINGS_VERSION,
+        "language": language,
         "scan_directory": normalize_scan_directory(
             value.get("scan_directory", default_scan_directory())
         ),
@@ -265,6 +273,19 @@ class SettingsStore:
         with self._lock:
             settings = self._load_unlocked()
             settings["saved_printers"] = normalized
+            self._save_unlocked(settings)
+        return settings
+
+    def update_language(self, language: object) -> dict[str, object]:
+        """Atomically replace the persisted language preference."""
+
+        try:
+            normalized = normalize_language_preference(language)
+        except ValueError as exc:
+            raise SettingsError(str(exc)) from exc
+        with self._lock:
+            settings = self._load_unlocked()
+            settings["language"] = normalized
             self._save_unlocked(settings)
         return settings
 

@@ -25,6 +25,12 @@ from .config_web import (
     ConfigWorkbench,
     ConfigWorkbenchError,
 )
+from .i18n import (
+    LANGUAGE_AUTO,
+    normalize_language_preference,
+    render_localized_page,
+    resolve_language,
+)
 from .parser import PrinterSnapshot
 from .preferences import (
     SettingsError,
@@ -40,6 +46,11 @@ from .scan import (
     ScanJob,
     ScanJobManager,
     ScanOptions,
+)
+from .updates import (
+    UpdateCheckError,
+    UpdateChecker,
+    render_update_runtime,
 )
 from .wifi import SECURITY_MODES, WifiError, WifiWorkbench
 
@@ -262,7 +273,7 @@ OVERVIEW_HTML = """<!doctype html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>KYOCERA 打印机</title>
+<title data-i18n="KYOCERA 打印机">KYOCERA 打印机</title>
 <style>
   :root { color-scheme: light dark; }
   body { font-family: system-ui, sans-serif; margin: 0; padding: 24px;
@@ -308,6 +319,11 @@ OVERVIEW_HTML = """<!doctype html>
              background: #fff; color: inherit; text-decoration: none; }
   label.notify { display: inline-flex; align-items: center; gap: 6px;
                  font-size: .9rem; }
+  label.language { display: inline-flex; align-items: center; gap: 6px;
+                   margin-left: auto; font-size: .9rem; }
+  label.language select { padding: 5px 8px; border-radius: 8px;
+                          border: 1px solid #b9c1c9; background: #fff;
+                          color: inherit; font: inherit; }
   form.add { display: flex; gap: 8px; margin-top: 14px; flex-wrap: wrap; }
   form.add input { flex: 1 1 220px; min-width: 180px; padding: 8px 10px;
                    border-radius: 8px; border: 1px solid #b9c1c9;
@@ -326,24 +342,35 @@ OVERVIEW_HTML = """<!doctype html>
                      border-color: #356943; border-left-color: #64b56f; }
     .toast.info { background: #1b3042; color: #cce7ff;
                   border-color: #35566f; border-left-color: #5c9bd1; }
-    button, a.button, form.add input { background: #1c2228; color: inherit;
-                                        border-color: #3a444e; }
+    button, a.button, form.add input, label.language select {
+      background: #1c2228; color: inherit; border-color: #3a444e;
+    }
   }
 </style>
 </head>
 <body>
 <main>
   <header>
-    <h1>KYOCERA 打印机</h1>
-    <span id="count" class="pill">加载中</span>
-    <a class="button" href="/api/counters.csv">导出计数 CSV</a>
-    <label class="notify"><input id="notify" type="checkbox"> 状态通知</label>
-    <button id="discover" type="button">发现打印机</button>
+    <h1 data-i18n="KYOCERA 打印机">KYOCERA 打印机</h1>
+    <span id="count" class="pill" data-i18n="加载中">加载中</span>
+    <label class="language"><span data-i18n="语言">语言</span>
+      <select id="language-select" data-i18n-aria-label="语言">
+        <option value="auto" data-i18n="自动（设备语言）">自动（设备语言）</option>
+        <option value="zh-CN" data-i18n="简体中文">简体中文</option>
+        <option value="en-US">English</option>
+      </select>
+    </label>
+    <button id="version-check" type="button" data-i18n="检查更新">检查更新</button>
+    <a class="button" href="/api/counters.csv" data-i18n="导出计数 CSV">导出计数 CSV</a>
+    <label class="notify"><input id="notify" type="checkbox">
+      <span data-i18n="状态通知">状态通知</span></label>
+    <button id="discover" type="button" data-i18n="发现打印机">发现打印机</button>
   </header>
   <form id="add" class="add" autocomplete="off">
     <input id="host" name="host" inputmode="url"
+           data-i18n-placeholder="手动添加打印机 IP，例如 192.168.0.220"
            placeholder="手动添加打印机 IP，例如 192.168.0.220" required>
-    <button type="submit">添加设备</button>
+    <button type="submit" data-i18n="添加设备">添加设备</button>
   </form>
   <div id="devices" class="grid"></div>
   <div id="meta" class="muted"></div>
@@ -351,13 +378,17 @@ OVERVIEW_HTML = """<!doctype html>
 <div id="toasts" class="toast-stack" role="status" aria-live="polite"></div>
 <script>
 const byId = (id) => document.getElementById(id);
+const tr = (source, vars = {}) => window.I18n.translate(source, vars);
+const tv = (value) => window.I18n.value(value);
+I18n.applyStatic();
 const statusClass = (normal) => normal === true ? "pill ok"
   : normal === false ? "pill warn" : "pill";
 let previousStates = {};
 
 function showToast(message, kind = "error") {
   const stack = byId("toasts");
-  const text = message == null || message === "" ? "发生未知错误" : String(message);
+  const text = message == null || message === ""
+    ? tr("发生未知错误") : String(message);
   const duplicate = Array.from(stack.children).some(
     (item) => item.dataset.message === text
   );
@@ -375,7 +406,7 @@ function line(label, value) {
   div.className = "line";
   const span = document.createElement("span");
   span.className = "label";
-  span.textContent = label + ": ";
+  span.textContent = tr(label) + ": ";
   div.append(span);
   div.append(document.createTextNode(
     value == null || value === "" ? "-" : String(value)));
@@ -391,13 +422,13 @@ function card(device) {
   row.className = "row";
   const name = document.createElement("span");
   name.className = "name";
-  name.textContent = (snapshot && snapshot.model) || "未知打印机";
+  name.textContent = (snapshot && snapshot.model) || tr("未知打印机");
   const pill = document.createElement("span");
   pill.className = statusClass(snapshot ? snapshot.normal : null);
   pill.textContent = snapshot
-    ? (snapshot.normal === true ? "正常"
-      : snapshot.normal === false ? "警告" : "未知")
-    : "不可用";
+    ? (snapshot.normal === true ? tr("正常")
+      : snapshot.normal === false ? tr("警告") : tr("未知"))
+    : tr("不可用");
   const addr = document.createElement("span");
   addr.className = "addr";
   addr.textContent = device.device;
@@ -422,8 +453,8 @@ function card(device) {
   const meta = document.createElement("div");
   meta.className = "line label";
   meta.textContent = device.cached
-    ? "缓存 · " + device.collected_at
-    : "读取耗时 " + device.elapsed_ms + " ms";
+    ? tr("缓存 · {time}", {time: device.collected_at})
+    : tr("读取耗时 {ms} ms", {ms: device.elapsed_ms});
   link.append(meta);
   return link;
 }
@@ -432,18 +463,23 @@ function render(data) {
   const box = byId("devices");
   box.replaceChildren();
   const devices = data.devices || [];
-  byId("count").textContent = devices.length +
-    " 台设备";
+  byId("count").textContent = tr("{count} 台设备", {
+    count: devices.length
+  });
   byId("count").className = devices.length ? "pill ok" : "pill";
   if (!devices.length) {
-    byId("meta").textContent = "还没有设备。点击“发现打印机”，或手动输入 IP。";
+    byId("meta").textContent = tr(
+      "还没有设备。点击“发现打印机”，或手动输入 IP。"
+    );
     return;
   }
   for (const device of devices) {
     box.append(card(device));
   }
   notifyChanges(devices);
-  byId("meta").textContent = "更新于 " + new Date().toLocaleTimeString();
+  byId("meta").textContent = tr("更新于 {time}", {
+    time: new Date().toLocaleTimeString(window.KYOCERA_LOCALE)
+  });
 }
 
 function deviceState(device) {
@@ -464,8 +500,16 @@ function notifyChanges(devices) {
           (state === "warning" || state === "unavailable")) {
         const name = (devices.find((item) => item.device === device)?.snapshot?.model)
           || device;
-        new Notification("京瓷打印机状态变化", {
-          body: `${name} (${device}) 状态变为 ${state}`
+        const stateLabel = {
+          normal: tr("正常"),
+          warning: tr("警告"),
+          unknown: tr("未知"),
+          unavailable: tr("不可用")
+        }[state] || tr(state);
+        new Notification(tr("京瓷打印机状态变化"), {
+          body: tr("{name} ({device}) 状态变为 {state}", {
+            name, device, state: stateLabel
+          })
         });
       }
     }
@@ -485,7 +529,7 @@ async function load() {
 async function discover() {
   const button = byId("discover");
   button.disabled = true;
-  button.textContent = "正在搜索…";
+  button.textContent = tr("正在搜索…");
   try {
     const response = await fetch("/api/discover", { cache: "no-store" });
     const data = await response.json();
@@ -496,12 +540,14 @@ async function discover() {
     await load();
     byId("meta").textContent = data.warning
       ? data.warning
-      : `发现 ${data.printers?.length || 0} 台打印机，结果已保存`;
+      : tr("发现 {count} 台打印机，结果已保存", {
+          count: data.printers?.length || 0
+        });
   } catch (err) {
     showToast(String(err));
   } finally {
     button.disabled = false;
-    button.textContent = "发现打印机";
+    button.textContent = tr("发现打印机");
   }
 }
 
@@ -520,8 +566,8 @@ async function addDevice(event) {
     if (!response.ok) throw new Error(data.error || response.status);
     input.value = "";
     await load();
-    byId("meta").textContent = `已添加并保存打印机 ${host}`;
-    showToast(`已添加打印机 ${host}`, "success");
+    byId("meta").textContent = tr("已添加并保存打印机 {host}", {host});
+    showToast(tr("已添加打印机 {host}", {host}), "success");
   } catch (err) {
     showToast(String(err));
   }
@@ -551,7 +597,7 @@ DEVICE_HTML = """<!doctype html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>KYOCERA 打印机状态</title>
+<title data-i18n="KYOCERA 打印机状态">KYOCERA 打印机状态</title>
 <style>
   :root { color-scheme: light dark; }
   body { font-family: system-ui, sans-serif; margin: 0; padding: 24px;
@@ -599,6 +645,12 @@ DEVICE_HTML = """<!doctype html>
   button { margin-left: auto; padding: 6px 12px; border-radius: 8px;
            border: 1px solid #b9c1c9; background: #fff; cursor: pointer; }
   button:disabled { cursor: wait; opacity: .65; }
+  header button { margin-left: 0; }
+  label.language { display: inline-flex; align-items: center; gap: 6px;
+                   margin-left: auto; font-size: .9rem; }
+  label.language select { padding: 5px 8px; border-radius: 8px;
+                          border: 1px solid #b9c1c9; background: #fff;
+                          color: inherit; font: inherit; }
   form.scan { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
               gap: 12px; margin-top: 12px; align-items: end; }
   form.scan label, .settings label { display: grid; gap: 6px; color: #5c6670;
@@ -715,7 +767,8 @@ DEVICE_HTML = """<!doctype html>
                   border-color: #35566f; border-left-color: #5c9bd1; }
     .bar { background: #2b333b; }
     th, td { border-color: #2b333b; }
-    button, form.scan select, .settings input, .settings select {
+    button, form.scan select, .settings input, .settings select,
+    label.language select {
       background: #1c2228; color: inherit; border-color: #3a444e;
     }
     form.scan label, .settings label { color: #9aa4ae; }
@@ -756,78 +809,89 @@ DEVICE_HTML = """<!doctype html>
 <body>
 <main>
   <header>
-    <h1 id="model">KYOCERA 打印机</h1>
-    <span id="status" class="pill">加载中</span>
-    <a href="/">返回总览</a>
-    <button id="refresh" type="button">刷新</button>
+    <h1 id="model" data-i18n="KYOCERA 打印机">KYOCERA 打印机</h1>
+    <span id="status" class="pill" data-i18n="加载中">加载中</span>
+    <a href="/" data-i18n="返回总览">返回总览</a>
+    <label class="language"><span data-i18n="语言">语言</span>
+      <select id="language-select" data-i18n-aria-label="语言">
+        <option value="auto" data-i18n="自动（设备语言）">自动（设备语言）</option>
+        <option value="zh-CN" data-i18n="简体中文">简体中文</option>
+        <option value="en-US">English</option>
+      </select>
+    </label>
+    <button id="version-check" type="button" data-i18n="检查更新">检查更新</button>
+    <button id="refresh" type="button" data-i18n="刷新">刷新</button>
   </header>
   <div class="grid">
-    <div class="card"><div class="label">序列号</div><div id="serial" class="value">-</div></div>
-    <div class="card"><div class="label">固件</div><div id="firmware" class="value">-</div></div>
-    <div class="card"><div class="label">地址</div><div id="address" class="value">-</div></div>
-    <div class="card"><div class="label">面板显示</div><div id="display" class="value">-</div></div>
+    <div class="card"><div class="label" data-i18n="序列号">序列号</div><div id="serial" class="value">-</div></div>
+    <div class="card"><div class="label" data-i18n="固件">固件</div><div id="firmware" class="value">-</div></div>
+    <div class="card"><div class="label" data-i18n="地址">地址</div><div id="address" class="value">-</div></div>
+    <div class="card"><div class="label" data-i18n="面板显示">面板显示</div><div id="display" class="value">-</div></div>
     <div class="card">
-      <div class="label">碳粉</div>
+      <div class="label" data-i18n="碳粉">碳粉</div>
       <div id="toner" class="value">-</div>
       <div class="bar"><span id="toner-bar"></span></div>
     </div>
-    <div class="card"><div class="label">累计打印页数</div><div id="lifetime" class="value">-</div></div>
-    <div class="card"><div class="label">扫描计数</div><div id="scan" class="value">-</div></div>
-    <div class="card"><div class="label">感光鼓计数</div><div id="drum" class="value">-</div></div>
+    <div class="card"><div class="label" data-i18n="累计打印页数">累计打印页数</div><div id="lifetime" class="value">-</div></div>
+    <div class="card"><div class="label" data-i18n="扫描计数">扫描计数</div><div id="scan" class="value">-</div></div>
+    <div class="card"><div class="label" data-i18n="感光鼓计数">感光鼓计数</div><div id="drum" class="value">-</div></div>
   </div>
   <div class="card" style="margin-top:12px">
-    <div class="label">纸盒</div>
-    <table><thead><tr><th>名称</th><th>状态</th><th>纸张</th><th>余量</th></tr></thead>
+    <div class="label" data-i18n="纸盒">纸盒</div>
+    <table><thead><tr><th data-i18n="名称">名称</th><th data-i18n="状态">状态</th><th data-i18n="纸张">纸张</th><th data-i18n="余量">余量</th></tr></thead>
     <tbody id="trays"></tbody></table>
   </div>
   <div class="card" style="margin-top:12px">
-    <div class="label">告警</div>
+    <div class="label" data-i18n="告警">告警</div>
     <div id="alerts" class="value">-</div>
   </div>
   <div class="card" style="margin-top:12px">
-    <div class="label">扫描预设与保存目录</div>
+    <div class="label" data-i18n="扫描预设与保存目录">扫描预设与保存目录</div>
     <div class="settings">
-      <label>预设
+      <label><span data-i18n="预设">预设</span>
         <select id="preset-select">
-          <option value="">不使用预设</option>
+          <option value="" data-i18n="不使用预设">不使用预设</option>
         </select>
       </label>
-      <label>预设名称
-        <input id="preset-name" maxlength="80" placeholder="例如：A4 彩扫">
+      <label><span data-i18n="预设名称">预设名称</span>
+        <input id="preset-name" maxlength="80"
+               data-i18n-placeholder="例如：A4 彩扫"
+               placeholder="例如：A4 彩扫">
       </label>
-      <label>Push Scan 槽位
+      <label><span data-i18n="Push Scan 槽位">Push Scan 槽位</span>
         <select id="preset-push-slot">
-          <option value="">不绑定</option>
+          <option value="" data-i18n="不绑定">不绑定</option>
         </select>
       </label>
-      <label class="wide">保存目录
+      <label class="wide"><span data-i18n="保存目录">保存目录</span>
         <input id="scan-directory" maxlength="4096" placeholder="/home/user/Pictures/Kyocera Scans">
       </label>
     </div>
     <div class="inline">
-      <label><input id="save-folder" type="checkbox"> 扫描完成后自动保存到该目录</label>
-      <button id="preset-save" type="button">保存当前设置为预设</button>
-      <button id="preset-delete" type="button">删除所选预设</button>
-      <button id="settings-save" type="button">保存目录设置</button>
+      <label><input id="save-folder" type="checkbox">
+        <span data-i18n="扫描完成后自动保存到该目录">扫描完成后自动保存到该目录</span></label>
+      <button id="preset-save" type="button" data-i18n="保存当前设置为预设">保存当前设置为预设</button>
+      <button id="preset-delete" type="button" data-i18n="删除所选预设">删除所选预设</button>
+      <button id="settings-save" type="button" data-i18n="保存目录设置">保存目录设置</button>
       <span id="settings-status" class="muted"></span>
     </div>
   </div>
   <div class="card" style="margin-top:12px">
-    <div class="label">扫描</div>
+    <div class="label" data-i18n="扫描">扫描</div>
     <form id="scan-form" class="scan" autocomplete="off">
-      <label>颜色
+      <label><span data-i18n="颜色">颜色</span>
         <select id="scan-color">
-          <option value="">使用设备当前设置</option>
-          <option value="FULL_COLOR">彩色</option>
-          <option value="GRAYSCALE">灰度</option>
-          <option value="BLACK_AND_WHITE">黑白</option>
-          <option value="AUTO_BLACK_AND_WHITE">自动黑白</option>
-          <option value="AUTO_GRAYSCALE">自动灰度</option>
+          <option value="" data-i18n="使用设备当前设置">使用设备当前设置</option>
+          <option value="FULL_COLOR" data-i18n="彩色">彩色</option>
+          <option value="GRAYSCALE" data-i18n="灰度">灰度</option>
+          <option value="BLACK_AND_WHITE" data-i18n="黑白">黑白</option>
+          <option value="AUTO_BLACK_AND_WHITE" data-i18n="自动黑白">自动黑白</option>
+          <option value="AUTO_GRAYSCALE" data-i18n="自动灰度">自动灰度</option>
         </select>
       </label>
-      <label>分辨率
+      <label><span data-i18n="分辨率">分辨率</span>
         <select id="scan-resolution">
-          <option value="">使用设备当前设置</option>
+          <option value="" data-i18n="使用设备当前设置">使用设备当前设置</option>
           <option value="RESOLUTION_150X150">150 × 150 dpi</option>
           <option value="RESOLUTION_200X200">200 × 200 dpi</option>
           <option value="RESOLUTION_300X300">300 × 300 dpi</option>
@@ -835,129 +899,134 @@ DEVICE_HTML = """<!doctype html>
           <option value="RESOLUTION_600X600">600 × 600 dpi</option>
         </select>
       </label>
-      <label>原稿类型
+      <label><span data-i18n="原稿类型">原稿类型</span>
         <select id="scan-original-image">
-          <option value="">使用设备当前设置</option>
-          <option value="TEXT">文字</option>
-          <option value="TEXT_AND_PHOTO">文字和照片</option>
-          <option value="PHOTO">照片</option>
+          <option value="" data-i18n="使用设备当前设置">使用设备当前设置</option>
+          <option value="TEXT" data-i18n="文字">文字</option>
+          <option value="TEXT_AND_PHOTO" data-i18n="文字和照片">文字和照片</option>
+          <option value="PHOTO" data-i18n="照片">照片</option>
           <option value="FOR_OCR">OCR</option>
-          <option value="MAP">地图</option>
-          <option value="LIGHT_TEXT">浅色文字</option>
+          <option value="MAP" data-i18n="地图">地图</option>
+          <option value="LIGHT_TEXT" data-i18n="浅色文字">浅色文字</option>
         </select>
       </label>
-      <label>页数
+      <label><span data-i18n="页数">页数</span>
         <select id="scan-pages">
-          <option value="1">1 页</option>
-          <option value="2">最多 2 页</option>
-          <option value="3">最多 3 页</option>
-          <option value="4">最多 4 页</option>
-          <option value="5">最多 5 页</option>
-          <option value="6">最多 6 页</option>
-          <option value="7">最多 7 页</option>
-          <option value="8">最多 8 页</option>
-          <option value="9">最多 9 页</option>
-          <option value="10">最多 10 页</option>
+          <option value="1" data-i18n="1 页">1 页</option>
+          <option value="2" data-i18n="最多 2 页">最多 2 页</option>
+          <option value="3" data-i18n="最多 3 页">最多 3 页</option>
+          <option value="4" data-i18n="最多 4 页">最多 4 页</option>
+          <option value="5" data-i18n="最多 5 页">最多 5 页</option>
+          <option value="6" data-i18n="最多 6 页">最多 6 页</option>
+          <option value="7" data-i18n="最多 7 页">最多 7 页</option>
+          <option value="8" data-i18n="最多 8 页">最多 8 页</option>
+          <option value="9" data-i18n="最多 9 页">最多 9 页</option>
+          <option value="10" data-i18n="最多 10 页">最多 10 页</option>
         </select>
       </label>
-      <label>输出格式
+      <label><span data-i18n="输出格式">输出格式</span>
         <select id="scan-format">
           <option value="png">PNG</option>
           <option value="pdf">PDF</option>
           <option value="jpeg">JPEG</option>
           <option value="tiff">TIFF</option>
-          <option value="high_compression_pdf">高压缩 PDF</option>
+          <option value="high_compression_pdf" data-i18n="高压缩 PDF">高压缩 PDF</option>
           <option value="xps">XPS</option>
           <option value="bmp">BMP</option>
-          <option value="raw">RAW（高级）</option>
+          <option value="raw" data-i18n="RAW（高级）">RAW（高级）</option>
         </select>
       </label>
-      <button id="scan-start" type="submit">开始扫描</button>
+      <button id="scan-start" type="submit" data-i18n="开始扫描">开始扫描</button>
     </form>
     <div id="scan-progress" class="progress"></div>
     <div id="scan-downloads" class="downloads"></div>
   </div>
   <div class="card" style="margin-top:12px">
-    <div class="label">设备配置</div>
-    <p class="muted" style="margin-top:6px">
+    <div class="label" data-i18n="设备配置">设备配置</div>
+    <p class="muted" style="margin-top:6px"
+       data-i18n="按官方工具的分类逐页读取和修改。读取或应用设置时只访问当前分区；提交单个属性后会回读该属性，失败时自动尝试恢复原值。网络、凭据和重置类对象仍保持只读，避免误改后断开设备。">
       按官方工具的分类逐页读取和修改。读取或应用设置时只访问当前分区；
       提交单个属性后会回读该属性，失败时自动尝试恢复原值。网络、凭据和
       重置类对象仍保持只读，避免误改后断开设备。
     </p>
     <div class="config-layout">
-      <nav id="config-categories" class="config-nav" aria-label="设备配置分类"></nav>
+      <nav id="config-categories" class="config-nav"
+           data-i18n-aria-label="设备配置" aria-label="设备配置分类"></nav>
       <section class="config-pane" aria-live="polite">
         <div class="config-pane-head">
           <div>
-            <h2 id="config-category-title">设备默认值</h2>
-            <p id="config-category-description">选择分类后读取。</p>
+            <h2 id="config-category-title" data-i18n="设备默认值">设备默认值</h2>
+            <p id="config-category-description" data-i18n="选择分类后读取。">选择分类后读取。</p>
           </div>
-          <button id="config-read" type="button">读取此分区</button>
+          <button id="config-read" type="button" data-i18n="读取此分区">读取此分区</button>
         </div>
-        <div id="config-status" class="muted">尚未读取当前分区</div>
+        <div id="config-status" class="muted" data-i18n="尚未读取当前分区">尚未读取当前分区</div>
         <div id="config-mode-note" class="muted config-help"></div>
         <section id="config-status-block" hidden>
-          <h3 class="config-subheading">设备当前状态</h3>
+          <h3 class="config-subheading" data-i18n="设备当前状态">设备当前状态</h3>
           <div id="config-status-grid" class="config-grid"></div>
         </section>
         <section id="config-readonly-block" hidden>
-          <h3 class="config-subheading">当前设备设置</h3>
+          <h3 class="config-subheading" data-i18n="当前设备设置">当前设备设置</h3>
           <div id="config-readonly-items" class="config-readonly-grid"></div>
         </section>
         <section id="config-edit-block" hidden>
-          <h3 class="config-subheading">可修改设置</h3>
+          <h3 class="config-subheading" data-i18n="可修改设置">可修改设置</h3>
           <div id="config-edit-status" class="muted"></div>
           <div id="config-edit-items" class="config-setting-grid"></div>
         </section>
         <section id="wifi-settings" hidden>
-          <h3 class="config-subheading">Wi-Fi 连接配置</h3>
-          <p class="muted config-help">
+          <h3 class="config-subheading" data-i18n="Wi-Fi 连接配置">Wi-Fi 连接配置</h3>
+          <p class="muted config-help"
+             data-i18n="此分类使用官方 Wi-Fi Setup Tool 的 KGETOBJ/KSETOBJ 顺序。扫描附近网络或手动填写 SSID；密码只发送到本机服务，不写入设置文件或日志。连接失败时可能需要用打印机面板恢复网络。">
             此分类使用官方 Wi-Fi Setup Tool 的 KGETOBJ/KSETOBJ 顺序。
             扫描附近网络或手动填写 SSID；密码只发送到本机服务，不写入设置
             文件或日志。连接失败时可能需要用打印机面板恢复网络。
           </p>
           <div class="inline">
-            <button id="wifi-scan" type="button">扫描附近网络</button>
-            <span id="wifi-op-status" class="muted">尚未执行 Wi-Fi 操作</span>
+            <button id="wifi-scan" type="button" data-i18n="扫描附近网络">扫描附近网络</button>
+            <span id="wifi-op-status" class="muted" data-i18n="尚未执行 Wi-Fi 操作">尚未执行 Wi-Fi 操作</span>
           </div>
           <div class="settings" style="margin-top:10px">
-            <label class="wide">附近网络
+            <label class="wide"><span data-i18n="附近网络">附近网络</span>
               <select id="wifi-ap-select">
-                <option value="">先扫描附近网络，或手动输入</option>
+                <option value="" data-i18n="先扫描附近网络，或手动输入">先扫描附近网络，或手动输入</option>
               </select>
             </label>
             <label>SSID
               <input id="wifi-ssid" maxlength="32" autocomplete="off">
             </label>
-            <label>安全模式
+            <label><span data-i18n="安全模式">安全模式</span>
               <select id="wifi-security">
                 <option value="4">WPA2 PSK (AES)</option>
                 <option value="3">WPA/WPA2 PSK (Auto)</option>
                 <option value="2">WPA/WPA2 PSK (AES)</option>
                 <option value="1">WEP</option>
-                <option value="0">开放网络</option>
+                <option value="0" data-i18n="开放网络">开放网络</option>
               </select>
             </label>
-            <label>密码
+            <label><span data-i18n="密码">密码</span>
               <input id="wifi-password" type="password" autocomplete="new-password">
             </label>
           </div>
           <div class="inline">
             <label><input id="wifi-connect-confirm" type="checkbox">
-              确认更改设备 Wi-Fi；连接失败可能需要用打印机面板恢复网络</label>
-            <button id="wifi-connect" type="button">连接 Wi-Fi</button>
+              <span data-i18n="确认更改设备 Wi-Fi；连接失败可能需要用打印机面板恢复网络">确认更改设备 Wi-Fi；连接失败可能需要用打印机面板恢复网络</span></label>
+            <button id="wifi-connect" type="button" data-i18n="连接 Wi-Fi">连接 Wi-Fi</button>
           </div>
         </section>
         <div id="config-changes"></div>
         <details style="margin-top:12px">
-          <summary>技术详情：当前分区全部对象 <span id="config-object-count" class="muted"></span></summary>
-          <p class="muted config-help">
+          <summary><span data-i18n="技术详情：当前分区全部对象">技术详情：当前分区全部对象</span>
+            <span id="config-object-count" class="muted"></span></summary>
+          <p class="muted config-help"
+             data-i18n="名称和状态来自官方对象表。未生成编辑器的对象可能是只读状态、凭据、网络可达性相关设置，或尚未完成写入回读验证。">
             名称和状态来自官方对象表。未生成编辑器的对象可能是只读状态、
             凭据、网络可达性相关设置，或尚未完成写入回读验证。
           </p>
           <div class="config-table-wrap">
             <table>
-              <thead><tr><th>ID</th><th>名称</th><th>状态</th><th>值</th></tr></thead>
+              <thead><tr><th data-i18n="ID">ID</th><th data-i18n="名称">名称</th><th data-i18n="状态">状态</th><th data-i18n="值">值</th></tr></thead>
               <tbody id="config-objects"></tbody>
             </table>
           </div>
@@ -965,33 +1034,34 @@ DEVICE_HTML = """<!doctype html>
       </section>
     </div>
     <details class="config-maintenance">
-      <summary>配置基线与全量维护</summary>
-      <p class="muted">
+      <summary data-i18n="配置基线与全量维护">配置基线与全量维护</summary>
+      <p class="muted"
+         data-i18n="基线和差异检查需要完整读取 147 项配置，因此只在明确执行这些维护操作时使用。">
         基线和差异检查需要完整读取 147 项配置，因此只在明确执行这些维护操作时使用。
       </p>
       <div class="inline">
-        <button id="config-baseline-save" type="button">保存完整配置为基线</button>
-        <button id="config-baseline-compare" type="button">与完整基线比较</button>
+        <button id="config-baseline-save" type="button" data-i18n="保存完整配置为基线">保存完整配置为基线</button>
+        <button id="config-baseline-compare" type="button" data-i18n="与完整基线比较">与完整基线比较</button>
         <span id="config-baseline-info" class="muted"></span>
       </div>
     </details>
   </div>
   <div class="card" style="margin-top:12px">
-    <div class="label">Push Scan 状态与本地预设映射</div>
+    <div class="label" data-i18n="Push Scan 状态与本地预设映射">Push Scan 状态与本地预设映射</div>
     <div class="inline">
-      <button id="push-scan-read" type="button">读取 Push Scan 状态</button>
-      <span id="push-scan-status" class="muted">尚未读取</span>
+      <button id="push-scan-read" type="button" data-i18n="读取 Push Scan 状态">读取 Push Scan 状态</button>
+      <span id="push-scan-status" class="muted" data-i18n="尚未读取">尚未读取</span>
     </div>
     <div id="push-scan-grid" class="config-grid"></div>
     <div id="push-scan-note" class="muted"></div>
   </div>
   <div class="card" style="margin-top:12px">
-    <div class="label">设备发现</div>
+    <div class="label" data-i18n="设备发现">设备发现</div>
     <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:8px">
-      <button id="discover" type="button">发现打印机</button>
+      <button id="discover" type="button" data-i18n="发现打印机">发现打印机</button>
       <span id="current-host" class="muted"></span>
     </div>
-    <div id="devices" class="value">尚未搜索</div>
+    <div id="devices" class="value" data-i18n="尚未搜索">尚未搜索</div>
   </div>
   <div id="meta" class="muted"></div>
 </main>
@@ -999,6 +1069,9 @@ DEVICE_HTML = """<!doctype html>
 <script>
 const byId = (id) => document.getElementById(id);
 const text = (id, value) => { byId(id).textContent = value == null || value === "" ? "-" : String(value); };
+const tr = (source, vars = {}) => window.I18n.translate(source, vars);
+const tv = (value) => window.I18n.value(value);
+I18n.applyStatic();
 const currentHost = new URLSearchParams(location.search).get("host");
 let userSettings = null;
 let configCategories = [];
@@ -1026,11 +1099,13 @@ const configStatusLabels = {
   "Wi-Fi channel": "Wi-Fi 信道",
   "Wi-Fi RSSI": "Wi-Fi 信号强度"
 };
-const friendlyConfigLabel = (label) => configStatusLabels[label] || label;
+const friendlyConfigLabel = (label) =>
+  tv(configStatusLabels[label] || label);
 
 function showToast(message, kind = "error") {
   const stack = byId("toasts");
-  const text = message == null || message === "" ? "发生未知错误" : String(message);
+  const text = message == null || message === ""
+    ? tr("发生未知错误") : String(message);
   const duplicate = Array.from(stack.children).some(
     (item) => item.dataset.message === text
   );
@@ -1049,7 +1124,7 @@ function trayRows(trays) {
   if (!trays || trays.length === 0) {
     const row = document.createElement("tr");
     const cell = document.createElement("td");
-    cell.colSpan = 4; cell.textContent = "无纸盒数据";
+    cell.colSpan = 4; cell.textContent = tr("无纸盒数据");
     row.append(cell); body.append(row); return;
   }
   for (const tray of trays) {
@@ -1079,9 +1154,11 @@ function render(payload) {
   }
   const snapshot = payload.snapshot;
   if (!snapshot) {
-    byId("status").textContent = "不可用";
+    byId("status").textContent = tr("不可用");
     byId("status").className = "pill warn";
-    byId("meta").textContent = "最近尝试: " + payload.collected_at;
+    byId("meta").textContent = tr("最近尝试: {time}", {
+      time: payload.collected_at
+    });
     return;
   }
   text("model", snapshot.model);
@@ -1104,14 +1181,14 @@ function render(payload) {
   const status = byId("status");
   if (snapshot.normal === true) {
     status.textContent = snapshot.status_code != null
-      ? String(snapshot.status_code) + " 正常" : "正常";
+      ? String(snapshot.status_code) + " " + tr("正常") : tr("正常");
     status.className = "pill ok";
   } else if (snapshot.normal === false) {
     status.textContent = snapshot.status_code != null
-      ? String(snapshot.status_code) + " 警告" : "警告";
+      ? String(snapshot.status_code) + " " + tr("警告") : tr("警告");
     status.className = "pill warn";
   } else {
-    status.textContent = "未知";
+    status.textContent = tr("未知");
     status.className = "pill";
   }
 
@@ -1119,7 +1196,7 @@ function render(payload) {
     text("toner", snapshot.toner_level + "%");
     byId("toner-bar").style.width = Math.max(0, Math.min(100, snapshot.toner_level)) + "%";
   } else {
-    text("toner", "未知");
+    text("toner", tr("未知"));
     byId("toner-bar").style.width = "0%";
   }
 
@@ -1135,10 +1212,13 @@ function render(payload) {
         const code = a.code_name ? `${a.code} (${a.code_name})` : a.code;
         return `severity ${severity}${group}, code ${code}`;
       }).join("; ")
-    : "无告警";
+    : tr("无告警");
   byId("meta").textContent =
-    `设备 ${payload.device || "-"} · 读取于 ${payload.collected_at}，耗时 ${payload.elapsed_ms} ms` +
-    (payload.cached ? "（缓存）" : "");
+    tr("设备 {device} · 读取于 {time}，耗时 {ms} ms", {
+      device: payload.device || "-",
+      time: payload.collected_at,
+      ms: payload.elapsed_ms
+    }) + (payload.cached ? tr("（缓存）") : "");
 }
 
 function statusUrl() {
@@ -1176,9 +1256,9 @@ function setScanStatus(message, state) {
 }
 
 function showScanError(message) {
-  setScanStatus("扫描失败：" + message, "failure");
+  setScanStatus(tr("扫描失败：{error}", {error: message}), "failure");
   byId("scan-start").disabled = false;
-  byId("scan-start").textContent = "重新扫描";
+  byId("scan-start").textContent = tr("重新扫描");
 }
 
 function nativeDownload(output) {
@@ -1207,27 +1287,40 @@ function renderScanResult(job) {
       ? (output.bytes / 1048576).toFixed(1) + " MB"
       : Math.max(1, Math.round(output.bytes / 1024)) + " KB";
     link.textContent = `${output.filename} · ${size}`;
-    link.title = "下载 " + output.filename;
+    link.title = tr("下载 {filename}", {filename: output.filename});
     link.addEventListener("click", (event) => {
       if (!nativeDownload(output)) return;
       event.preventDefault();
-      setScanStatus("正在下载 " + output.filename, "active");
+      setScanStatus(
+        tr("正在下载 {filename}", {filename: output.filename}),
+        "active"
+      );
     });
     downloads.append(link);
   }
-  let message = `扫描完成：${result.pages || outputs.length || 0} 页` +
-    ` · 设备请求 ${result.requested_device_format || "?"}` +
-    ` / 设备返回 ${result.effective_device_format || "?"}` +
-    ` / 本地 ${(job.output_format || "?").toUpperCase()}`;
+  let message = tr("扫描完成：{pages} 页", {
+    pages: result.pages || outputs.length || 0
+  }) + tr(" · 设备请求 {requested} / 设备返回 {effective} / 本地 {local}", {
+    requested: result.requested_device_format || "?",
+    effective: result.effective_device_format || "?",
+    local: (job.output_format || "?").toUpperCase()
+  });
   const saved = job.saved_paths || [];
   if (saved.length) {
-    const folder = byId("scan-directory").value || "所选目录";
-    message += ` · 已保存 ${saved.length} 个文件到 ${folder}`;
+    const folder = byId("scan-directory").value || tr("所选目录");
+    message += tr(" · 已保存 {count} 个文件到 {folder}", {
+      count: saved.length,
+      folder
+    });
   }
-  if (result.close_error) message += `；关闭会话警告：${result.close_error}`;
+  if (result.close_error) {
+    message += tr("；关闭会话警告：{error}", {
+      error: result.close_error
+    });
+  }
   setScanStatus(message, result.close_error ? "warning" : "success");
   byId("scan-start").disabled = false;
-  byId("scan-start").textContent = "再次扫描";
+  byId("scan-start").textContent = tr("再次扫描");
 }
 
 async function pollScan(jobId) {
@@ -1241,13 +1334,19 @@ async function pollScan(jobId) {
       return;
     }
     if (job.state === "failed") {
-      const stage = scanStageLabels[job.stage] || job.stage || "未知阶段";
-      const detail = (job.error && job.error.error) || job.message || "未知错误";
+      const stage = tr(
+        scanStageLabels[job.stage] || job.stage || "未知阶段"
+      );
+      const detail = (job.error && job.error.error) || job.message
+        || tr("未知错误");
       showScanError(stage + " · " + detail);
       return;
     }
-    const stage = scanStageLabels[job.stage] || job.stage || "处理中";
-    setScanStatus(stage + " · " + (job.message || "请稍候"), "active");
+    const stage = tr(scanStageLabels[job.stage] || job.stage || "处理中");
+    setScanStatus(
+      stage + " · " + (job.message || tr("请稍候")),
+      "active"
+    );
     setTimeout(() => pollScan(jobId), 800);
   } catch (err) {
     showScanError(String(err));
@@ -1258,9 +1357,9 @@ async function startScan(event) {
   event.preventDefault();
   const button = byId("scan-start");
   button.disabled = true;
-  button.textContent = "正在扫描…";
+  button.textContent = tr("正在扫描…");
   byId("scan-downloads").replaceChildren();
-  setScanStatus("正在创建扫描任务", "active");
+  setScanStatus(tr("正在创建扫描任务"), "active");
   const payload = {
     host: currentHost,
     preset_id: byId("preset-select").value || null,
@@ -1296,14 +1395,16 @@ function renderPresets(selectedId = "") {
   select.replaceChildren();
   const none = document.createElement("option");
   none.value = "";
-  none.textContent = "不使用预设";
+  none.textContent = tr("不使用预设");
   select.append(none);
   for (const preset of (userSettings?.presets || [])) {
     const option = document.createElement("option");
     option.value = preset.id;
     option.textContent = preset.push_scan_slot == null
       ? preset.name
-      : `${preset.name}（Push ${preset.push_scan_slot}）`;
+      : preset.name + tr("（Push {slot}）", {
+          slot: preset.push_scan_slot
+        });
     select.append(option);
   }
   select.value = selectedId;
@@ -1315,7 +1416,10 @@ function populatePushScanSlots() {
   for (let slot = 0; slot <= 30; slot += 1) {
     const option = document.createElement("option");
     option.value = String(slot);
-    option.textContent = `设备预设 ${slot}（状态码 ${89000 + slot}）`;
+    option.textContent = tr("设备预设 {slot}（状态码 {code}）", {
+      slot,
+      code: 89000 + slot
+    });
     select.append(option);
   }
 }
@@ -1345,7 +1449,10 @@ async function loadSettings() {
     renderPresets();
     setSettingsStatus("");
   } catch (err) {
-    setSettingsStatus("设置加载失败：" + String(err), true);
+    setSettingsStatus(
+      tr("设置加载失败：{error}", {error: String(err)}),
+      true
+    );
   }
 }
 
@@ -1353,6 +1460,7 @@ async function persistSettings(message) {
   try {
     const payload = {
       version: 1,
+      language: userSettings?.language || window.KYOCERA_LANGUAGE_PREFERENCE,
       scan_directory: byId("scan-directory").value.trim(),
       presets: userSettings?.presets || []
     };
@@ -1367,18 +1475,21 @@ async function persistSettings(message) {
     byId("scan-directory").value = saved.scan_directory || "";
     setSettingsStatus(message);
   } catch (err) {
-    setSettingsStatus("保存失败：" + String(err), true);
+    setSettingsStatus(
+      tr("保存失败：{error}", {error: String(err)}),
+      true
+    );
   }
 }
 
 async function saveFolderSettings() {
-  await persistSettings("保存目录已更新");
+  await persistSettings(tr("保存目录已更新"));
 }
 
 async function savePreset() {
   const name = byId("preset-name").value.trim();
   if (!name) {
-    setSettingsStatus("请先输入预设名称", true);
+    setSettingsStatus(tr("请先输入预设名称"), true);
     return;
   }
   if (!userSettings) await loadSettings();
@@ -1402,7 +1513,7 @@ async function savePreset() {
   const presets = (userSettings.presets || []).filter((item) => item.id !== presetId);
   presets.push(preset);
   userSettings = {...userSettings, presets};
-  await persistSettings("预设已保存");
+  await persistSettings(tr("预设已保存"));
   renderPresets(presetId);
 }
 
@@ -1413,7 +1524,7 @@ async function deletePreset() {
     ...userSettings,
     presets: (userSettings.presets || []).filter((item) => item.id !== presetId)
   };
-  await persistSettings("预设已删除");
+  await persistSettings(tr("预设已删除"));
   renderPresets();
   byId("preset-name").value = "";
   byId("preset-push-slot").value = "";
@@ -1444,7 +1555,7 @@ async function configRequest(path, options = {}, params = {}) {
     });
   } catch (_err) {
     throw new Error(
-      "无法连接本机后台服务；请确认 GUI/Web 服务仍在运行后重试。"
+      tr("无法连接本机后台服务；请确认 GUI/Web 服务仍在运行后重试。")
     );
   }
   let payload;
@@ -1452,7 +1563,9 @@ async function configRequest(path, options = {}, params = {}) {
     payload = await response.json();
   } catch (_err) {
     throw new Error(
-      `本机后台返回了无法解析的响应（HTTP ${response.status}）。`
+      tr("本机后台返回了无法解析的响应（HTTP {status}）。", {
+        status: response.status
+      })
     );
   }
   if (!response.ok) throw new Error(payload.error || String(response.status));
@@ -1475,15 +1588,21 @@ function renderConfigCategories() {
       (category.key === selectedConfigCategory ? " active" : "");
     button.dataset.category = category.key;
     const title = document.createElement("span");
-    title.textContent = category.label;
+    title.textContent = tv(category.label);
     const count = document.createElement("small");
     if (category.editor === "dedicated") {
-      count.textContent = `${category.item_count} 项 · 专用配置`;
+      count.textContent = tr("（{count} 项）", {
+        count: category.item_count
+      });
     } else if (category.editable_count) {
-      count.textContent =
-        `${category.editable_count} 项可修改 · ${category.item_count} 项`;
+      count.textContent = tr("{editable}/{total} 项可修改", {
+        editable: category.editable_count,
+        total: category.item_count
+      });
     } else {
-      count.textContent = `${category.item_count} 项 · 只读`;
+      count.textContent = tr("{count} 项 · 只读", {
+        count: category.item_count
+      });
     }
     button.append(title, count);
     button.addEventListener(
@@ -1497,9 +1616,9 @@ function renderConfigCategories() {
 function updateConfigCategoryHeading() {
   const category = selectedCategoryInfo();
   byId("config-category-title").textContent =
-    category?.label || "设备配置";
+    tv(category?.label) || tr("设备配置");
   byId("config-category-description").textContent =
-    category?.description || "选择分类后读取。";
+    tv(category?.description) || tr("选择分类后读取。");
   byId("wifi-settings").hidden =
     selectedConfigCategory !== "wifi";
 }
@@ -1545,7 +1664,10 @@ async function loadConfigCategories() {
       await selectConfigCategory(selectedConfigCategory);
     }
   } catch (err) {
-    setConfigStatus("配置分类不可用：" + String(err), true);
+    setConfigStatus(
+      tr("配置分类不可用：{error}", {error: String(err)}),
+      true
+    );
   }
 }
 
@@ -1558,8 +1680,8 @@ function renderConfigObjects(objects) {
     for (const value of [
       object.item_id,
       friendlyConfigLabel(object.label),
-      object.readable ? "可读" : "不可读",
-      object.sensitive ? "已隐藏" : (object.display ?? "-")
+      object.readable ? tr("可读") : tr("不可读"),
+      object.sensitive ? tr("已隐藏") : tv(object.display ?? "-")
     ]) {
       const cell = document.createElement("td");
       cell.textContent = value == null || value === "" ? "-" : String(value);
@@ -1581,8 +1703,8 @@ function renderConfigStatusObjects(objects) {
     const reading = document.createElement("div");
     reading.className = "reading";
     reading.textContent = object.sensitive
-      ? "已隐藏"
-      : (object.readable ? (object.display ?? "-") : "不可用");
+      ? tr("已隐藏")
+      : (object.readable ? tv(object.display ?? "-") : tr("不可用"));
     item.append(name, reading);
     grid.append(item);
   }
@@ -1598,10 +1720,10 @@ function renderReadonlyConfigObjects(objects) {
     name.textContent = friendlyConfigLabel(object.label);
     const reading = document.createElement("div");
     reading.className = "value";
-    reading.textContent = object.display ?? "—";
+    reading.textContent = tv(object.display ?? "—");
     const kind = document.createElement("div");
     kind.className = "kind";
-    kind.textContent = "只读";
+    kind.textContent = tr("只读");
     item.append(name, reading, kind);
     grid.append(item);
   }
@@ -1634,16 +1756,22 @@ function applyEditedConfig(itemId) {
   const value = controlDeviceValue(control);
   const expected = Number(card.dataset.currentValue);
   if (value == null) {
-    setEditConfigStatus("请输入设备支持的有效整数值", true);
+    setEditConfigStatus(tr("请输入设备支持的有效整数值"), true);
     return;
   }
-  const unit = control.dataset.configUnit || "";
+  const rawUnit = control.dataset.configUnit || "";
+  const unit = rawUnit ? " " + tv(rawUnit) : "";
   if (!window.confirm(
-    `确认把「${card.dataset.label}」从当前值改为 ${control.value}${unit}？` +
-    "提交后会读取设备验证，失败时尝试恢复原值。"
+    tr(
+      "确认把「{label}」从当前值改为 {value}？提交后会读取设备验证，失败时尝试恢复原值。",
+      {
+        label: tv(card.dataset.label),
+        value: control.value + unit
+      }
+    )
   )) return;
   button.disabled = true;
-  setEditConfigStatus("正在写入并回读设备…");
+  setEditConfigStatus(tr("正在写入并回读设备…"));
   fetch(configUrl("/api/config/apply"), {
     method: "POST",
     headers: {"Content-Type": "application/json"},
@@ -1659,13 +1787,18 @@ function applyEditedConfig(itemId) {
     if (!response.ok) throw new Error(payload.error || String(response.status));
     card.dataset.currentValue = String(payload.requested);
     const current = card.querySelector("[data-config-current]");
-    current.textContent = payload.observed_display || String(payload.observed);
+    current.textContent = tv(
+      payload.observed_display || String(payload.observed)
+    );
     control.value = String(payload.observed);
-    setEditConfigStatus(`属性 ${itemId} 已写入并回读成功`);
-    showToast(`「${card.dataset.label}」已应用并回读成功`, "success");
+    setEditConfigStatus(tr("属性 {id} 已写入并回读成功", {id: itemId}));
+    showToast(tr("「{label}」已应用并回读成功", {
+      label: tv(card.dataset.label)
+    }), "success");
   }).catch(err => {
-    setEditConfigStatus("写入失败：" + String(err), true);
-    showToast("写入失败：" + String(err));
+    const message = tr("写入失败：{error}", {error: String(err)});
+    setEditConfigStatus(message, true);
+    showToast(message);
   }).finally(() => {
     updateConfigSettingState(card);
   });
@@ -1681,12 +1814,12 @@ function renderConfigEditing(editing) {
   const body = byId("config-edit-items");
   body.replaceChildren();
   if (!editing?.available) {
-    setEditConfigStatus("当前连接不提供设备写入通道");
+    setEditConfigStatus(tr("当前连接不提供设备写入通道"));
     return;
   }
   const items = editing.items || [];
   if (!items.length) {
-    setEditConfigStatus("没有可显示的已审核属性");
+    setEditConfigStatus(tr("没有可显示的已审核属性"));
     return;
   }
   for (const item of items) {
@@ -1698,16 +1831,16 @@ function renderConfigEditing(editing) {
 
     const identity = document.createElement("div");
     const label = document.createElement("strong");
-    label.textContent = item.label;
+    label.textContent = tv(item.label);
     const detail = document.createElement("div");
     detail.className = "description";
-    detail.textContent = item.description;
+    detail.textContent = tv(item.description);
     const current = document.createElement("div");
     current.className = "current";
-    current.append(document.createTextNode("当前值："));
+    current.append(document.createTextNode(tr("当前值：")));
     const currentValue = document.createElement("strong");
     currentValue.dataset.configCurrent = "";
-    currentValue.textContent = item.current_display || "不可读";
+    currentValue.textContent = tv(item.current_display || tr("不可读"));
     current.append(currentValue);
     identity.append(label, detail, current);
 
@@ -1719,7 +1852,7 @@ function renderConfigEditing(editing) {
       for (const choice of item.choices) {
         const option = document.createElement("option");
         option.value = String(choice.value);
-        option.textContent = choice.label;
+        option.textContent = tv(choice.label);
         control.append(option);
       }
     } else {
@@ -1745,14 +1878,14 @@ function renderConfigEditing(editing) {
     if (control.dataset.configUnit) {
       const unit = document.createElement("span");
       unit.className = "muted";
-      unit.textContent = control.dataset.configUnit;
+      unit.textContent = tv(control.dataset.configUnit);
       actions.append(unit);
     }
 
     const button = document.createElement("button");
     button.type = "button";
     button.dataset.configApply = "";
-    button.textContent = "应用此设置";
+    button.textContent = tr("应用此设置");
     button.disabled = !item.readable;
     button.addEventListener("click", () => applyEditedConfig(item.item_id));
     actions.append(button);
@@ -1767,14 +1900,21 @@ function renderConfigEditing(editing) {
 function renderConfigOverview(data) {
   const category = data.category || {};
   if (category.key) selectedConfigCategory = category.key;
-  byId("config-category-title").textContent = category.label || "设备配置";
+  byId("config-category-title").textContent =
+    tv(category.label) || tr("设备配置");
   byId("config-category-description").textContent =
-    category.description || "";
+    tv(category.description) || "";
   renderConfigCategories();
   const baseline = data.baseline || {};
   byId("config-baseline-info").textContent = baseline.available
-    ? `基线：${baseline.created_at} · 可读 ${baseline.read}/${baseline.total}`
-    : (baseline.error ? "基线不可用：" + baseline.error : "尚未保存基线");
+    ? tr("基线：{time} · 可读 {read}/{total}", {
+        time: baseline.created_at,
+        read: baseline.read,
+        total: baseline.total
+      })
+    : (baseline.error
+        ? tr("基线不可用：{error}", {error: baseline.error})
+        : tr("尚未保存基线"));
   renderConfigStatusObjects(data.status_objects);
   renderReadonlyConfigObjects(data.read_only_objects);
   renderConfigObjects(data.objects);
@@ -1789,20 +1929,26 @@ function renderConfigOverview(data) {
   byId("config-edit-block").hidden = editableItems.length === 0;
   byId("config-mode-note").textContent = data.editing?.available
     ? (editableItems.length
-        ? "下列属性已通过官方映射和可逆写入审计；其余对象保持只读。"
+        ? tr("下列属性已通过官方映射和可逆写入审计；其余对象保持只读。")
         : (selectedConfigCategory === "wifi"
-            ? "Wi-Fi 使用本分类内的专用连接流程；通用属性编辑器不对凭据类对象开放。"
-            : "此分类没有已审核的通用属性编辑器，仅显示设备状态。"))
+            ? tr("Wi-Fi 使用本分类内的专用连接流程；通用属性编辑器不对凭据类对象开放。")
+            : tr("此分类没有已审核的通用属性编辑器，仅显示设备状态。")))
     : (selectedConfigCategory === "wifi"
-        ? "当前连接的通用配置写入不可用；本分类的 Wi-Fi 连接仍使用专用 KSETOBJ 流程。"
-        : "当前连接未开放配置写入；USB/PJL 通用写入仍待真机验证，因此这里按只读展示。");
+        ? tr("当前连接的通用配置写入不可用；本分类的 Wi-Fi 连接仍使用专用 KSETOBJ 流程。")
+        : tr("当前连接未提供配置写入通道；这里仅展示设备读取结果。"));
   byId("config-changes").replaceChildren();
   byId("config-object-count").textContent = data.hidden_count
-    ? `（显示 ${data.objects?.length || 0} 项，${data.hidden_count} 项设备不支持已隐藏）`
-    : `（${data.objects?.length || 0} 项）`;
+    ? tr("（显示 {shown} 项，{hidden} 项设备不支持已隐藏）", {
+        shown: data.objects?.length || 0,
+        hidden: data.hidden_count
+      })
+    : tr("（{count} 项）", {count: data.objects?.length || 0});
   setConfigStatus(
-    `“${category.label || selectedConfigCategory}”读取完成：` +
-    `${data.read}/${data.total} 项可读`
+    tr("“{category}”读取完成：{read}/{total} 项可读", {
+      category: tv(category.label || selectedConfigCategory),
+      read: data.read,
+      total: data.total
+    })
   );
 }
 
@@ -1824,11 +1970,15 @@ async function runConfigAction(button, message, action) {
 async function readConfiguration() {
   const sequence = ++configLoadSequence;
   const category = selectedCategoryInfo();
-  const label = category?.label || selectedConfigCategory;
-  const count = category?.item_count ? `（${category.item_count} 项）` : "";
+  const label = tv(category?.label || selectedConfigCategory);
+  const count = category?.item_count
+    ? tr("（{count} 项）", {count: category.item_count}) : "";
   await runConfigAction(
     byId("config-read"),
-    `正在读取“${label}”${count}…`,
+    tr("正在读取“{category}”{count}…", {
+      category: label,
+      count
+    }),
     async () => {
       const data = await configRequest(
         "/api/config",
@@ -1842,12 +1992,12 @@ async function readConfiguration() {
 }
 
 async function saveConfigurationBaseline() {
-  if (!window.confirm("保存当前完整配置为新基线？敏感值会以 0600 权限保存在本机。")) {
+  if (!window.confirm(tr("保存当前完整配置为新基线？敏感值会以 0600 权限保存在本机。"))) {
     return;
   }
   await runConfigAction(
     byId("config-baseline-save"),
-    "正在读取并保存私有基线…",
+    tr("正在读取并保存私有基线…"),
     async () => {
       const data = await configRequest("/api/config/baseline", {
         method: "POST",
@@ -1856,10 +2006,14 @@ async function saveConfigurationBaseline() {
       });
       const baseline = data.baseline || {};
       byId("config-baseline-info").textContent = baseline.available
-        ? `基线：${baseline.created_at} · 可读 ${baseline.read}/${baseline.total}`
-        : "基线已保存";
-      setConfigStatus("完整配置基线已保存");
-      showToast("完整配置基线已保存", "success");
+        ? tr("基线：{time} · 可读 {read}/{total}", {
+            time: baseline.created_at,
+            read: baseline.read,
+            total: baseline.total
+          })
+        : tr("基线已保存");
+      setConfigStatus(tr("完整配置基线已保存"));
+      showToast(tr("完整配置基线已保存"), "success");
     }
   );
 }
@@ -1867,14 +2021,16 @@ async function saveConfigurationBaseline() {
 function appendChange(box, title, changes) {
   if (!changes || !changes.length) return;
   const heading = document.createElement("div");
-  heading.textContent = `${title}：${changes.length}`;
+  heading.textContent = `${tr(title)}: ${changes.length}`;
   heading.style.fontWeight = "600";
   box.append(heading);
   for (const change of changes) {
     const row = document.createElement("div");
-    const before = change.sensitive ? "已隐藏" : (change.before?.display ?? "-");
-    const after = change.sensitive ? "已隐藏" : (change.after?.display ?? "-");
-    row.textContent = `${change.item_id} · ${change.label}：${before} → ${after}`;
+    const before = change.sensitive
+      ? tr("已隐藏") : tv(change.before?.display ?? "-");
+    const after = change.sensitive
+      ? tr("已隐藏") : tv(change.after?.display ?? "-");
+    row.textContent = `${change.item_id} · ${tv(change.label)}: ${before} → ${after}`;
     box.append(row);
   }
 }
@@ -1882,7 +2038,7 @@ function appendChange(box, title, changes) {
 async function compareConfigurationBaseline() {
   await runConfigAction(
     byId("config-baseline-compare"),
-    "正在读取当前配置并与基线比较…",
+    tr("正在读取当前配置并与基线比较…"),
     async () => {
       const data = await configRequest("/api/config/compare");
       const comparison = data.comparison;
@@ -1892,11 +2048,13 @@ async function compareConfigurationBaseline() {
       appendChange(box, "易变遥测变化", comparison.volatile_changes);
       appendChange(box, "读取状态变化", comparison.read_status_changes);
       if (!box.children.length) {
-        box.textContent = "没有配置或读取状态变化";
+        box.textContent = tr("没有配置或读取状态变化");
       }
       setConfigStatus(
-        `比较完成：${comparison.changed} 个配置变化，` +
-        `${comparison.read_status_changed} 个读取状态变化`
+        tr("比较完成：{changed} 个配置变化，{status} 个读取状态变化", {
+          changed: comparison.changed,
+          status: comparison.read_status_changed
+        })
       );
     }
   );
@@ -1907,13 +2065,13 @@ function renderPushScan(data) {
   grid.replaceChildren();
   const objects = data.objects || {};
   const entries = [
-    ["接口", objects.interface?.display || "未知"],
-    ["地址类型", objects.address_type?.display || "未知"],
-    ["目标", data.target || "未配置"],
-    ["目标匹配本机", data.target_matches_local === true ? "是"
-      : data.target_matches_local === false ? "否" : "未知"],
-    ["上次报告结果", objects.result?.display || "未知"],
-    ["待机入口", "--push-scan-listen"]
+    [tr("接口"), tv(objects.interface?.display || "未知")],
+    [tr("地址类型"), tv(objects.address_type?.display || "未知")],
+    [tr("目标"), tv(data.target || "未配置")],
+    [tr("目标匹配本机"), data.target_matches_local === true ? tr("是")
+      : data.target_matches_local === false ? tr("否") : tr("未知")],
+    [tr("上次报告结果"), tv(objects.result?.display || "未知")],
+    [tr("待机入口"), "--push-scan-listen"]
   ];
   for (const [name, value] of entries) {
     const item = document.createElement("div");
@@ -1929,28 +2087,26 @@ function renderPushScan(data) {
   }
   const readiness = data.readiness || {};
   const status = byId("push-scan-status");
-  status.textContent = readiness.summary || readiness.state || "未知状态";
+  status.textContent = tv(readiness.summary || readiness.state || "未知状态");
   status.className = "muted push-result " +
     (readiness.ready === true ? "ready"
       : readiness.ready === false ? "warning" : "");
   const note = byId("push-scan-note");
-  note.textContent = "设备侧 Push Scan 目标由打印机面板/Scan Destination " +
-    "设置；官方 Client Tool 只读取这组状态 OID，未提供可复现的 SET 路径，" +
-    "因此这里不会盲写接口或目标地址。“Push Scan 槽位”只保存 Linux " +
-    "本地预设映射。命令行 --push-scan-listen 可报告 89xxx；显式加上 " +
-    "--push-scan-run 会执行匹配的本地预设，结果 OID 回写仍未启用。";
+  note.textContent = tr(
+    "设备侧 Push Scan 目标由打印机面板/Scan Destination 设置；官方 Client Tool 只读取这组状态 OID，未提供可复现的 SET 路径，因此这里不会盲写接口或目标地址。“Push Scan 槽位”只保存 Linux 本地预设映射。命令行 --push-scan-listen 可报告 89xxx；显式加上 --push-scan-run 会执行匹配的本地预设，结果 OID 回写仍未启用。"
+  );
 }
 
 async function readPushScan() {
   const button = byId("push-scan-read");
   const status = byId("push-scan-status");
   button.disabled = true;
-  status.textContent = "正在通过 SNMP 读取…";
+  status.textContent = tr("正在通过 SNMP 读取…");
   try {
     const data = await configRequest("/api/push-scan");
     renderPushScan(data);
   } catch (err) {
-    status.textContent = "读取失败：" + String(err);
+    status.textContent = tr("读取失败：{error}", {error: String(err)});
     status.className = "muted push-result failure";
   } finally {
     button.disabled = false;
@@ -1962,13 +2118,14 @@ async function scanWifi() {
   const button = byId("wifi-scan");
   const select = byId("wifi-ap-select");
   button.disabled = true;
-  status.textContent = "正在通过设备扫描附近网络；通常需要数秒…";
+  status.textContent = tr("正在通过设备扫描附近网络；通常需要数秒…");
   try {
     const points = await configRequest("/api/wifi/scan");
     select.replaceChildren();
     const empty = document.createElement("option");
     empty.value = "";
-    empty.textContent = points.length ? "选择一个网络" : "未发现网络";
+    empty.textContent = points.length
+      ? tr("选择一个网络") : tr("未发现网络");
     select.append(empty);
     for (const point of points) {
       const option = document.createElement("option");
@@ -1977,12 +2134,14 @@ async function scanWifi() {
       option.dataset.security = String(point.security ?? 4);
       option.dataset.bssid = point.bssid || "";
       const signal = point.rssi == null ? "" : ` · ${point.rssi} dBm`;
-      option.textContent = `${point.ssid || "隐藏网络"} · ${point.security_name}${signal}`;
+      option.textContent = `${point.ssid || tr("隐藏网络")} · ${point.security_name}${signal}`;
       select.append(option);
     }
-    status.textContent = `扫描完成，共 ${points.length} 个网络`;
+    status.textContent = tr("扫描完成，共 {count} 个网络", {
+      count: points.length
+    });
   } catch (err) {
-    status.textContent = "扫描失败：" + String(err);
+    status.textContent = tr("扫描失败：{error}", {error: String(err)});
   } finally {
     button.disabled = false;
   }
@@ -2000,7 +2159,7 @@ function chooseWifiAccessPoint() {
 async function connectWifi() {
   const status = byId("wifi-op-status");
   if (!byId("wifi-connect-confirm").checked) {
-    status.textContent = "请先勾选确认框";
+    status.textContent = tr("请先勾选确认框");
     return;
   }
   const ssid = byId("wifi-ssid").value.trim();
@@ -2013,13 +2172,13 @@ async function connectWifi() {
     && Number(option.dataset.security) === security
   );
   if (!ssid) {
-    status.textContent = "SSID 不能为空";
+    status.textContent = tr("SSID 不能为空");
     return;
   }
-  if (!confirm(`确认把打印机切换到 Wi-Fi「${ssid}」？`)) return;
+  if (!confirm(tr("确认把打印机切换到 Wi-Fi「{ssid}」？", {ssid}))) return;
   const button = byId("wifi-connect");
   button.disabled = true;
-  status.textContent = "正在写入官方 Wi-Fi 配置并等待关联…";
+  status.textContent = tr("正在写入官方 Wi-Fi 配置并等待关联…");
   try {
     const result = await configRequest("/api/wifi/connect", {
       method: "POST",
@@ -2034,10 +2193,13 @@ async function connectWifi() {
     });
     byId("wifi-password").value = "";
     byId("wifi-connect-confirm").checked = false;
-    status.textContent = `已连接到 ${result.ssid}（${result.security_name}）`;
+    status.textContent = tr("已连接到 {ssid}（{security}）", {
+      ssid: result.ssid,
+      security: result.security_name
+    });
     await readConfiguration();
   } catch (err) {
-    status.textContent = "配置失败：" + String(err);
+    status.textContent = tr("配置失败：{error}", {error: String(err)});
   } finally {
     button.disabled = false;
   }
@@ -2045,14 +2207,14 @@ async function connectWifi() {
 
 async function discover() {
   const box = byId("devices");
-  box.textContent = "正在搜索…";
+  box.textContent = tr("正在搜索…");
   try {
     const response = await fetch("/api/discover", { cache: "no-store" });
     const data = await response.json();
     box.replaceChildren();
     if (data.error) { box.textContent = data.error; return; }
     if (!data.printers || data.printers.length === 0) {
-      box.textContent = data.warning || "没有发现打印机";
+      box.textContent = data.warning || tr("没有发现打印机");
       return;
     }
     if (data.warning) {
@@ -2073,7 +2235,7 @@ async function discover() {
     }
     const saved = document.createElement("div");
     saved.className = "muted";
-    saved.textContent = "发现结果已保存，下次启动无需重新搜索";
+    saved.textContent = tr("发现结果已保存，下次启动无需重新搜索");
     box.append(saved);
   } catch (err) {
     box.textContent = String(err);
@@ -2094,8 +2256,10 @@ byId("push-scan-read").addEventListener("click", readPushScan);
 byId("wifi-scan").addEventListener("click", scanWifi);
 byId("wifi-ap-select").addEventListener("change", chooseWifiAccessPoint);
 byId("wifi-connect").addEventListener("click", connectWifi);
-text("current-host", currentHost ? "当前: " + currentHost : "当前: 默认设备");
-setConfigStatus("正在加载配置分类…");
+text("current-host", currentHost
+  ? tr("当前: {host}", {host: currentHost})
+  : tr("当前: 默认设备"));
+setConfigStatus(tr("正在加载配置分类…"));
 loadSettings();
 load();
 loadConfigCategories();
@@ -2114,9 +2278,11 @@ def make_handler(
     config_workbench: ConfigWorkbench | None = None,
     push_scan_reader: Callable[[str], dict] | None = None,
     wifi_workbench: WifiWorkbench | None = None,
+    update_checker: UpdateChecker | None = None,
 ) -> type[BaseHTTPRequestHandler]:
     manager = scan_manager or ScanJobManager()
     settings = settings_store or SettingsStore()
+    updates = update_checker or UpdateChecker()
     try:
         for saved_host in settings.load()["saved_printers"]:
             registry.allow(saved_host)
@@ -2137,14 +2303,43 @@ def make_handler(
     class Handler(BaseHTTPRequestHandler):
         server_version = "kyocera-monitor"
 
+        def _language_context(self) -> tuple[str, str]:
+            try:
+                preference = settings.load().get("language", LANGUAGE_AUTO)
+            except SettingsError:
+                preference = LANGUAGE_AUTO
+            try:
+                normalized = normalize_language_preference(preference)
+            except ValueError:
+                normalized = LANGUAGE_AUTO
+            effective = resolve_language(
+                normalized,
+                self.headers.get("Accept-Language"),
+            )
+            return normalized, effective
+
+        def _render_page(self, html: str) -> bytes:
+            preference, effective = self._language_context()
+            rendered = render_localized_page(
+                html,
+                preference=preference,
+                effective=effective,
+            )
+            rendered = rendered.replace(
+                "</body>",
+                render_update_runtime(updates.current) + "</body>",
+                1,
+            )
+            return rendered.encode("utf-8")
+
         def do_GET(self) -> None:  # noqa: N802 - required by BaseHTTPRequestHandler
             parsed = urlsplit(self.path)
             path = parsed.path
             if path in ("/", "/index.html"):
-                body = OVERVIEW_HTML.encode("utf-8")
+                body = self._render_page(OVERVIEW_HTML)
                 self._respond(200, "text/html; charset=utf-8", body)
             elif path == "/device":
-                body = DEVICE_HTML.encode("utf-8")
+                body = self._render_page(DEVICE_HTML)
                 self._respond(200, "text/html; charset=utf-8", body)
             elif path == "/api/status":
                 requested = (parse_qs(parsed.query).get("host") or [None])[0]
@@ -2205,6 +2400,18 @@ def make_handler(
                     return
                 body = json.dumps(
                     payload, ensure_ascii=False
+                ).encode("utf-8")
+                self._respond(200, "application/json; charset=utf-8", body)
+            elif path == "/api/update":
+                force = (parse_qs(parsed.query).get("force") or [""])[0] == "1"
+                try:
+                    result = updates.check(force=force)
+                except UpdateCheckError as exc:
+                    self._json_error(502, str(exc))
+                    return
+                body = json.dumps(
+                    result.to_dict(),
+                    ensure_ascii=False,
                 ).encode("utf-8")
                 self._respond(200, "application/json; charset=utf-8", body)
             elif path in {"/api/wifi/status", "/api/wifi/scan"}:
@@ -2412,6 +2619,7 @@ def make_handler(
             parsed = urlsplit(self.path)
             if parsed.path not in {
                 "/api/devices",
+                "/api/language",
                 "/api/scans",
                 "/api/settings",
                 "/api/config/baseline",
@@ -2443,11 +2651,34 @@ def make_handler(
             if not isinstance(payload, dict):
                 self._json_error(400, "request body must be a JSON object")
                 return
+            if parsed.path == "/api/language":
+                try:
+                    saved = settings.update_language(payload.get("language"))
+                except SettingsError as exc:
+                    self._json_error(400, str(exc))
+                    return
+                preference = saved["language"]
+                effective = resolve_language(
+                    preference,
+                    self.headers.get("Accept-Language"),
+                )
+                body = json.dumps(
+                    {
+                        "language": preference,
+                        "effective": effective,
+                    },
+                    ensure_ascii=False,
+                ).encode("utf-8")
+                self._respond(200, "application/json; charset=utf-8", body)
+                return
             if parsed.path == "/api/settings":
                 try:
                     if "saved_printers" not in payload:
                         current = settings.load()
                         payload["saved_printers"] = current["saved_printers"]
+                    if "language" not in payload:
+                        current = settings.load()
+                        payload["language"] = current["language"]
                     saved = settings.save(payload)
                 except SettingsError as exc:
                     self._json_error(400, str(exc))
@@ -2762,6 +2993,7 @@ def run_server(
     config_workbench: ConfigWorkbench | None = None,
     push_scan_reader: Callable[[str], dict] | None = None,
     wifi_workbench: WifiWorkbench | None = None,
+    update_checker: UpdateChecker | None = None,
 ) -> None:
     server = create_server(
         registry,
@@ -2773,6 +3005,7 @@ def run_server(
         config_workbench=config_workbench,
         push_scan_reader=push_scan_reader,
         wifi_workbench=wifi_workbench,
+        update_checker=update_checker,
     )
     if on_listen is not None:
         actual_port = server.server_address[1]
@@ -2797,6 +3030,7 @@ def create_server(
     config_workbench: ConfigWorkbench | None = None,
     push_scan_reader: Callable[[str], dict] | None = None,
     wifi_workbench: WifiWorkbench | None = None,
+    update_checker: UpdateChecker | None = None,
 ) -> ThreadingHTTPServer:
     """Create (but do not start) the dashboard HTTP server.
 
@@ -2814,5 +3048,6 @@ def create_server(
             config_workbench=config_workbench,
             push_scan_reader=push_scan_reader,
             wifi_workbench=wifi_workbench,
+            update_checker=update_checker,
         ),
     )

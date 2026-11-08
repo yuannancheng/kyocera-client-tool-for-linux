@@ -23,6 +23,24 @@ def artifact(filename="scan.pdf", data=b"%PDF-test"):
 
 
 class DownloadPathTests(unittest.TestCase):
+    def test_external_links_are_limited_to_https_github(self):
+        self.assertEqual(
+            gui.validate_external_url(
+                "https://github.com/example/repo/releases/tag/v0.4.0"
+            ),
+            "https://github.com/example/repo/releases/tag/v0.4.0",
+        )
+        for url in (
+            "http://github.com/example/repo",
+            "https://example.com/release",
+            "https://user@github.com/example/repo",
+            "javascript:alert(1)",
+            "",
+        ):
+            with self.subTest(url=url):
+                with self.assertRaises(ValueError):
+                    gui.validate_external_url(url)
+
     def test_basename_and_unique_destination_are_safe(self):
         self.assertEqual(
             gui.safe_download_filename("../../bad\x00name.pdf"),

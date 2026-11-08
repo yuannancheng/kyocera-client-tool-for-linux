@@ -22,10 +22,12 @@ class SettingsTests(unittest.TestCase):
             store = SettingsStore(path)
             initial = store.load()
             self.assertEqual(initial["presets"], [])
+            self.assertEqual(initial["language"], "auto")
             self.assertTrue(Path(initial["scan_directory"]).is_absolute())
 
             settings = {
                 "version": 1,
+                "language": "zh-CN",
                 "scan_directory": str(Path(tmp) / "scans"),
                 "saved_printers": ["192.168.0.220"],
                 "presets": [
@@ -43,6 +45,7 @@ class SettingsTests(unittest.TestCase):
             }
             saved = store.save(settings)
             self.assertEqual(store.load(), saved)
+            self.assertEqual(saved["language"], "zh-CN")
             self.assertEqual(saved["presets"][0]["push_scan_slot"], 3)
             self.assertEqual(
                 preset_for_push_scan_slot(saved, 3)["id"],
@@ -62,6 +65,7 @@ class SettingsTests(unittest.TestCase):
             store.save(
                 {
                     "version": 1,
+                    "language": "auto",
                     "scan_directory": str(Path(tmp) / "scans"),
                     "presets": [
                         {
@@ -94,6 +98,7 @@ class SettingsTests(unittest.TestCase):
             }
         )
         self.assertEqual(settings["saved_printers"], [])
+        self.assertEqual(settings["language"], "auto")
 
     def test_invalid_settings_fail_closed(self):
         cases = (

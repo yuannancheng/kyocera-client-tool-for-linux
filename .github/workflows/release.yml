@@ -1,0 +1,126 @@
+name: Release
+
+"on":
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Build and publish ${{ github.ref_name }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out tagged commit
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Verify release version
+        run: python tools/release.py check --tag "${GITHUB_REF_NAME}"
+
+      - name: Install project and build tools
+        run: |
+          python -m pip install --upgrade pip build
+          python -m pip install .
+          python -m pip check
+
+      - name: Run release tests
+        run: python -m unittest discover -s tests -v
+
+      - name: Build wheel and source archive
+        run: python -m build
+
+      - name: Build Debian package
+        run: python tools/build_deb.py --output-dir dist/deb
+
+      - name: Verify public tree and artifacts
+        run: |
+          python tools/check_publication.py
+          python - <<'PY'
+          from pathlib import Path
+
+          artifacts = [
+              *Path("dist").glob("*.whl"),
+              *Path("dist").glob("*.tar.gz"),
+              *Path("dist/deb").glob("*.deb"),
+          ]
+          missing = {
+              "wheel": not any(path.suffix == ".whl" for path in artifacts),
+              "sdist": not any(path.name.endswith(".tar.gz") for path in artifacts),
+              "deb": not any(path.suffix == ".deb" for path in artifacts),
+          }
+          if any(missing.values()):
+              raise SystemExit(f"missing build artifacts: {missing}")
+          for path in artifacts:
+              print(f"{path} ({path.stat().st_size} bytes)")
+          PY
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: kyocera-monitor-${{ github.ref_name }}
+          path: |
+            dist/*.whl
+            dist/*.tar.gz
+            dist/deb/*.deb
+          if-no-files-found: error
+
+      - name: Publish or update GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1; then
+            gh release upload "${GITHUB_REF_NAME}" \
+              dist/*.whl dist/*.tar.gz dist/deb/*.deb --clobber
+          else
+            gh release create "${GITHUB_REF_NAME}" \
+              dist/*.whl dist/*.tar.gz dist/deb/*.deb \
+              --verify-tag --generate-notes \
+              --title "KYOCERA Client Tool ${GITHUB_REF_NAME}"
+          fi
+
+      - name: Publish update metadata
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_URL: https://github.com/${{ github.repository }}/releases/tag/${{ github.ref_name }}
+        run: |
+          trap 'rm -f update.json' EXIT
+          VERSION=$(python tools/release.py version)
+          python - "$VERSION" "$RELEASE_URL" <<'PY'
+          import json
+          import sys
+
+          version, release_url = sys.argv[1:]
+          with open("update.json", "w", encoding="utf-8") as stream:
+              json.dump(
+                  {"version": version, "htmlUrl": release_url},
+                  stream,
+                  ensure_ascii=False,
+                  separators=(",", ":"),
+              )
+              stream.write("\n")
+          PY
+          if gh release view updater >/dev/null 2>&1; then
+            gh release upload updater update.json --clobber
+          else
+            gh release create updater update.json \
+              --title "Update metadata" \
+              --notes "Version metadata used by the application's manual update check."
+          fi
+          gh release edit "${GITHUB_REF_NAME}" --latest

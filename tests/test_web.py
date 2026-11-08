@@ -5,7 +5,7 @@ import tempfile
 import threading
 import time
 import unittest
-from contextlib import redirect_stderr
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest import mock
 
@@ -17,6 +17,11 @@ from kyocera_monitor.parser import PrinterSnapshot, Tray
 from kyocera_monitor.preferences import SettingsStore
 from kyocera_monitor.scan import ScanArtifact, ScanJobManager, ScanResult
 from kyocera_monitor.usb import UsbPrinter
+from kyocera_monitor.updates import (
+    UpdateCheckError,
+    UpdateChecker,
+    UpdateResult,
+)
 from kyocera_monitor.web import (
     DEVICE_HTML,
     OVERVIEW_HTML,
@@ -193,6 +198,20 @@ class RegistryTests(unittest.TestCase):
 
 
 class PageTests(unittest.TestCase):
+    def test_pages_offer_automatic_and_manual_languages(self):
+        for page in (OVERVIEW_HTML, DEVICE_HTML):
+            self.assertIn('id="language-select"', page)
+            self.assertIn('value="auto"', page)
+            self.assertIn('value="zh-CN"', page)
+            self.assertIn('value="en-US"', page)
+            self.assertIn("window.I18n", page)
+            self.assertIn("I18n.applyStatic()", page)
+
+    def test_pages_have_manual_update_check(self):
+        for page in (OVERVIEW_HTML, DEVICE_HTML):
+            self.assertIn('id="version-check"', page)
+            self.assertIn('data-i18n="检查更新"', page)
+
     def test_overview_fetches_devices_and_can_discover(self):
         self.assertIn("/api/devices", OVERVIEW_HTML)
         self.assertIn("/api/discover", OVERVIEW_HTML)
@@ -267,7 +286,7 @@ class PageTests(unittest.TestCase):
     def test_device_page_has_native_download_bridge(self):
         self.assertIn('messageHandlers.kyoceraDownload', DEVICE_HTML)
         self.assertIn("link.addEventListener(\"click\"", DEVICE_HTML)
-        self.assertIn('setScanStatus("正在下载 "', DEVICE_HTML)
+        self.assertIn('tr("正在下载 {filename}"', DEVICE_HTML)
 
     def test_device_page_has_wifi_status_scan_and_connect(self):
         for element_id in (
@@ -355,7 +374,9 @@ class PageTests(unittest.TestCase):
     def test_device_page_uses_friendly_tray_and_default_labels(self):
         self.assertIn("tray.display_name", DEVICE_HTML)
         self.assertIn("tray.display_paper", DEVICE_HTML)
-        self.assertEqual(DEVICE_HTML.count("使用设备当前设置"), 3)
+        self.assertEqual(
+            DEVICE_HTML.count('data-i18n="使用设备当前设置"'), 3
+        )
         self.assertIn('"Default paper size": "默认纸张尺寸"', DEVICE_HTML)
         self.assertIn('"Default media type": "默认介质类型"', DEVICE_HTML)
 
@@ -377,6 +398,32 @@ class PageTests(unittest.TestCase):
 
 
 class CliTests(unittest.TestCase):
+    def test_check_update_cli_is_network_only_when_requested(self):
+        result = UpdateResult(
+            current_version="0.3.1",
+            latest_version="0.4.0",
+            update_available=True,
+            release_url=(
+                "https://github.com/example/repo/releases/tag/v0.4.0"
+            ),
+            checked_at="2026-11-08T00:00:00+00:00",
+        )
+        checker = mock.Mock()
+        checker.check.return_value = result
+        stdout = io.StringIO()
+        with (
+            mock.patch.object(
+                cli, "UpdateChecker", return_value=checker
+            ) as factory,
+            redirect_stdout(stdout),
+        ):
+            self.assertEqual(cli.main(["--check-update", "--json"]), 0)
+        checker.check.assert_called_once_with(force=True)
+        factory.assert_called_once()
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(payload["latest_version"], "0.4.0")
+        self.assertTrue(payload["update_available"])
+
     def test_web_rejects_json_combination(self):
         with redirect_stderr(io.StringIO()):
             with self.assertRaises(SystemExit) as caught:
@@ -470,13 +517,81 @@ class CliTests(unittest.TestCase):
             workbench = gui.call_args.kwargs["config_workbench"]
             result = workbench.overview(printer.device, category="wifi")
         self.assertEqual(result["transport"], "pjl")
-        self.assertFalse(result["editing"]["available"])
+        self.assertTrue(result["editing"]["available"])
         open_channel.assert_called_once_with(device=printer.device, port=9100)
         self.assertEqual(
             collect_config.call_args.kwargs["item_ids"],
             tuple(range(142, 148)),
         )
         snmp_reader.assert_not_called()
+
+    def test_usb_configuration_write_uses_ksetobj_and_reads_back(self):
+        printer = UsbPrinter(
+            device="libusb:001:007",
+            vendor_id=0x0482,
+            product_id=0x0D51,
+            manufacturer="KYOCERA",
+            product="MA2000w",
+            serial="USB123",
+        )
+        values = {obj.item_id: 0 for obj in CONFIG}
+
+        def read_configuration(*_args, item_ids=None, **_kwargs):
+            selected = set(item_ids or values)
+            return [
+                {
+                    "item_id": obj.item_id,
+                    "oid": obj.oid,
+                    "absolute_oid": absolute_config_oid(obj.oid),
+                    "status": 0,
+                    "value": values[obj.item_id],
+                    "display": str(values[obj.item_id]),
+                }
+                for obj in CONFIG
+                if obj.item_id in selected
+            ]
+
+        def write_configuration(_channel, oid, value, **_kwargs):
+            self.assertEqual(
+                oid,
+                "1.3.6.1.4.1.1347.1001.2.1.1.1.14.1",
+            )
+            values[50] = value
+            return 0
+
+        channel = mock.MagicMock()
+        channel.__enter__.return_value = channel
+        with (
+            mock.patch.object(cli, "discover_usb_printers", return_value=[]),
+            mock.patch.object(
+                cli, "discover_libusb_printers", return_value=[printer]
+            ),
+            mock.patch.object(cli, "open_channel", return_value=channel),
+            mock.patch.object(
+                cli,
+                "collect_config",
+                side_effect=read_configuration,
+            ),
+            mock.patch.object(
+                cli,
+                "set_config_integer",
+                side_effect=write_configuration,
+            ) as set_config_integer,
+            mock.patch("kyocera_monitor.gui.run_gui") as gui,
+            redirect_stderr(io.StringIO()),
+        ):
+            self.assertEqual(cli.main(["--gui"]), 0)
+            workbench = gui.call_args.kwargs["config_workbench"]
+            result = workbench.apply_integer(printer.device, 50, 1, 0)
+        self.assertEqual(result["status"], "applied")
+        self.assertEqual(result["observed"], 1)
+        set_config_integer.assert_called_with(
+            channel,
+            "1.3.6.1.4.1.1347.1001.2.1.1.1.14.1",
+            1,
+            timeout=8.0,
+            idle=1.5,
+        )
 
     def test_usb_status_and_configuration_reads_are_serialized(self):
         printer = UsbPrinter(
@@ -819,13 +934,14 @@ class PrinterPersistenceApiTests(unittest.TestCase):
         self.settings = SettingsStore(Path(self.tmp.name) / "settings.json")
 
     @staticmethod
-    def request(handler, method, path, payload=None):
+    def request(handler, method, path, payload=None, headers=None):
         body = json.dumps(payload).encode() if payload is not None else None
         request = handler.__new__(handler)
         request.path = path
         request.headers = {
             "Content-Length": str(len(body or b"")),
             "Content-Type": "application/json",
+            **(headers or {}),
         }
         request.rfile = io.BytesIO(body or b"")
         request.wfile = io.BytesIO()
@@ -908,6 +1024,148 @@ class PrinterPersistenceApiTests(unittest.TestCase):
             self.settings.load()["saved_printers"],
             ["192.168.0.220"],
         )
+
+    def test_page_uses_device_language_and_falls_back_to_chinese(self):
+        registry = DeviceRegistry(lambda key: snapshot(), None, min_interval=0)
+        handler = make_handler(registry, settings_store=self.settings)
+
+        status, _, body = self.request(
+            handler,
+            "GET",
+            "/",
+            headers={"Accept-Language": "en-GB,en;q=0.9"},
+        )
+        self.assertEqual(status, 200)
+        text = body.decode("utf-8")
+        self.assertIn('<html lang="en-US">', text)
+        self.assertIn('"locale":"en-US"', text)
+
+        status, _, body = self.request(
+            handler,
+            "GET",
+            "/",
+            headers={"Accept-Language": "fr-FR,de;q=0.8"},
+        )
+        self.assertEqual(status, 200)
+        self.assertIn('<html lang="zh-CN">', body.decode("utf-8"))
+
+    def test_manual_language_overrides_device_language(self):
+        registry = DeviceRegistry(lambda key: snapshot(), None, min_interval=0)
+        handler = make_handler(registry, settings_store=self.settings)
+
+        status, _, body = self.request(
+            handler,
+            "POST",
+            "/api/language",
+            {"language": "en-US"},
+        )
+        self.assertEqual(status, 200)
+        payload = json.loads(body)
+        self.assertEqual(payload["language"], "en-US")
+        self.assertEqual(payload["effective"], "en-US")
+
+        status, _, body = self.request(
+            handler,
+            "GET",
+            "/device",
+            headers={"Accept-Language": "zh-CN"},
+        )
+        self.assertEqual(status, 200)
+        self.assertIn('<html lang="en-US">', body.decode("utf-8"))
+        self.assertEqual(self.settings.load()["language"], "en-US")
+
+    def test_invalid_manual_language_is_rejected(self):
+        registry = DeviceRegistry(lambda key: snapshot(), None, min_interval=0)
+        handler = make_handler(registry, settings_store=self.settings)
+        status, _, body = self.request(
+            handler,
+            "POST",
+            "/api/language",
+            {"language": "fr-FR"},
+        )
+        self.assertEqual(status, 400)
+        self.assertIn("language must be", json.loads(body)["error"])
+
+
+class UpdateApiTests(unittest.TestCase):
+    def setUp(self):
+        registry = DeviceRegistry(lambda key: snapshot(), None, min_interval=0)
+        self.checker = UpdateChecker(
+            current="0.3.1",
+            fetcher=lambda _url: (
+                "0.4.0",
+                "https://github.com/example/repo/releases/tag/v0.4.0",
+            ),
+        )
+        self.handler = make_handler(
+            registry,
+            update_checker=self.checker,
+        )
+
+    @staticmethod
+    def request(handler, method, path):
+        request = handler.__new__(handler)
+        request.path = path
+        request.headers = {
+            "Content-Length": "0",
+            "Content-Type": "application/json",
+        }
+        request.rfile = io.BytesIO()
+        request.wfile = io.BytesIO()
+        request._status = None
+        request._headers = {}
+
+        def send_response(status):
+            request._status = status
+
+        def send_header(name, value):
+            request._headers[name] = value
+
+        request.send_response = send_response
+        request.send_header = send_header
+        request.end_headers = lambda: None
+        request.log_message = lambda *_args: None
+        getattr(request, f"do_{method}")()
+        return request._status, request._headers, request.wfile.getvalue()
+
+    def test_update_api_returns_semver_comparison(self):
+        status, _, body = self.request(self.handler, "GET", "/api/update")
+        self.assertEqual(status, 200)
+        payload = json.loads(body)
+        self.assertEqual(payload["current_version"], "0.3.1")
+        self.assertEqual(payload["latest_version"], "0.4.0")
+        self.assertTrue(payload["update_available"])
+        self.assertEqual(
+            payload["release_url"],
+            "https://github.com/example/repo/releases/tag/v0.4.0",
+        )
+
+    def test_page_injects_current_version_and_update_runtime(self):
+        status, _, body = self.request(self.handler, "GET", "/")
+        self.assertEqual(status, 200)
+        text = body.decode("utf-8")
+        self.assertIn('window.KYOCERA_VERSION="0.3.1"', text)
+        self.assertIn('id="version-check"', text)
+        self.assertIn('fetch("/api/update"', text)
+        self.assertIn("kyoceraOpenUrl", text)
+
+    def test_update_failure_returns_json_error(self):
+        registry = DeviceRegistry(lambda key: snapshot(), None, min_interval=0)
+
+        def fail(_url):
+            raise UpdateCheckError("metadata unavailable")
+
+        handler = make_handler(
+            registry,
+            update_checker=UpdateChecker(current="0.3.1", fetcher=fail),
+        )
+        status, headers, body = self.request(handler, "GET", "/api/update")
+        self.assertEqual(status, 502)
+        self.assertEqual(
+            headers["Content-Type"],
+            "application/json; charset=utf-8",
+        )
+        self.assertIn("metadata unavailable", json.loads(body)["error"])
 
 
 class ConfigApiTests(unittest.TestCase):

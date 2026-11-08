@@ -56,6 +56,7 @@ class DebianPackageTests(unittest.TestCase):
                 "./usr/bin/kyocera-gui",
                 "./usr/bin/kyocera-kmscn-probe",
                 "./usr/lib/python3/dist-packages/kyocera_monitor/scan.py",
+                "./usr/lib/python3/dist-packages/kyocera_monitor/_build_version.py",
                 "./usr/lib/python3/dist-packages/kyocera_monitor/usb_libusb.py",
                 "./usr/lib/python3/dist-packages/kyocera_monitor/usb_scan.py",
                 "./usr/lib/python3/dist-packages/kyocera_monitor/wifi.py",
@@ -79,6 +80,16 @@ class DebianPackageTests(unittest.TestCase):
             environment["PYTHONPATH"] = str(
                 extracted / "usr" / "lib" / "python3" / "dist-packages"
             )
+            build_version = (
+                extracted
+                / "usr"
+                / "lib"
+                / "python3"
+                / "dist-packages"
+                / "kyocera_monitor"
+                / "_build_version.py"
+            ).read_text(encoding="utf-8")
+            self.assertIn('__version__ = "9.8.7"', build_version)
             helper = subprocess.run(
                 [
                     str(

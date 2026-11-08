@@ -84,6 +84,10 @@ def build_package(
             root / "usr" / "lib" / "python3" / "dist-packages" / "kyocera_monitor"
         )
         _copy_regular_tree(ROOT / "kyocera_monitor", package_directory)
+        (package_directory / "_build_version.py").write_text(
+            f'__version__ = "{version}"\n',
+            encoding="utf-8",
+        )
 
         binary_directory = root / "usr" / "bin"
         for name, body in ENTRY_POINTS.items():

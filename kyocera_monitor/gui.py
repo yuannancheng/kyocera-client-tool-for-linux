@@ -17,6 +17,13 @@ from typing import Callable
 from urllib.parse import urlsplit
 
 from .config_web import ConfigWorkbench
+from .i18n import (
+    LANGUAGE_AUTO,
+    LANGUAGE_EN,
+    preferred_language_from_environment,
+    resolve_language,
+)
+from .preferences import SettingsError, SettingsStore
 from .scan import ScanArtifact, ScanJobManager
 from .wifi import WifiWorkbench
 from .web import DeviceRegistry, create_server
@@ -129,6 +136,22 @@ def parse_download_request(payload: object) -> tuple[str, int, str]:
     return match.group(1), int(match.group(2)), safe_download_filename(filename)
 
 
+def validate_external_url(value: object) -> str:
+    """Accept only HTTPS GitHub links from the local page."""
+
+    if not isinstance(value, str) or not value:
+        raise ValueError("external URL must be a non-empty string")
+    parsed = urlsplit(value)
+    if (
+        parsed.scheme != "https"
+        or parsed.hostname not in {"github.com", "www.github.com"}
+        or parsed.username is not None
+        or parsed.password is not None
+    ):
+        raise ValueError("external URL must be an HTTPS GitHub URL")
+    return value
+
+
 def _message_payload(message: object) -> object:
     value = message
     getter = getattr(value, "get_js_value", None)
@@ -170,8 +193,10 @@ def _install_download_bridge(
     window,
     *,
     downloads_directory: Path | None = None,
+    language: str = "zh-CN",
 ) -> None:
     directory = downloads_directory or Path.home() / "Downloads"
+    english = language == LANGUAGE_EN
 
     def receive(_manager, message) -> None:
         try:
@@ -183,7 +208,7 @@ def _install_download_bridge(
                 _show_download_result,
                 Gtk,
                 window,
-                "下载失败",
+                "Download failed" if english else "下载失败",
                 str(exc),
                 True,
             )
@@ -198,7 +223,7 @@ def _install_download_bridge(
                     _show_download_result,
                     Gtk,
                     window,
-                    "下载失败",
+                    "Download failed" if english else "下载失败",
                     f"{type(exc).__name__}: {exc}",
                     True,
                 )
@@ -207,7 +232,7 @@ def _install_download_bridge(
                     _show_download_result,
                     Gtk,
                     window,
-                    "扫描文件已下载",
+                    "Scan downloaded" if english else "扫描文件已下载",
                     str(destination),
                 )
 
@@ -224,6 +249,52 @@ def _install_download_bridge(
     )
 
 
+def _install_external_open_bridge(
+    Gtk,
+    Gdk,
+    GLib,
+    content_manager,
+    window,
+    *,
+    language: str,
+) -> None:
+    english = language == LANGUAGE_EN
+
+    def receive(_manager, message) -> None:
+        try:
+            payload = _message_payload(message)
+            if not isinstance(payload, dict):
+                raise ValueError("external URL payload must be an object")
+            url = validate_external_url(payload.get("url"))
+        except (ValueError, TypeError, json.JSONDecodeError) as exc:
+            GLib.idle_add(
+                _show_download_result,
+                Gtk,
+                window,
+                "Open link failed" if english else "打开链接失败",
+                str(exc),
+                True,
+            )
+            return
+        try:
+            Gtk.show_uri_on_window(window, url, Gdk.CURRENT_TIME)
+        except Exception as exc:
+            GLib.idle_add(
+                _show_download_result,
+                Gtk,
+                window,
+                "Open link failed" if english else "打开链接失败",
+                f"{type(exc).__name__}: {exc}",
+                True,
+            )
+
+    content_manager.register_script_message_handler("kyoceraOpenUrl")
+    content_manager.connect(
+        "script-message-received::kyoceraOpenUrl",
+        receive,
+    )
+
+
 def run_gui(
     registry: DeviceRegistry,
     *,
@@ -231,12 +302,27 @@ def run_gui(
     config_workbench: ConfigWorkbench | None = None,
     push_scan_reader: Callable[[str], dict] | None = None,
     wifi_workbench: WifiWorkbench | None = None,
-    title: str = "KYOCERA 打印机",
+    title: str | None = None,
 ) -> None:
     """Open the dashboard in a native window and block until it closes."""
 
     Gtk, WebKit2 = _load_gtk()
-    from gi.repository import GLib
+    from gi.repository import Gdk, GLib
+
+    try:
+        preference = SettingsStore().load().get("language", LANGUAGE_AUTO)
+    except (SettingsError, OSError):
+        preference = LANGUAGE_AUTO
+    language = resolve_language(
+        preference,
+        preferred_language_from_environment(),
+    )
+    if title is None:
+        title = (
+            "KYOCERA Printer"
+            if language == LANGUAGE_EN
+            else "KYOCERA 打印机"
+        )
 
     manager = ScanJobManager()
     server = create_server(
@@ -264,6 +350,15 @@ def run_gui(
         content_manager,
         manager,
         window,
+        language=language,
+    )
+    _install_external_open_bridge(
+        Gtk,
+        Gdk,
+        GLib,
+        content_manager,
+        window,
+        language=language,
     )
     settings = view.get_settings()
     settings.set_enable_javascript(True)
@@ -273,6 +368,7 @@ def run_gui(
     window.connect("key-press-event", lambda _w, event: _reload_on_f5(
         view, event
     ))
+    view.connect("notify::title", _sync_window_title, window)
     window.show_all()
     view.load_uri(f"http://127.0.0.1:{port}/")
 
@@ -292,6 +388,14 @@ def _reload_on_f5(view, event) -> bool:
         view.reload()
         return True
     return False
+
+
+def _sync_window_title(view, _parameter, window) -> None:
+    """Mirror the localized HTML title into the native GTK window."""
+
+    title = view.get_title()
+    if title:
+        window.set_title(title)
 
 
 def main() -> int:

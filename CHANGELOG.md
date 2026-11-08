@@ -2,6 +2,68 @@
 
 ## 2026-11-08
 
+### Added — manual semantic-version update check
+
+- Web 总览页和设备详情页顶部新增“检查更新”。当前版本来自安装元数据、源码
+  `pyproject.toml` 或 Debian 包内生成版本文件；点击后才访问固定的 `update.json`，
+  不会在启动、设备轮询或扫描流程中自动联网。
+- 新增 `kyocera_monitor.updates`：校验版本、HTTPS 发布链接和 16 KiB 响应上限，
+  按 `MAJOR.MINOR.PATCH` 数值比较。前后端各缓存 60 秒；
+  更新元数据格式错误或网络失败时只返回检查失败，不影响打印和扫描。
+- 发现新版本时显示当前版本、最新版本和发布页链接。普通浏览器打开新标签页；
+  GTK/WebKit 通过受限消息桥只允许打开 `github.com` 的 HTTPS 链接。
+- 新增 `--check-update` 与 `--check-update --json`，并支持
+  `KYOCERA_UPDATE_URL` 指向兼容镜像。
+- 发布 workflow 在主 Release 完成后写入固定 `updater` Release 的
+  `update.json`，内容为 `{"version":"x.y.z","htmlUrl":"..."}`；随后恢复语义
+  版本 Release 为 GitHub 最新版本。
+- Debian 构建会生成 `kyocera_monitor/_build_version.py`，使手工打包安装后也能
+  显示真实版本，不依赖 wheel 的 `.dist-info`。
+
+验证：全量测试 388/388 通过；覆盖版本数值比较、当前版本解析、元数据伪造/
+超限/非 HTTPS 拒绝、缓存与强制刷新、Web API、CLI、GTK 外链限制、翻译键和
+发布 workflow。页面 JavaScript、Python 编译、工作流 YAML、公开树检查和
+`git diff --check` 通过。未连接打印机；当前尚无已发布的 `updater` 元数据，
+因此真实远端检查需在首次标签发布后验收。
+
+### Added — bilingual Web/GUI interface
+
+- Web 总览页和设备详情页新增“自动（设备语言） / 简体中文 / English”选择。
+  `auto` 按浏览器或 WebKit 请求的 `Accept-Language` 质量顺序匹配 `zh*` 和
+  `en*`，不支持的语言回退简体中文；手动选择优先并持久化到用户设置。
+- 新增 `POST /api/language`，只更新 `language` 字段，不覆盖扫描目录、预设和
+  已保存设备；旧设置缺少该字段时保持兼容并解析为 `auto`。
+- 页面静态文字、动态状态、扫描/配置/Wi‑Fi/Push Scan 提示、后端配置标签和
+  Push Scan 状态均有英文翻译；GTK 窗口标题与下载结果对话框跟随有效语言。
+- 新增语言协商、设置迁移、API、翻译键完整性和页面控件测试。
+
+### Changed — release-only GitHub Actions builds
+
+- 普通 `main` 推送和拉取请求只运行 Python 3.10/3.12 测试与公开树检查，
+  不再为每次小变动生成 wheel、源码包或 `.deb`。
+- 新增 `release.yml`：只有推送 `vX.Y.Z` 标签时才校验标签与
+  `pyproject.toml` 版本一致，运行发布测试，构建三类产物，上传 Actions
+  artifact，并创建或更新 GitHub Release。
+- 新增 `tools/release.py`，提供 `version`、`check --tag` 和
+  `bump major|minor|patch`；版本号继续以 `pyproject.toml` 为唯一来源，
+  Debian 包版本自动从该字段读取。
+
+验证：全量测试 371/371 通过；Python 编译、两页 JavaScript 语法、工作流 YAML、
+公开树检查和 `git diff --check` 通过。尚未在真实 GitHub runner 上执行发布
+标签流程，也未连接打印机；本环境只验证了本地 wheel 和 `.deb` 构建。
+
+### Fixed — reviewed device properties on USB
+
+- USB/PJL 连接不再把同一组 27 个已审核整数属性整体标记为只读。写入使用
+  官方配置工具已还原的 `@PJL KSETOBJ OBJ="1.<relative-oid>" VALUE =<int>`
+  行，并要求设备返回 `STATUS=0`；随后沿用目标 item 回读和失败恢复保护。
+- USB 写入与状态查询、分区读取和 Wi‑Fi 通道共用每个 selector 的访问锁，
+  避免写入期间另一个请求 claim 同一 Printer interface。
+- 对 MA2000w 的 27 个已审核字段重新执行只读核对，27/27 均为
+  `status=0`、`value_kind=integer`；sleep time 当前为 `1`。本轮没有发送
+  配置写入，USB 字段级真机写入仍待设备接入后验收。
+- 版本升级为 `0.3.1`，使桌面安装包可与仍使用旧配置页的 `0.3.0-1` 明确区分。
+
 ### Changed — friendly official device configuration and tray labels
 
 - 设备配置页不再列出设备返回 `STATUS!=0` 或缺失的不可读对象，只在技术详情

@@ -1,10 +1,11 @@
-"""Read-only access to 147 interoperable printer configuration objects.
+"""Access helpers for 147 interoperable printer configuration objects.
 
 The table is based on observed Client Tool 1.4.11.2 interoperability behavior
 and is kept in sync with
 ``docs/reverse-engineering/data/clienttool-config-oids.tsv`` by
-``tests/test_config.py``.  This module only builds ``KGETOBJ`` requests and
-never emits ``KSETOBJ`` or any device-reset command.
+``tests/test_config.py``.  General collection remains read-only.  The
+``set_config_integer`` helper exists only for the reviewed integer fields
+enforced by :mod:`kyocera_monitor.config_edit`; it never emits a reset command.
 """
 
 from __future__ import annotations
@@ -22,7 +23,13 @@ from .config_media import (
     media_weight_setting_name,
 )
 from .config_vendor_names import VENDOR_NAMES
-from .pjl import Channel, normalize_command, query_merged, split_segments
+from .pjl import (
+    Channel,
+    build_request,
+    normalize_command,
+    query_merged,
+    split_segments,
+)
 from .snmp import (
     END_OF_MIB_VIEW,
     NO_SUCH_INSTANCE,
@@ -389,6 +396,58 @@ def absolute_config_oid(oid: str) -> str:
     if oid.startswith("1.3.6"):
         return oid
     return f"1.3.6.1.4.1.1347.{oid}"
+
+
+_CONFIG_KYOCERA_PREFIX = "1.3.6.1.4.1.1347."
+_STATUS_FIELD_RE = re.compile(rb"(?:^|\r?\n)STATUS\s*=\s*(-?\d+)\s*(?:\r?\n|$)")
+
+
+class ConfigSetError(RuntimeError):
+    """Raised when a guarded PJL configuration write is not confirmed."""
+
+
+def config_set_command(oid: str, value: int) -> str:
+    """Build the exact KSETOBJ line observed in KMUTLCFG.exe.
+
+    USB collection has historically used the equivalent ``1.<relative-oid>``
+    spelling.  Accept absolute OIDs from the Web/GUI path and normalize them
+    back to that same spelling before constructing the command.
+    """
+
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError("configuration write value must be an integer")
+    if oid.startswith(_CONFIG_KYOCERA_PREFIX):
+        pjl_object = "1." + oid[len(_CONFIG_KYOCERA_PREFIX) :]
+    elif oid.startswith("1."):
+        pjl_object = oid
+    else:
+        pjl_object = "1." + oid
+    return f'@PJL KSETOBJ OBJ="{pjl_object}" VALUE ={value}'
+
+
+def set_config_integer(
+    channel: Channel,
+    oid: str,
+    value: int,
+    *,
+    timeout: float = 5.0,
+    idle: float = 0.5,
+) -> int:
+    """Write one reviewed integer through KSETOBJ and require ``STATUS=0``."""
+
+    command = config_set_command(oid, value)
+    channel.drain()
+    channel.send(build_request((command,)))
+    response = channel.receive(timeout, idle, (command,))
+    if not response:
+        raise ConfigSetError(f"printer returned no response for {command}")
+    match = _STATUS_FIELD_RE.search(response)
+    if match is None:
+        raise ConfigSetError(f"KSETOBJ response has no STATUS field for {command}")
+    status = int(match.group(1))
+    if status != 0:
+        raise ConfigSetError(f"KSETOBJ returned STATUS={status} for {command}")
+    return status
 
 
 def _hex_text(value: str) -> bytes | None:
