@@ -277,15 +277,27 @@ def collect(
     commands=QUERY_SEQUENCE,
 ):
     result = None
+    last_error: PjlError | None = None
     for attempt in range(2):
-        with open_channel(host=host, device=device, port=port) as channel:
-            raw = query_merged(channel, commands, timeout=timeout, idle=idle)
-        snapshot = parse_response(raw)
-        result = raw, snapshot
-        if snapshot.model is not None and snapshot.status_code is not None:
-            break
+        try:
+            with open_channel(host=host, device=device, port=port) as channel:
+                raw = query_merged(channel, commands, timeout=timeout, idle=idle)
+            snapshot = parse_response(raw)
+            result = raw, snapshot
+            if snapshot.model is not None and snapshot.status_code is not None:
+                break
+        except PjlError as exc:
+            # A USB endpoint can transiently stop answering while usblp is
+            # released or the device is waking. Closing and reopening the
+            # channel mirrors the official local reconnect path and gives a
+            # stalled endpoint a chance to recover.
+            last_error = exc
         if attempt == 0:
             time.sleep(0.2)
+    if result is None:
+        if last_error is not None:
+            raise last_error
+        raise PjlError("printer returned no PJL response")
     return result
 
 

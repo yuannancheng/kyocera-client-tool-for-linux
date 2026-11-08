@@ -1,6 +1,9 @@
 import unittest
+from contextlib import nullcontext
 from pathlib import Path
+from unittest.mock import Mock, patch
 
+from kyocera_monitor import cli
 from kyocera_monitor.parser import parse_response
 from kyocera_monitor.pjl import (
     QUERY_SEQUENCE,
@@ -120,6 +123,39 @@ class PartialRetryTests(unittest.TestCase):
         channel = FakeChannel([payload])
         raw = query_merged(channel, ("@PJL INFO ID",), timeout=1, retries=0)
         self.assertEqual(raw, payload)
+
+
+class CollectRetryTests(unittest.TestCase):
+    def test_collect_reopens_channel_after_no_response(self):
+        response = (
+            b'@PJL INFO ID\r\n"MA2000w"\r\n'
+            b"@PJL INFO STATUS\r\nCODE=35078\r\nONLINE=TRUE\r\n\x0c"
+        )
+        channels = [Mock(), Mock()]
+        with (
+            patch(
+                "kyocera_monitor.cli.open_channel",
+                side_effect=[nullcontext(channel) for channel in channels],
+            ) as open_channel,
+            patch(
+                "kyocera_monitor.cli.query_merged",
+                side_effect=[PjlError("printer returned no PJL response"), response],
+            ),
+            patch("kyocera_monitor.cli.time.sleep"),
+        ):
+            raw, snapshot = cli.collect(
+                None,
+                "/dev/usb/lp0",
+                9100,
+                1,
+                0.05,
+                ("@PJL INFO ID", "@PJL INFO STATUS"),
+            )
+
+        self.assertEqual(open_channel.call_count, 2)
+        self.assertEqual(raw, response)
+        self.assertEqual(snapshot.model, "MA2000w")
+        self.assertEqual(snapshot.status_code, 35078)
 
 
 if __name__ == "__main__":

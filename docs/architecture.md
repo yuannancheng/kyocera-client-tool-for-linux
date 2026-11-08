@@ -44,7 +44,8 @@ tools/
    “所有查询段是否都已回显”判断完成度。`query_merged()` 把响应按 `@PJL`
    回显切段，只补发缺失命令并按原顺序合并；接收端在出现数据后连续 `--idle`
    秒无新字节就返回部分响应，不再等满总超时。`collect()` 在核心字段仍缺失时
-   再建立一次新连接完整重试。
+   再建立一次新连接完整重试；若一轮查询完全无响应，也会关闭并重新打开通道，
+   以恢复 USB 端点或 `usblp` 驱动的短暂停顿。该恢复不改变查询帧或设备状态。
 4. `parser.parse_response()` 按 `@PJL` 段切分，生成 `PrinterSnapshot`。
 5. `parser` 把已确认的 KGETOBJ 字段放入 `kgetobj_known`，推断字段保留原始值并
    附加 `confidence: "inferred"`；其余对象仍原样保留在 `kgetobj`。
