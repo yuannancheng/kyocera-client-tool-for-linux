@@ -21,6 +21,36 @@ class EditableIntegerSetting:
     choices: tuple[tuple[int, str], ...] = ()
 
 
+_MEDIA_WEIGHT_IDS = (
+    11,
+    12,
+    14,
+    15,
+    17,
+    18,
+    19,
+    20,
+    24,
+    25,
+    26,
+    27,
+    28,
+    29,
+    30,
+    31,
+    32,
+)
+_MEDIA_WEIGHT_CHOICES = (
+    (11, "设备值 11"),
+    (12, "设备值 12"),
+    (13, "设备值 13"),
+)
+_MEDIA_WEIGHT_DESCRIPTION = (
+    "MA2000w 已验证设备值 11、12、13 可写入并恢复；"
+    "具体介质名称仍待官方资源确认。"
+)
+
+
 EDITABLE_INTEGER_SETTINGS: tuple[EditableIntegerSetting, ...] = (
     EditableIntegerSetting(
         item_id=1,
@@ -40,6 +70,28 @@ EDITABLE_INTEGER_SETTINGS: tuple[EditableIntegerSetting, ...] = (
         description="官方控件以 5 秒为单位保存。",
         scale=5,
         unit="秒",
+    ),
+    EditableIntegerSetting(
+        item_id=10,
+        label="忽略纸张尺寸不匹配",
+        description=(
+            "MA2000w 已验证设备值 0 与 1 可写入并恢复；"
+            "界面文字含义仍待确认。"
+        ),
+        choices=((0, "设备值 0"), (1, "设备值 1")),
+    ),
+    *(
+        EditableIntegerSetting(
+            item_id=item_id,
+            label=(
+                "自定义纸 1 的重量/类型"
+                if item_id == 25
+                else f"介质重量第 {item_id - 10} 行"
+            ),
+            description=_MEDIA_WEIGHT_DESCRIPTION,
+            choices=_MEDIA_WEIGHT_CHOICES,
+        )
+        for item_id in _MEDIA_WEIGHT_IDS
     ),
     EditableIntegerSetting(
         item_id=49,

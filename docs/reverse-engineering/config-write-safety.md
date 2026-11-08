@@ -17,10 +17,12 @@
 - `--config-audit-safe` 的无害整数字段白名单、逐项目标回读和自动恢复。
 - Web/GUI 配置工作台：按官方主要页面划分的七个配置分区、敏感值脱敏、
   面板/Wi‑Fi 状态、`0600` 私有基线和完整配置差异比较。
-- Web/GUI 九个已审核整数属性的正常设置写入：旧值一致性检查、明确确认、
+- Web/GUI 27 个已审核整数属性的正常设置写入：旧值一致性检查、明确确认、
   SET 后回读以及失败恢复。
 
-其他字段、PJL `KSETOBJ`、SNMPv1 SET、密码/网络字段和设备重置仍不可写。
+其他字段、设备属性的通用 PJL `KSETOBJ` 写入、SNMPv1 SET、密码/网络字段和
+设备重置仍不可写。Wi‑Fi 专用连接流程是单独的官方复刻路径，不属于通用属性
+写入。
 
 ### Web/GUI 配置入口
 
@@ -41,11 +43,13 @@ SNMP community、Wi‑Fi SSID、系统联系人和位置不会返回给浏览器
 页面层隐藏但仍拉取整表。只有用户明确保存或比较完整基线时，工作台才读取全部
 147 项。
 
-页面可编辑以下九个整数属性：
+页面可编辑以下 27 个整数属性：
 
 - item 1 `Sleep time`；
 - item 2 `Auto error clear`；
 - item 3 `Auto error clear timeout`；
+- item 10 `Ignore paper size mismatch`；
+- item 11/12/14/15/17/18/19/20/24–32 的 17 个介质重量行；
 - item 49 `Print density`；
 - item 50 `Quiet mode`；
 - item 51 `Units`；
@@ -54,11 +58,17 @@ SNMP community、Wi‑Fi SSID、系统联系人和位置不会返回给浏览器
 - item 85 `Auto clear panel time`。
 
 这些字段均来自已还原的官方控件/差异表；item 2 和 item 50 已做独立真机写入
-与恢复，其他七个字段属于已执行的 25 项无害整数审计。`POST /api/config/apply` 只接受上述
-item、整数目标值、页面实际读取的 `expected_value` 和 `confirm=true`。设备当前
-值变化时在写入前拒绝；SET 前的旧值检查与 SET 后的回读都只请求目标 item，
-回读不一致或写入异常时尝试恢复旧值并报告恢复结果。页面不提供全表批量提交或
-自动重启。
+与恢复，其余 25 个字段属于已执行的 MA2000w 无害整数批量审计。介质重量行只
+开放审计中成功写入并恢复的设备值 `11/12/13`，不把设备索引猜译成纸重名称。
+`POST /api/config/apply` 只接受上述 item、整数目标值、页面实际读取的
+`expected_value` 和 `confirm=true`。设备当前值变化时在写入前拒绝；SET 前的
+旧值检查与 SET 后的回读都只请求目标 item，回读不一致或写入异常时尝试恢复
+旧值并报告恢复结果。页面不提供全表批量提交或自动重启。
+
+Wi‑Fi 状态、SSID、安全模式、信号和信道在设备配置的 `wifi` 分区显示；附近
+AP 扫描和连接控件也在同一分区内，但连接写入继续使用
+`WifiWorkbench.connect()` 的专用顺序，不经过通用整数属性接口。设备页不再在
+扫描区下方重复显示英文 `Auto error clear`/`Form feed timeout` 摘要。
 
 USB 设备当前只开放分区读取。PJL 写入尚未完成与网络路径同等的失败恢复和
 真机审计，因此 `writer_available` 对 USB 目标返回 `false`，页面不会展示

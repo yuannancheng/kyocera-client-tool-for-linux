@@ -80,6 +80,22 @@ class ConfigWorkbenchTests(unittest.TestCase):
                 "wifi",
             ],
         )
+        workbench = ConfigWorkbench(
+            lambda _host: records(),
+            baseline_directory=Path("/tmp/unused-kyocera-baseline"),
+        )
+        catalog = {
+            category["key"]: category
+            for category in workbench.category_catalog()
+        }
+        self.assertEqual(
+            sum(category["editable_count"] for category in catalog.values()),
+            27,
+        )
+        self.assertEqual(catalog["general"]["editable_count"], 8)
+        self.assertEqual(catalog["paper"]["editable_count"], 17)
+        self.assertEqual(catalog["wifi"]["editor"], "dedicated")
+        self.assertEqual(catalog["communication"]["editor"], "read_only")
 
     def test_overview_is_scoped_and_redacts_sensitive_values(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -155,6 +171,46 @@ class ConfigWorkbenchTests(unittest.TestCase):
         self.assertFalse(usb["editing"]["available"])
         self.assertEqual(network["transport"], "snmp")
         self.assertTrue(network["editing"]["available"])
+
+    def test_reviewed_editors_replace_duplicate_status_cards_when_writable(self):
+        workbench = ConfigWorkbench(
+            lambda _host: records(),
+            scoped_reader=lambda _host, item_ids: [
+                record for record in records()
+                if record["item_id"] in set(item_ids)
+            ],
+            writer=mock.Mock(),
+            baseline_directory=Path("/tmp/unused-kyocera-baseline"),
+        )
+        general = workbench.overview("printer", category="general")
+        paper = workbench.overview("printer", category="paper")
+        self.assertEqual(general["status_objects"], [])
+        self.assertEqual(
+            {item["item_id"] for item in general["editing"]["items"]},
+            {1, 2, 3, 10, 49, 50, 51, 52},
+        )
+        self.assertEqual(
+            {item["item_id"] for item in paper["editing"]["items"]},
+            {
+                11,
+                12,
+                14,
+                15,
+                17,
+                18,
+                19,
+                20,
+                24,
+                25,
+                26,
+                27,
+                28,
+                29,
+                30,
+                31,
+                32,
+            },
+        )
 
     def test_pjl_records_without_absolute_oid_still_render(self):
         pjl_records = []

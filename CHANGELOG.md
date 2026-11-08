@@ -2,6 +2,22 @@
 
 ## 2026-11-08
 
+### Changed — unified Wi-Fi and device configuration UI
+
+- 设备页将独立的“Wi‑Fi 状态与配置”卡片合并到“设备配置 → Wi‑Fi”分区；
+  连接状态、SSID、安全模式、信号和信道随分区读取展示，AP 扫描与连接使用
+  同一分区内的专用官方 `KGETOBJ/KSETOBJ` 流程。
+- 移除扫描区下方重复的“设备设置”摘要。该摘要把配置页已有的
+  `Auto error clear` 和 `Form feed timeout` 再以英文对象名显示，既重复又与
+  页面中文文案不一致；分区状态改用中文标签，技术详情仍保留官方对象名。
+- 在已有 9 个属性编辑器基础上，开放无危害整数审计中已确认可写并可恢复的
+  item 10 与 17 个介质重量行，共 27 个可修改整数属性。介质重量只允许
+  MA2000w 已审计的设备值 `11/12/13`，不根据猜测扩展枚举名称或取值范围。
+- 网络分区的可修改属性卡片会替换重复的只读状态卡；USB/PJL 通用写入仍保持
+  只读，并明确说明 Wi‑Fi 专用连接流程不受该限制。
+- 验证：全量测试 343/343 通过；页面 JavaScript 语法、Python 编译和
+  `git diff --check` 通过。本轮未连接 MA2000w，未执行设备写入或 Wi‑Fi 切换。
+
 ### Fixed — configuration read errors and section action layout
 
 - 修复 USB 配置读取与页面状态刷新并发占用同一 Printer interface 导致的

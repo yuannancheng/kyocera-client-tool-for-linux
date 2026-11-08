@@ -211,7 +211,7 @@ class PageTests(unittest.TestCase):
             self.assertNotIn('class="error"', page)
 
     def test_device_page_shows_counters_and_settings(self):
-        for element_id in ("lifetime", "scan", "drum", "settings"):
+        for element_id in ("lifetime", "scan", "drum", "config-mode-note"):
             self.assertIn(f'id="{element_id}"', DEVICE_HTML)
         self.assertIn("kgetobj_known", DEVICE_HTML)
 
@@ -271,7 +271,7 @@ class PageTests(unittest.TestCase):
 
     def test_device_page_has_wifi_status_scan_and_connect(self):
         for element_id in (
-            "wifi-status-read",
+            "wifi-settings",
             "wifi-scan",
             "wifi-ap-select",
             "wifi-ssid",
@@ -281,9 +281,25 @@ class PageTests(unittest.TestCase):
             "wifi-connect",
         ):
             self.assertIn(f'id="{element_id}"', DEVICE_HTML)
-        self.assertIn("/api/wifi/status", DEVICE_HTML)
         self.assertIn("/api/wifi/scan", DEVICE_HTML)
         self.assertIn("/api/wifi/connect", DEVICE_HTML)
+        self.assertNotIn("/api/wifi/status", DEVICE_HTML)
+        self.assertGreater(
+            DEVICE_HTML.index('id="wifi-settings"'),
+            DEVICE_HTML.index('id="config-category-title"'),
+        )
+        self.assertLess(
+            DEVICE_HTML.index('id="wifi-settings"'),
+            DEVICE_HTML.index('id="config-objects"'),
+        )
+        self.assertIn("selectedConfigCategory !== \"wifi\"", DEVICE_HTML)
+
+    def test_scan_section_does_not_repeat_english_device_settings(self):
+        self.assertNotIn('id="settings"', DEVICE_HTML)
+        self.assertNotIn("Auto error clear: ${autoClear}", DEVICE_HTML)
+        self.assertNotIn("Form feed timeout: ${formFeed} s", DEVICE_HTML)
+        self.assertIn('"Auto error clear": "自动错误清除"', DEVICE_HTML)
+        self.assertIn('"Form feed timeout": "送纸超时"', DEVICE_HTML)
 
     def test_device_page_has_presets_folder_and_settings(self):
         for element_id in (

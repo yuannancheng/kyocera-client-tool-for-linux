@@ -316,18 +316,28 @@ class ConfigWorkbench:
         """Return the stable navigation metadata without contacting a device."""
 
         editable = set(EDITABLE_BY_ID)
-        return [
-            {
-                "key": section.key,
-                "label": section.label,
-                "description": section.description,
-                "item_count": len(section.item_ids),
-                "editable_count": sum(
-                    item_id in editable for item_id in section.item_ids
-                ),
-            }
-            for section in CONFIG_SECTIONS
-        ]
+        catalog = []
+        for section in CONFIG_SECTIONS:
+            editable_count = sum(
+                item_id in editable for item_id in section.item_ids
+            )
+            catalog.append(
+                {
+                    "key": section.key,
+                    "label": section.label,
+                    "description": section.description,
+                    "item_count": len(section.item_ids),
+                    "editable_count": editable_count,
+                    "editor": (
+                        "dedicated"
+                        if section.key == "wifi"
+                        else "reviewed"
+                        if editable_count
+                        else "read_only"
+                    ),
+                }
+            )
+        return catalog
 
     def baseline_path(self, host: str) -> Path:
         return self._baseline_directory / baseline_filename(host)
@@ -363,6 +373,15 @@ class ConfigWorkbench:
             record["item_id"]: _record_view(record)
             for record in records
         }
+        editing_items = [
+            item
+            for record in records
+            if (item := _editable_view(record)) is not None
+        ]
+        editing_available = self._writes_available(host)
+        reviewed_ids = {
+            int(item["item_id"]) for item in editing_items
+        } if editing_available else set()
         return {
             "host": host,
             "transport": self._transport_for(host),
@@ -378,12 +397,8 @@ class ConfigWorkbench:
             "full_total": len(CONFIG),
             "baseline": self.baseline_info(host),
             "editing": {
-                "available": self._writes_available(host),
-                "items": [
-                    item
-                    for record in records
-                    if (item := _editable_view(record)) is not None
-                ],
+                "available": editing_available,
+                "items": editing_items,
             },
             "objects": [
                 _record_view(record) for record in records
@@ -391,7 +406,7 @@ class ConfigWorkbench:
             "status_objects": [
                 by_id[item_id]
                 for item_id in STATUS_ITEMS
-                if item_id in by_id
+                if item_id in by_id and item_id not in reviewed_ids
             ],
         }
 

@@ -71,7 +71,9 @@ tools/
    USB 页面保持只读。基线保存/比较仍显式执行完整 147 项读取。读取层的
    超时/socket/结果异常统一转换为 `ConfigWorkbenchError`，HTTP 路由始终返回
    JSON 错误，不让 WebKit 只看到断连式 `TypeError: Load failed`。页面以分区
-   卡片展示九个审核属性，完整配置只出现在基线维护区。
+   卡片展示 27 个审核属性，完整配置只出现在基线维护区。Wi‑Fi 状态和连接配置
+   位于 `wifi` 分区，专用 AP 扫描/连接操作仍走官方 `KGETOBJ/KSETOBJ` 顺序；
+   扫描区不再重复显示设备设置摘要。
 10. 设备详情页提交 `POST /api/scans` 后，`ScanJobManager` 在后台线程执行
    `preflight -> default_configuration -> open_session -> start_scan ->
    retrieve_image -> decode_raw -> export -> close_session`。同一设备已有

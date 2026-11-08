@@ -603,9 +603,11 @@ DEVICE_HTML = """<!doctype html>
               gap: 12px; margin-top: 12px; align-items: end; }
   form.scan label, .settings label { display: grid; gap: 6px; color: #5c6670;
                                       font-size: .82rem; }
-  form.scan select, .settings input { padding: 8px 10px; border-radius: 8px;
-                                      border: 1px solid #b9c1c9; background: #fff;
-                                      color: inherit; font: inherit; }
+  form.scan select, .settings input, .settings select {
+    padding: 8px 10px; border-radius: 8px;
+    border: 1px solid #b9c1c9; background: #fff;
+    color: inherit; font: inherit;
+  }
   form.scan button { margin: 0; min-height: 38px; }
   .settings { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
               gap: 12px; margin-top: 12px; align-items: end; }
@@ -654,6 +656,9 @@ DEVICE_HTML = """<!doctype html>
   .config-setting-actions button { margin: 0; white-space: nowrap; }
   .config-setting-actions button:not(:disabled) { border-color: #83a9c9;
                                                    background: #edf5fb; color: #174b74; }
+  .config-subheading { margin: 16px 0 8px; font-size: .92rem;
+                       color: #3f4d58; }
+  .config-help { margin: 6px 0 0; }
   .config-maintenance { margin-top: 14px; padding-top: 12px;
                         border-top: 1px solid #e5e9ed; }
   .config-maintenance summary { cursor: pointer; color: #4c5964; font-weight: 600; }
@@ -702,8 +707,9 @@ DEVICE_HTML = """<!doctype html>
                   border-color: #35566f; border-left-color: #5c9bd1; }
     .bar { background: #2b333b; }
     th, td { border-color: #2b333b; }
-    button, form.scan select, .settings input { background: #1c2228; color: inherit;
-                                                border-color: #3a444e; }
+    button, form.scan select, .settings input, .settings select {
+      background: #1c2228; color: inherit; border-color: #3a444e;
+    }
     form.scan label, .settings label { color: #9aa4ae; }
     .progress { background: #202a32; color: #e7ebef; border-color: #35414c; }
     .progress.success { background: #1d3523; color: #d3f2d8;
@@ -729,6 +735,7 @@ DEVICE_HTML = """<!doctype html>
     }
     .config-maintenance { border-color: #2d3842; }
     .config-maintenance summary { color: #b8c2cc; }
+    .config-subheading { color: #c5ced7; }
     .push-result.ready { color: #d3f2d8; }
     .push-result.warning { color: #f6dfaa; }
     .push-result.failure { color: #f6c8c8; }
@@ -860,54 +867,11 @@ DEVICE_HTML = """<!doctype html>
     <div id="scan-downloads" class="downloads"></div>
   </div>
   <div class="card" style="margin-top:12px">
-    <div class="label">设备设置</div>
-    <div id="settings" class="value">-</div>
-  </div>
-  <div class="card" style="margin-top:12px">
-    <div class="label">Wi-Fi 状态与配置</div>
-    <div class="inline">
-      <button id="wifi-status-read" type="button">读取 Wi-Fi 状态</button>
-      <button id="wifi-scan" type="button">扫描附近网络</button>
-      <span id="wifi-op-status" class="muted">尚未读取</span>
-    </div>
-    <div id="wifi-status-grid" class="config-grid"></div>
-    <div class="settings" style="margin-top:10px">
-      <label class="wide">附近网络
-        <select id="wifi-ap-select">
-          <option value="">先扫描附近网络，或手动输入</option>
-        </select>
-      </label>
-      <label>SSID
-        <input id="wifi-ssid" maxlength="32" autocomplete="off">
-      </label>
-      <label>安全模式
-        <select id="wifi-security">
-          <option value="4">WPA2 PSK (AES)</option>
-          <option value="3">WPA/WPA2 PSK (Auto)</option>
-          <option value="2">WPA/WPA2 PSK (AES)</option>
-          <option value="1">WEP</option>
-          <option value="0">开放网络</option>
-        </select>
-      </label>
-      <label>密码
-        <input id="wifi-password" type="password" autocomplete="new-password">
-      </label>
-    </div>
-    <div class="inline">
-      <label><input id="wifi-connect-confirm" type="checkbox">
-        确认更改设备 Wi-Fi；连接失败可能需要用打印机面板恢复网络</label>
-      <button id="wifi-connect" type="button">连接 Wi-Fi</button>
-    </div>
-    <div id="wifi-note" class="muted">
-      配置使用官方 Wi-Fi Setup Tool 的 KGETOBJ/KSETOBJ 顺序。
-      密码只发送到本机服务，不写入设置文件或日志。
-    </div>
-  </div>
-  <div class="card" style="margin-top:12px">
     <div class="label">设备配置</div>
     <p class="muted" style="margin-top:6px">
       按官方工具的分类逐页读取和修改。读取或应用设置时只访问当前分区；
-      提交单个属性后会回读该属性，失败时自动尝试恢复原值。
+      提交单个属性后会回读该属性，失败时自动尝试恢复原值。网络、凭据和
+      重置类对象仍保持只读，避免误改后断开设备。
     </p>
     <div class="config-layout">
       <nav id="config-categories" class="config-nav" aria-label="设备配置分类"></nav>
@@ -920,12 +884,62 @@ DEVICE_HTML = """<!doctype html>
           <button id="config-read" type="button">读取此分区</button>
         </div>
         <div id="config-status" class="muted">尚未读取当前分区</div>
-        <div id="config-status-grid" class="config-grid"></div>
-        <div id="config-edit-status" class="muted"></div>
-        <div id="config-edit-items" class="config-setting-grid"></div>
+        <div id="config-mode-note" class="muted config-help"></div>
+        <section id="config-status-block" hidden>
+          <h3 class="config-subheading">设备当前状态</h3>
+          <div id="config-status-grid" class="config-grid"></div>
+        </section>
+        <section id="config-edit-block" hidden>
+          <h3 class="config-subheading">可修改设置</h3>
+          <div id="config-edit-status" class="muted"></div>
+          <div id="config-edit-items" class="config-setting-grid"></div>
+        </section>
+        <section id="wifi-settings" hidden>
+          <h3 class="config-subheading">Wi-Fi 连接配置</h3>
+          <p class="muted config-help">
+            此分类使用官方 Wi-Fi Setup Tool 的 KGETOBJ/KSETOBJ 顺序。
+            扫描附近网络或手动填写 SSID；密码只发送到本机服务，不写入设置
+            文件或日志。连接失败时可能需要用打印机面板恢复网络。
+          </p>
+          <div class="inline">
+            <button id="wifi-scan" type="button">扫描附近网络</button>
+            <span id="wifi-op-status" class="muted">尚未执行 Wi-Fi 操作</span>
+          </div>
+          <div class="settings" style="margin-top:10px">
+            <label class="wide">附近网络
+              <select id="wifi-ap-select">
+                <option value="">先扫描附近网络，或手动输入</option>
+              </select>
+            </label>
+            <label>SSID
+              <input id="wifi-ssid" maxlength="32" autocomplete="off">
+            </label>
+            <label>安全模式
+              <select id="wifi-security">
+                <option value="4">WPA2 PSK (AES)</option>
+                <option value="3">WPA/WPA2 PSK (Auto)</option>
+                <option value="2">WPA/WPA2 PSK (AES)</option>
+                <option value="1">WEP</option>
+                <option value="0">开放网络</option>
+              </select>
+            </label>
+            <label>密码
+              <input id="wifi-password" type="password" autocomplete="new-password">
+            </label>
+          </div>
+          <div class="inline">
+            <label><input id="wifi-connect-confirm" type="checkbox">
+              确认更改设备 Wi-Fi；连接失败可能需要用打印机面板恢复网络</label>
+            <button id="wifi-connect" type="button">连接 Wi-Fi</button>
+          </div>
+        </section>
         <div id="config-changes"></div>
         <details style="margin-top:12px">
-          <summary>查看当前分区全部对象 <span id="config-object-count" class="muted"></span></summary>
+          <summary>技术详情：当前分区全部对象 <span id="config-object-count" class="muted"></span></summary>
+          <p class="muted config-help">
+            名称和状态来自官方对象表。未生成编辑器的对象可能是只读状态、
+            凭据、网络可达性相关设置，或尚未完成写入回读验证。
+          </p>
           <div class="config-table-wrap">
             <table>
               <thead><tr><th>ID</th><th>名称</th><th>状态</th><th>值</th></tr></thead>
@@ -976,6 +990,26 @@ let configCategories = [];
 let selectedConfigCategory = "general";
 let configLoadSequence = 0;
 let lastStatusError = null;
+const configStatusLabels = {
+  "Sleep mode": "睡眠模式",
+  "Sleep time": "睡眠时间",
+  "Power off timer": "关机定时器",
+  "Auto error clear": "自动错误清除",
+  "Auto error clear timeout": "自动错误清除等待时间",
+  "Form feed timeout": "送纸超时",
+  "Print density": "打印浓度",
+  "Quiet mode": "静音模式",
+  "Units": "长度单位",
+  "Auto clear panel": "自动清除面板",
+  "Auto clear panel time": "面板自动清除时间",
+  "Wi-Fi connection state": "Wi-Fi 连接状态",
+  "Wi-Fi enable state": "Wi-Fi 启用状态",
+  "Wi-Fi SSID": "Wi-Fi 名称（SSID）",
+  "Wi-Fi security mode": "Wi-Fi 安全模式",
+  "Wi-Fi channel": "Wi-Fi 信道",
+  "Wi-Fi RSSI": "Wi-Fi 信号强度"
+};
+const friendlyConfigLabel = (label) => configStatusLabels[label] || label;
 
 function showToast(message, kind = "error") {
   const stack = byId("toasts");
@@ -1042,24 +1076,6 @@ function render(payload) {
   text("drum", drum != null
     ? (drumMax != null ? `${drum} / ${drumMax}` : drum)
     : null);
-  const settings = [];
-  const sleepMode = (snapshot.snmp && snapshot.snmp.sleep_mode) ||
-    knownValue("sleep_mode");
-  if (sleepMode) settings.push(`Sleep mode: ${sleepMode}`);
-  const autoClear = (snapshot.snmp && snapshot.snmp.auto_error_clear) ||
-    knownValue("auto_error_clear");
-  if (autoClear) {
-    const timeout = (snapshot.snmp &&
-      snapshot.snmp.auto_error_clear_timeout_seconds) ||
-      knownValue("auto_error_clear_timeout");
-    settings.push(`Auto error clear: ${autoClear}` +
-      (timeout != null ? ` (${timeout} s)` : ""));
-  }
-  const formFeed = (snapshot.snmp &&
-    snapshot.snmp.form_feed_timeout_seconds) || snapshot.timeout ||
-    knownValue("form_feed_timeout");
-  if (formFeed != null) settings.push(`Form feed timeout: ${formFeed} s`);
-  byId("settings").textContent = settings.length ? settings.join(" · ") : "-";
   const net = snapshot.network || {};
   text("address", net.ip);
 
@@ -1439,9 +1455,14 @@ function renderConfigCategories() {
     const title = document.createElement("span");
     title.textContent = category.label;
     const count = document.createElement("small");
-    count.textContent = category.editable_count
-      ? `${category.editable_count} 项可编辑 · ${category.item_count} 项`
-      : `${category.item_count} 项`;
+    if (category.editor === "dedicated") {
+      count.textContent = `${category.item_count} 项 · 专用配置`;
+    } else if (category.editable_count) {
+      count.textContent =
+        `${category.editable_count} 项可修改 · ${category.item_count} 项`;
+    } else {
+      count.textContent = `${category.item_count} 项 · 只读`;
+    }
     button.append(title, count);
     button.addEventListener(
       "click",
@@ -1457,9 +1478,14 @@ function updateConfigCategoryHeading() {
     category?.label || "设备配置";
   byId("config-category-description").textContent =
     category?.description || "选择分类后读取。";
+  byId("wifi-settings").hidden =
+    selectedConfigCategory !== "wifi";
 }
 
 function clearConfigCategoryView() {
+  byId("config-status-block").hidden = true;
+  byId("config-edit-block").hidden = true;
+  byId("config-mode-note").textContent = "";
   byId("config-status-grid").replaceChildren();
   byId("config-edit-items").replaceChildren();
   byId("config-objects").replaceChildren();
@@ -1507,7 +1533,7 @@ function renderConfigObjects(objects) {
     if (!object.readable) row.className = "unreadable";
     for (const value of [
       object.item_id,
-      object.label,
+      friendlyConfigLabel(object.label),
       object.readable ? "可读" : "不可读",
       object.sensitive ? "已隐藏" : (object.display ?? "-")
     ]) {
@@ -1527,7 +1553,7 @@ function renderConfigStatusObjects(objects) {
     item.className = "config-item";
     const name = document.createElement("div");
     name.className = "name";
-    name.textContent = object.label;
+    name.textContent = friendlyConfigLabel(object.label);
     const reading = document.createElement("div");
     reading.className = "reading";
     reading.textContent = object.sensitive
@@ -1709,6 +1735,21 @@ function renderConfigOverview(data) {
   renderConfigStatusObjects(data.status_objects);
   renderConfigObjects(data.objects);
   renderConfigEditing(data.editing);
+  const statusObjects = data.status_objects || [];
+  const editableItems = data.editing?.available
+    ? (data.editing.items || [])
+    : [];
+  byId("config-status-block").hidden = statusObjects.length === 0;
+  byId("config-edit-block").hidden = editableItems.length === 0;
+  byId("config-mode-note").textContent = data.editing?.available
+    ? (editableItems.length
+        ? "下列属性已通过官方映射和可逆写入审计；其余对象保持只读。"
+        : (selectedConfigCategory === "wifi"
+            ? "Wi-Fi 使用本分类内的专用连接流程；通用属性编辑器不对凭据类对象开放。"
+            : "此分类没有已审核的通用属性编辑器，仅显示设备状态。"))
+    : (selectedConfigCategory === "wifi"
+        ? "当前连接的通用配置写入不可用；本分类的 Wi-Fi 连接仍使用专用 KSETOBJ 流程。"
+        : "当前连接未开放配置写入；USB/PJL 通用写入仍待真机验证，因此这里按只读展示。");
   byId("config-changes").replaceChildren();
   byId("config-object-count").textContent = `（${data.total} 项）`;
   setConfigStatus(
@@ -1739,7 +1780,7 @@ async function readConfiguration() {
   const count = category?.item_count ? `（${category.item_count} 项）` : "";
   await runConfigAction(
     byId("config-read"),
-    `正在通过 SNMP 读取“${label}”${count}…`,
+    `正在读取“${label}”${count}…`,
     async () => {
       const data = await configRequest(
         "/api/config",
@@ -1868,46 +1909,6 @@ async function readPushScan() {
   }
 }
 
-function renderWifiStatus(data) {
-  const grid = byId("wifi-status-grid");
-  grid.replaceChildren();
-  const rows = [
-    ["连接状态", data.connected ? "已连接" : "未连接"],
-    ["SSID", data.ssid],
-    ["安全模式", data.security_name],
-    ["信道", data.channel],
-    ["信号", data.rssi == null ? "未知" : `${data.rssi} dBm`]
-  ];
-  for (const [name, value] of rows) {
-    const item = document.createElement("div");
-    item.className = "config-item";
-    const label = document.createElement("div");
-    label.className = "name";
-    label.textContent = name;
-    const reading = document.createElement("div");
-    reading.className = "reading";
-    reading.textContent = value == null || value === "" ? "-" : String(value);
-    item.append(label, reading);
-    grid.append(item);
-  }
-}
-
-async function readWifiStatus() {
-  const status = byId("wifi-op-status");
-  const button = byId("wifi-status-read");
-  button.disabled = true;
-  status.textContent = "正在读取 Wi-Fi 状态…";
-  try {
-    const data = await configRequest("/api/wifi/status");
-    renderWifiStatus(data);
-    status.textContent = "Wi-Fi 状态已读取";
-  } catch (err) {
-    status.textContent = "读取失败：" + String(err);
-  } finally {
-    button.disabled = false;
-  }
-}
-
 async function scanWifi() {
   const status = byId("wifi-op-status");
   const button = byId("wifi-scan");
@@ -1986,7 +1987,7 @@ async function connectWifi() {
     byId("wifi-password").value = "";
     byId("wifi-connect-confirm").checked = false;
     status.textContent = `已连接到 ${result.ssid}（${result.security_name}）`;
-    await readWifiStatus();
+    await readConfiguration();
   } catch (err) {
     status.textContent = "配置失败：" + String(err);
   } finally {
@@ -2042,7 +2043,6 @@ byId("config-read").addEventListener("click", readConfiguration);
 byId("config-baseline-save").addEventListener("click", saveConfigurationBaseline);
 byId("config-baseline-compare").addEventListener("click", compareConfigurationBaseline);
 byId("push-scan-read").addEventListener("click", readPushScan);
-byId("wifi-status-read").addEventListener("click", readWifiStatus);
 byId("wifi-scan").addEventListener("click", scanWifi);
 byId("wifi-ap-select").addEventListener("change", chooseWifiAccessPoint);
 byId("wifi-connect").addEventListener("click", connectWifi);

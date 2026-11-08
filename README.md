@@ -245,10 +245,11 @@ kyocera-monitor --host 192.168.0.220 --config --snmp \
 community、Wi-Fi SSID、系统联系人或位置，不能提交到公开仓库。比较发现差异时
 退出码为 `1`，一致时为 `0`。Wi-Fi 连接状态、RSSI 和信道作为只读易变观测
 单独列出，不把自然变化计为配置差异；配置值变化和读取状态变化仍返回 `1`。
-当前不发送 PJL `KSETOBJ`。研究用途的 CLI 仍可在用户显式确认后，通过
-SNMPv2c 执行 `Auto error clear` 或 `Quiet mode` 的 `OFF -> ON -> OFF`
-回滚实验。正式 Web/GUI 另行开放九个经真机审计的整数属性，提供旧值校验、
-明确确认、SET 后回读和失败恢复；不包含 `OFF -> ON -> OFF` 测试流程。写入边界见
+通用配置路径不发送 PJL `KSETOBJ`；Wi‑Fi 连接使用独立的官方复刻流程。研究
+用途的 CLI 仍可在用户显式确认后，通过 SNMPv2c 执行 `Auto error clear` 或
+`Quiet mode` 的 `OFF -> ON -> OFF` 回滚实验。正式 Web/GUI 另行开放 27 个
+经真机审计的整数属性，提供旧值校验、明确确认、SET 后回读和失败恢复；
+不包含 `OFF -> ON -> OFF` 测试流程。写入边界见
 `docs/reverse-engineering/config-write-safety.md`。
 
 下一个写入候选可先做只读资格审查：
@@ -391,20 +392,22 @@ options、Communication、SNMP trap、Wi‑Fi 状态、音量与 FAX notificatio
 总览最多用 4 个线程并行取快照，单设备缓存 1 秒，页面每 10–15 秒刷新。
 总览页上的“发现打印机”会调用 `/api/discover`，发现结果自动加入已保存设备、
 出现在总览中，并在下次启动时恢复；手动输入的主机使用同一持久化列表。
-详情页展示 Lifetime/Scan/Drum 计数、睡眠模式、自动错误清除和表单超时；
-其中 Lifetime counter 已由 PJL/SNMP 双向核对为页计数。扫描区提供颜色、
+详情页展示 Lifetime/Scan/Drum 计数；其中 Lifetime counter 已由 PJL/SNMP
+双向核对为页计数。睡眠、自动错误清除和送纸超时归入统一设备配置区。扫描区提供颜色、
 分辨率、原稿类型、页数和输出格式，并显示设备请求格式、设备返回格式和本地
 最终格式，避免把 RAW 请求误认为 RAW 文件。用户可把当前扫描参数保存为
 本地预设，并指定一个绝对目录在扫描完成后自动保存。总览页可导出全部已知
 设备的计数 CSV，并可显式开启浏览器状态通知；通知只观察页面已经读取的状态，
 不是设备主动推送。
-详情页的统一配置区可读取 147 项配置，展示面板与 Wi‑Fi 状态，保存
+详情页的统一配置区可读取 147 项配置，Wi‑Fi 状态和连接控制位于
+“设备配置 → Wi‑Fi”，保存
 `0600` 私有基线并比较差异；SNMP community、Wi‑Fi SSID 等敏感值在页面中
-隐藏。睡眠、错误清除、打印浓度、长度单位、送纸/面板超时和静音模式等九个
-已审核整数属性可写入；`POST /api/config/apply` 要求页面旧值、目标值、
-`confirm=true`，并在 SET 后重新读取设备，失败时尝试恢复旧值。网络、SNMP
-凭据、Wi‑Fi、传真、字符串、重置和其他未知字段仍只读。`/api/config/plan`
-不存在，CLI 的令牌化 `OFF -> ON -> OFF` 研究流程保持独立。
+隐藏。睡眠、错误清除、纸张匹配、介质重量、打印浓度、长度单位、送纸/面板
+超时和静音模式等 27 个已审核整数属性可写入；`POST /api/config/apply` 要求
+页面旧值、目标值、`confirm=true`，并在 SET 后重新读取设备，失败时尝试恢复
+旧值。网络、SNMP 凭据、传真、字符串、重置和其他未知字段仍只读；Wi‑Fi
+凭据只能通过分区内的专用连接流程提交。`/api/config/plan` 不存在，CLI 的
+令牌化 `OFF -> ON -> OFF` 研究流程保持独立。
 详情页的 Push Scan 区通过 `/api/push-scan` 显示设备只读状态，并说明设备
 目标字段没有已确认写入链；扫描预设编辑区可设置本地槽位映射。自动执行入口
 仍是显式 CLI 监听器，Web 页面不会自行启动扫描或写结果 OID。
@@ -421,10 +424,10 @@ ARP 表作为附加候选；`--discover-subnet <CIDR>` 显式扫描 IPv4 网段�
 释放后自动恢复内核驱动。MA2000w 真机已完成完整 PJL 状态查询。该回退不需要
 依赖官方 DLL、mailslot 或 Windows 打印后台。
 
-设备页现在提供 Wi-Fi 状态、附近网络扫描和连接。协议复刻官方 Wi-Fi Setup
-Tool 的 KGETOBJ/KSETOBJ 顺序；AP 扫描与连接状态已在 USB 和 TCP 9100 两条
-路径真机验证。更换 AP 需要用户在页面勾选确认框或通过 CLI 显式指定；密码
-不会保存到设置文件，Web API 只接受回环客户端。详细证据见
+“设备配置 → Wi‑Fi”分区提供连接状态、附近网络扫描和连接。协议复刻官方
+Wi‑Fi Setup Tool 的 KGETOBJ/KSETOBJ 顺序；AP 扫描与连接状态已在 USB 和
+TCP 9100 两条路径真机验证。更换 AP 需要用户在页面勾选确认框或通过 CLI
+显式指定；密码不会保存到设置文件，Web API 只接受回环客户端。详细证据见
 [`docs/reverse-engineering/wifi.md`](docs/reverse-engineering/wifi.md)。
 
 默认 GUI/Web 在没有指定网络地址时会自动枚举 USB 打印机；恰好发现一台 USB
