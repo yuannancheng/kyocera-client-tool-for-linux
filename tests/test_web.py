@@ -12,6 +12,7 @@ from kyocera_monitor.discovery import DiscoveredPrinter
 from kyocera_monitor.parser import PrinterSnapshot, Tray
 from kyocera_monitor.preferences import SettingsStore
 from kyocera_monitor.scan import ScanArtifact, ScanJobManager, ScanResult
+from kyocera_monitor.usb import UsbPrinter
 from kyocera_monitor.web import (
     DEVICE_HTML,
     OVERVIEW_HTML,
@@ -345,6 +346,31 @@ class CliTests(unittest.TestCase):
                 self.assertEqual(cli.main(["--gui"]), 0)
         registry = gui.call_args.args[0]
         self.assertEqual(registry.hosts(), [])
+        self.assertIsNotNone(gui.call_args.kwargs["config_workbench"])
+
+    def test_gui_auto_selects_one_usb_only_printer(self):
+        printer = UsbPrinter(
+            device="libusb:001:007",
+            vendor_id=0x0482,
+            product_id=0x0D51,
+            manufacturer="KYOCERA",
+            product="MA2000w",
+            serial="USB123",
+        )
+        with (
+            mock.patch.object(
+                cli, "discover_usb_printers", return_value=[]
+            ),
+            mock.patch.object(
+                cli, "discover_libusb_printers", return_value=[printer]
+            ),
+            mock.patch("kyocera_monitor.gui.run_gui") as gui,
+            redirect_stderr(io.StringIO()),
+        ):
+            self.assertEqual(cli.main(["--gui"]), 0)
+        registry = gui.call_args.args[0]
+        self.assertEqual(registry.hosts(), ["libusb:001:007"])
+        self.assertEqual(registry.default, "libusb:001:007")
         self.assertIsNotNone(gui.call_args.kwargs["config_workbench"])
 
     def test_gui_reports_missing_gtk(self):

@@ -427,6 +427,12 @@ Tool 的 KGETOBJ/KSETOBJ 顺序；AP 扫描与连接状态已在 USB 和 TCP 910
 不会保存到设置文件，Web API 只接受回环客户端。详细证据见
 [`docs/reverse-engineering/wifi.md`](docs/reverse-engineering/wifi.md)。
 
+默认 GUI/Web 在没有指定网络地址时会自动枚举 USB 打印机；恰好发现一台 USB
+设备时直接把它设为可用设备，发现多台时在总览中逐台列出。因此打印机尚未
+配置 Wi-Fi、没有 IP 地址时，仍可通过 USB 进入设备页，读取 Wi-Fi 状态、扫描
+附近 AP、填写 SSID/安全模式和密码并发起连接。USB 动态地址不会写入设备列表；
+每次启动会重新枚举。
+
 USB 扫描接口是 interface 1 的 vendor-specific 功能。项目已经恢复
 Windows `usbscan.sys` 到 Linux control/bulk 映射，并真机验证 connect、
 machine-info、version 和 disconnect；当前产品扫描仍使用已验证的网络
@@ -466,7 +472,7 @@ python3 -m unittest discover -s tests -v
 python3 tools/check_publication.py
 ```
 
-当前 322 个测试覆盖 PJL 解析/帧格式、分段补发与合并、KGETOBJ 结构化字段、
+当前 323 个测试覆盖 PJL 解析/帧格式、分段补发与合并、KGETOBJ 结构化字段、
 147 项配置对象表与 CLI 配置导出、`KMUTLCFG` UI 控件字符串提取、
 147 项对象→模型偏移映射与首批控件→OID 对照、
 配置 SNMP 后备读取、

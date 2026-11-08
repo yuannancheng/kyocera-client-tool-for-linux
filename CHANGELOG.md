@@ -13,7 +13,8 @@
   执行并回读状态。
 - Web/GUI 设备页新增 Wi-Fi 状态、扫描结果选择、手动 SSID、安全模式和密码
   输入；连接需要显式确认。密码只存在于单次请求，不持久化，写 API 只接受
-  回环客户端。
+  回环客户端。默认 GUI/Web 在没有网络目标时自动枚举 USB 打印机，因此可在
+  Wi-Fi 尚未配置、设备没有 IP 地址时通过 USB 完成首次 Wi-Fi 配置。
 - 逆向社会 `KMUSBSCN3.dll` 的 Windows `usbscan.sys` 调用，恢复
   `IOCTL_SEND_USB_REQUEST` 到 Linux vendor control transfer 的映射；真机
   验证 scanner interface 的 connect、machine-info、version 和 disconnect。
@@ -28,12 +29,12 @@
   同名队列指向其他 URI 时拒绝覆盖，只有 `--force` 才更新。包依赖补充
   `libusb-1.0-0` 和 `cups-client`，辅助入口直接作为可执行文件安装。
 - 版本升级为 `0.3.0`；构建 `dist/kyocera-monitor_0.3.0-1_all.deb`，
-  SHA-256 `3f1a21d7d969b35fbd071ca9fd96923732732756faf758bee66911149518525e`；
+  SHA-256 `c9fb3afbac63351455e3af44aac34c34caa6668da950ede6f2ba7dfa0bcc7a39`；
   使用相同 `SOURCE_DATE_EPOCH` 两次构建逐字节一致。
 - 通过 `pkexec` 将系统包从 `0.2.6-1` 升级为 `0.3.0-1`；CUPS `MA2000w-2`
   USB 队列重新启用，当前为 idle/enabled/accepting。设备已从 USB 总线消失，
   因此尚未验证实际打印输出。
-- 全量测试 322/322 通过，公开树检查、`compileall`、页面 JavaScript、
+- 全量测试 323/323 通过，公开树检查、`compileall`、页面 JavaScript、
   udev 规则和 `git diff --check` 通过。
 
 ## 2026-11-01

@@ -47,6 +47,9 @@ Windows mailslot 或官方 DLL 即可完成完整 PJL 状态查询；Wi-Fi 状�
   libusb Printer-class 回退；完整型号、固件、状态、耗材、纸盒、网络和计数读取。
 - 已真机验证：Wi-Fi `Connected`、WPA2 PSK、信道、RSSI；官方 AP 扫描触发、
   数量和列表解析在 USB/TCP 9100 均成功。
+- 已验证 GUI/Web 在未指定网络目标时会自动枚举 USB 打印机；单台 USB 设备
+  可直接进入设备页，通过 USB 完成未配置 Wi-Fi 场景的状态读取、AP 扫描和
+  凭据写入。USB 动态地址不持久化。
 - 已真机验证：扫描 interface `MI_01` 的 vendor control connect/disconnect、
   machine-info 和 version；完整 USB ScanReq 图像取回仍未闭环。
 - 已验证写入：MA2000w `Auto error clear` 经 SNMPv2c 从 OFF→ON→OFF，
@@ -445,12 +448,12 @@ scan control 协议；完成一次网络 KM-WSDL 灰度真机扫描，没有更�
 
 验证：
 
-- 全量 `python3 -m unittest discover -s tests -v` → 322/322 通过。
+- 全量 `python3 -m unittest discover -s tests -v` → 323/323 通过。
 - `python3 tools/check_publication.py`、`compileall`、页面 JavaScript
   `node --check`、`udevadm verify`、`desktop-file-validate` 和
   `git diff --check` 通过。
 - 构建 `dist/kyocera-monitor_0.3.0-1_all.deb`，SHA-256
-  `3f1a21d7d969b35fbd071ca9fd96923732732756faf758bee66911149518525e`；
+  `c9fb3afbac63351455e3af44aac34c34caa6668da950ede6f2ba7dfa0bcc7a39`；
   使用相同 `SOURCE_DATE_EPOCH` 两次构建 `cmp` 一致；解包后 `wifi.py`、
   `usb_libusb.py`、`usb_scan.py` 和驱动辅助入口可加载、可执行。
 - 用户恢复交互后通过 `pkexec` 完成系统升级；`dpkg-query` 返回

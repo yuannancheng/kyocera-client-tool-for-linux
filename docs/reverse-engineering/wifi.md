@@ -98,3 +98,13 @@ KYOCERA_WIFI_PASSWORD='...' python3 -m kyocera_monitor \
 ```
 
 Web/GUI 设备页提供状态、扫描和连接控件；连接要求显式确认框。
+
+该页面可用于 Wi-Fi 尚未配置、没有可用 IP 地址的首次初始化场景：默认
+GUI/Web 会枚举 USB 打印机，并允许直接以 `/dev/usb/lp*` 或临时
+`libusb:<bus>:<address>` 选择设备。设备页再把该选择传给
+`WifiWorkbench`，由 USB Printer interface 执行同一套 KGETOBJ/KSETOBJ。
+USB 动态地址只存在于当前进程，不写入保存的打印机列表。
+
+密码仍只在当前 HTTP 请求和短生命周期 USB 命令中处理，不持久化。连接会改变
+设备网络，UI 要求勾选确认；若新 AP 不可用，设备可能需要通过面板或 USB
+重新配置。

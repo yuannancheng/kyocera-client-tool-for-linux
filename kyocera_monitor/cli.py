@@ -1703,7 +1703,21 @@ def main(argv: list[str] | None = None) -> int:
         return 0 if read_count else 1
 
     if args.web or args.gui:
-        default_key = args.host or args.device
+        explicit_usb_only = bool(args.device or args.usb)
+        automatic_usb_printers = []
+        if not (args.host or args.device or args.usb):
+            try:
+                automatic_usb_printers = merge_usb_printers(
+                    discover_usb_printers(), discover_libusb_printers()
+                )
+            except UsbError:
+                automatic_usb_printers = []
+        automatic_usb_key = (
+            automatic_usb_printers[0].device
+            if len(automatic_usb_printers) == 1
+            else None
+        )
+        default_key = args.host or args.device or automatic_usb_key
 
         def collect_host(key: str) -> PrinterSnapshot:
             if args.snmp:
@@ -1715,10 +1729,10 @@ def main(argv: list[str] | None = None) -> int:
                     timeout=args.snmp_timeout,
                     retries=args.snmp_retries,
                 )
-            if args.device or args.usb:
+            if key.startswith("libusb:") or key.startswith("/dev/"):
                 _, snapshot = collect(
                     None,
-                    args.device,
+                    key,
                     args.port,
                     args.timeout,
                     args.idle,
@@ -1736,6 +1750,8 @@ def main(argv: list[str] | None = None) -> int:
             return snapshot
 
         registry = DeviceRegistry(collect_host, default_key)
+        for printer in automatic_usb_printers:
+            registry.allow(printer.device)
         config_workbench = None
         push_scan_reader = None
         def open_web_wifi_channel(target: str):
@@ -1750,7 +1766,7 @@ def main(argv: list[str] | None = None) -> int:
             scan_timeout=20.0,
             connect_timeout=25.0,
         )
-        if not (args.device or args.usb):
+        if not explicit_usb_only:
             def read_web_configuration(key: str):
                 return collect_config_snmp(
                     key,
@@ -1790,7 +1806,7 @@ def main(argv: list[str] | None = None) -> int:
 
             push_scan_reader = read_web_push_scan
         discover_fn = (
-            None if (args.device or args.usb) else run_discovery
+            None if explicit_usb_only else run_discovery
         )
         if args.gui:
             from .gui import GuiUnavailable, run_gui

@@ -47,6 +47,10 @@ _SCAN_FILE_PATH_RE = re.compile(
 )
 
 
+def _is_usb_device(value: str) -> bool:
+    return value.startswith("libusb:") or value.startswith("/dev/")
+
+
 @dataclass
 class Reading:
     snapshot: PrinterSnapshot | None
@@ -1762,7 +1766,13 @@ def make_handler(
         pass
 
     def persist_registry_printers() -> None:
-        settings.update_saved_printers(registry.hosts())
+        settings.update_saved_printers(
+            [
+                host
+                for host in registry.hosts()
+                if not _is_usb_device(host)
+            ]
+        )
 
     class Handler(BaseHTTPRequestHandler):
         server_version = "kyocera-monitor"
