@@ -31,7 +31,8 @@ Web/GUI 已支持自动、简体中文和 English；自动模式按设备浏览�
 版本的 `vX.Y.Z` 标签才构建 wheel、源码包、`.deb` 并创建 Release。
 Web/GUI 与 CLI 已加入手动版本检查：当前版本按语义版本比较，远端
 `updater/update.json` 只在用户点击或显式执行 `--check-update` 时访问，
-前后端各缓存 60 秒；发布 workflow 负责更新该元数据。
+下载域失败时回退 GitHub Releases API；前后端各缓存 60 秒，发布 workflow
+负责更新该元数据。
 配置页已按官方主默认值、通信、Trap、面板、传真和 Wi‑Fi 分区，Wi‑Fi 状态
 与连接配置位于同一 Wi‑Fi 分类；单分区读取与单字段回读不再扫描整表，扫描区
 下方重复的英文设备设置摘要已移除。纸张尺寸、介质类型和纸张重量已接入官方
@@ -419,7 +420,32 @@ Print Box 和 SNMPv3 等工作流。
 下一步：安装 `.deb` 后在 MA2000w 上完成“预设灰度 PDF → 自动保存目录 →
 下载/落盘哈希一致”的真机验收，再实现 E2 的统一配置只读/差异/安全写入界面。
 
-## 最近一次工作交接（第六十三轮）
+## 最近一次工作交接（第六十四轮）
+
+日期：2026-11-08。范围：发布 `v0.3.2` 后验证真实更新元数据，并修复下载域
+不可用时的客户端回退；未连接打印机。
+
+完成与证据：
+
+- `v0.3.2` 的 Test（Python 3.10/3.12）和 Release workflow 均成功；Release
+  包含 wheel、sdist 和 Debian 包，`updater/update.json` 内容指向 `v0.3.2`，
+  并被 GitHub 标记为 latest release。
+- 当前网络区域的 GitHub Release 下载域对 `update.json` 连续返回 HTTP 504；
+  `gh` 和 GitHub Releases API 可正常读取同一发布。客户端因此增加 latest
+  release API 回退，避免依赖单一下载域。
+- API 回退拒绝 draft/prerelease 和非 HTTPS 发布页，继续使用 16 KiB 上限、
+  语义版本比较和双端 60 秒缓存。版本升级为 `0.3.3`。
+
+验证：
+
+- 全量测试 389/389 通过；新增 release 资产 504 后 API 回退测试。
+- `v0.3.2` 保持已发布，不移动或复用历史标签。
+- 工作流 YAML、Python 编译、公开树检查和 `git diff --check` 通过。
+
+下一步：提交并推送 `v0.3.3`，确认 Release 与 updater 元数据发布成功，并执行
+真实 `--check-update`。
+
+## 历史工作交接（第六十三轮）
 
 日期：2026-11-08。范围：提交并推送首个发布候选、修复干净 GitHub runner 的
 本地样本依赖，并以补丁版本重新发布。

@@ -144,6 +144,8 @@ PNG/PDF/BMP/RAW 路径只需要 Python 标准库；JPEG/TIFF/高压缩 PDF/XPS �
 页面顶部还显示当前版本和“检查更新”入口。只有用户明确点击后才访问 GitHub
 上的 `update.json`；`0.10.0` 与 `0.9.9` 这样的版本按数值比较，不按字符串比较。
 发现新版本时显示当前版本、最新版本和发布页链接，结果在前后端各缓存 60 秒。
+如果 release 下载域不可用，会回退到 GitHub Releases API 的 latest release；
+两者都失败时才报告检查失败。
 `kyocera-monitor --check-update` 提供同样的手动检查，`--json` 输出便于脚本使用。
 没有发布元数据、网络失败或 JSON/版本/URL 校验失败时只报告检查失败，不影响打印
 机状态和扫描功能。可用 `KYOCERA_UPDATE_URL` 指向兼容的镜像 `update.json`；
@@ -222,7 +224,7 @@ sudo apt install "./dist/kyocera-monitor_${PROJECT_VERSION}-1_all.deb"
 `update.json` 只发布版本号和发布页地址：
 
 ```json
-{"version":"0.3.2","htmlUrl":"https://github.com/yuannancheng/kyocera-client-tool-for-linux/releases/tag/v0.3.2"}
+{"version":"0.3.3","htmlUrl":"https://github.com/yuannancheng/kyocera-client-tool-for-linux/releases/tag/v0.3.3"}
 ```
 
 发版流程示例：
@@ -536,7 +538,7 @@ python3 -m unittest discover -s tests -v
 python3 tools/check_publication.py
 ```
 
-当前 388 个测试覆盖 PJL 解析/帧格式、分段补发与合并、KGETOBJ 结构化字段、
+当前 389 个测试覆盖 PJL 解析/帧格式、分段补发与合并、KGETOBJ 结构化字段、
 147 项配置对象表与 CLI 配置导出、`KMUTLCFG` UI 控件字符串提取、
 147 项对象→模型偏移映射与首批控件→OID 对照、
 配置 SNMP 后备读取、

@@ -18,6 +18,10 @@ DEFAULT_UPDATE_URL = (
     "https://github.com/yuannancheng/"
     "kyocera-client-tool-for-linux/releases/download/updater/update.json"
 )
+DEFAULT_RELEASE_API_URL = (
+    "https://api.github.com/repos/yuannancheng/"
+    "kyocera-client-tool-for-linux/releases/latest"
+)
 MAX_UPDATE_BYTES = 16 * 1024
 DEFAULT_CACHE_SECONDS = 60.0
 VERSION_RE = re.compile(
@@ -109,13 +113,7 @@ def _validated_release_url(value: object) -> str:
     return value.strip()
 
 
-def fetch_update_metadata(
-    url: str,
-    *,
-    timeout: float = 5.0,
-) -> tuple[str, str]:
-    """Return ``(version, release_url)`` from the fixed update JSON asset."""
-
+def _read_json_document(url: str, *, timeout: float) -> object:
     parsed_url = urlsplit(url)
     if parsed_url.scheme not in {"http", "https"} or not parsed_url.hostname:
         raise UpdateCheckError("update metadata URL must use HTTP or HTTPS")
@@ -145,16 +143,50 @@ def fetch_update_metadata(
     if len(payload) > MAX_UPDATE_BYTES:
         raise UpdateCheckError("update metadata is too large")
     try:
-        value = json.loads(payload.decode("utf-8"))
+        return json.loads(payload.decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise UpdateCheckError("update metadata is not valid JSON") from exc
-    if not isinstance(value, dict):
-        raise UpdateCheckError("update metadata must be a JSON object")
-    version = value.get("version")
-    if not isinstance(version, str) or VERSION_RE.fullmatch(version) is None:
-        raise UpdateCheckError("update metadata has an invalid version")
-    release_url = _validated_release_url(value.get("htmlUrl"))
-    return version.removeprefix("v"), release_url
+
+
+def fetch_update_metadata(
+    url: str,
+    *,
+    timeout: float = 5.0,
+    fallback_url: str = DEFAULT_RELEASE_API_URL,
+) -> tuple[str, str]:
+    """Return version metadata, with the Releases API as a fallback."""
+
+    errors: list[str] = []
+    for candidate in dict.fromkeys((url, fallback_url)):
+        try:
+            value = _read_json_document(candidate, timeout=timeout)
+        except UpdateCheckError as exc:
+            errors.append(str(exc))
+            continue
+        if not isinstance(value, dict):
+            errors.append("update metadata must be a JSON object")
+            continue
+        if candidate == fallback_url:
+            if value.get("draft") is True or value.get("prerelease") is True:
+                errors.append("latest release is not a stable publication")
+                continue
+            version = value.get("tag_name")
+            release_url = value.get("html_url")
+        else:
+            version = value.get("version")
+            release_url = value.get("htmlUrl")
+        if not isinstance(version, str) or VERSION_RE.fullmatch(version) is None:
+            errors.append("update metadata has an invalid version")
+            continue
+        try:
+            validated_url = _validated_release_url(release_url)
+        except UpdateCheckError as exc:
+            errors.append(str(exc))
+            continue
+        return version.removeprefix("v"), validated_url
+    raise UpdateCheckError(
+        "; ".join(errors) or "update metadata is unavailable"
+    )
 
 
 class UpdateChecker:

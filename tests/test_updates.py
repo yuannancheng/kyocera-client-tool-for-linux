@@ -101,7 +101,41 @@ class UpdateMetadataTests(unittest.TestCase):
 
     def test_rejects_non_http_update_source(self):
         with self.assertRaises(UpdateCheckError):
-            fetch_update_metadata("file:///etc/passwd")
+            fetch_update_metadata(
+                "file:///etc/passwd",
+                fallback_url="file:///etc/hosts",
+            )
+
+    def test_falls_back_to_latest_release_api(self):
+        payload = json.dumps(
+            {
+                "tag_name": "v0.3.3",
+                "html_url": (
+                    "https://github.com/example/repo/releases/tag/v0.3.3"
+                ),
+                "draft": False,
+                "prerelease": False,
+            }
+        ).encode()
+        with mock.patch.object(
+            updates,
+            "urlopen",
+            side_effect=[
+                OSError("HTTP Error 504"),
+                FakeResponse(payload),
+            ],
+        ) as request:
+            self.assertEqual(
+                fetch_update_metadata(
+                    "https://github.com/example/repo/"
+                    "releases/download/updater/update.json"
+                ),
+                (
+                    "0.3.3",
+                    "https://github.com/example/repo/releases/tag/v0.3.3",
+                ),
+            )
+        self.assertEqual(request.call_count, 2)
 
 
 class UpdateCheckerTests(unittest.TestCase):

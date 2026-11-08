@@ -2,6 +2,16 @@
 
 ## 2026-11-08
 
+### Fixed — update-check API fallback and v0.3.3
+
+- `v0.3.2` 发布成功且 `updater/update.json` 可经 GitHub API 读取，但当前网络
+  区域访问 GitHub Release 下载域持续返回 HTTP 504。版本检查现在先读取固定
+  `update.json`，失败后回退到 GitHub Releases API 的 latest release 元数据。
+- API 回退仍要求稳定版本标签、非 draft/prerelease、HTTPS 发布链接，并沿用
+  16 KiB 响应上限、双端 60 秒缓存和手动触发边界。
+- 版本升级为 `0.3.3`。验证：全量测试 389/389 通过，新增下载域失败后 API
+  回退测试；`v0.3.2` 保持已发布状态，不重写历史标签。
+
 ### Fixed — clean-checkout release CI and v0.3.2
 
 - GitHub `Test` 在推送 `v0.3.1` 标签后发现，部分 Client Tool 研究测试直接读取
